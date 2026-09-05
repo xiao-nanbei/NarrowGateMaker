@@ -312,6 +312,72 @@ def artifact_tree_identity(path: str | Path | None) -> dict[str, Any]:
     }
 
 
+def rest_return_sample_rows(params: Mapping[str, Any]) -> dict[str, np.ndarray] | None:
+    """Normalize paired request timings at a replay input boundary."""
+    raw = params.get("_serial_rest_return_samples_by_operation")
+    if raw is None:
+        return None
+    if params.get("rest_gateway_timing_mode") not in {
+        "sampled_serial", "sampled_async_fifo",
+    } or params.get("rest_gateway_timing_profile_path"):
+        raise ValueError("direct REST-return samples require sampled_serial without a profile")
+    if not isinstance(raw, Mapping) or set(raw) != {"new", "cancel"}:
+        raise ValueError("direct REST-return samples require new and cancel operations")
+    if not str(params.get("_serial_rest_return_sample_semantics", "") or "").strip():
+        raise ValueError("direct REST-return samples must declare observed or proxy semantics")
+    result = {}
+    for operation, values in raw.items():
+        rows = np.asarray(values, dtype=np.float64)
+        if (
+            rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0
+            or not np.all(np.isfinite(rows)) or np.any(rows < 0.0)
+            or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
+        ):
+            raise ValueError(
+                "REST-return sample triples must be finite nonnegative effective/ACK/HTTP triples "
+                "with effective <= ACK and effective <= HTTP"
+            )
+        result[operation] = np.ascontiguousarray(rows)
+    return result
+
+
+def bulk_cancel_sample_rows(params: Mapping[str, Any]) -> np.ndarray | None:
+    """Read one bulk request's modeled effective/private/HTTP phases."""
+    raw = params.get("_bulk_cancel_timing_samples_ms")
+    if raw is None:
+        return None
+    if params.get("rest_gateway_timing_mode") != "sampled_async_fifo":
+        raise ValueError("bulk cancel timing requires sampled_async_fifo")
+    if not str(params.get("_bulk_cancel_timing_sample_semantics", "") or "").strip():
+        raise ValueError("bulk cancel timing requires explicit sample semantics")
+    rows = np.asarray(raw, dtype=np.float64)
+    if (
+        rows.ndim != 2 or rows.shape[1] != 3 or not len(rows)
+        or not np.all(np.isfinite(rows)) or np.any(rows < 0)
+        or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
+    ):
+        raise ValueError("invalid bulk cancel effective/private/HTTP triples")
+    return np.ascontiguousarray(rows)
+
+
+def rest_http_result_statuses(params: Mapping[str, Any]) -> dict[str, str]:
+    """Describe validated HTTP RESULT states, never infer them from HTTP 200.
+
+    An absent operation leaves authority with its private callback. The
+    successful NEW/CANCELED subset is all this timing model can represent;
+    a fill-bearing or unknown response needs its own economic lifecycle.
+    """
+    raw = params.get("_serial_rest_http_result_status_by_operation", {})
+    if not isinstance(raw, Mapping) or set(raw) - {"new", "cancel"}:
+        raise ValueError("HTTP RESULT statuses require new/cancel operation keys")
+    expected = {"new": "NEW", "cancel": "CANCELED"}
+    if any(value != expected[operation] for operation, value in raw.items()):
+        raise ValueError("only validated NEW/CANCELED HTTP RESULT states are modeled")
+    if raw and params.get("rest_gateway_timing_mode") != "sampled_async_fifo":
+        raise ValueError("HTTP RESULT status timing requires sampled_async_fifo")
+    return dict(raw)
+
+
 def _finite_samples(values: Any) -> np.ndarray:
     try:
         samples = np.asarray(values if values is not None else [], dtype=np.float64).ravel()
@@ -333,6 +399,70 @@ def _sample_identity(values: Any) -> dict[str, Any]:
         "median_ms": float(np.median(samples)) if samples.size else 0.0,
         "max_ms": float(samples.max()) if samples.size else 0.0,
     }
+
+
+def runtime_compute_sample_rows(
+    params: Mapping[str, Any], *, purpose: str | None = None,
+) -> dict[str, np.ndarray]:
+    """Paired local phases, selected by delivered signal-bucket progress.
+
+    Columns are pre-snapshot, total-to-enqueue, and post-enqueue residual.
+    The last column is an explicit placement approximation, not wire timing.
+    """
+    raw = params.get("_runtime_compute_samples_by_path")
+    if raw is None:
+        return {}
+    paths = {"cached_no_new_bucket", "new_bucket", "catch_up"}
+    if not isinstance(raw, Mapping) or set(raw) != paths:
+        raise ValueError("runtime compute samples require cached, new_bucket and catch_up paths")
+    if (
+        (purpose if purpose is not None else params.get("replay_purpose")) != "diagnostic"
+        or params.get("rest_gateway_timing_mode") != "sampled_async_fifo"
+        or params.get("replay_event_clock") != "merged"
+        or float(params.get("replay_main_loop_sleep_ms", 0) or 0) <= 0
+    ):
+        raise ValueError("runtime compute samples require diagnostic async FIFO main-loop replay")
+    for key in (
+        "_decision_to_gateway_latency_samples_ms", "_pre_snapshot_compute_latency_samples_ms",
+        "_requote_tail_work_samples_ms",
+    ):
+        if np.asarray(params.get(key, ())).size:
+            raise ValueError(
+                "runtime compute strata cannot be combined with pooled compute samples"
+            )
+    for key in ("runtime_compute_bucket_ms", "runtime_compute_initial_bucket_end_ms"):
+        if type(params.get(key)) is not int:
+            raise ValueError(f"{key} must be an explicit integer")
+    if params["runtime_compute_bucket_ms"] <= 0:
+        raise ValueError("runtime_compute_bucket_ms must be positive")
+    if params["runtime_compute_initial_bucket_end_ms"] % params["runtime_compute_bucket_ms"]:
+        raise ValueError("runtime compute initial watermark must align with the bucket grid")
+    clock = params.get("runtime_compute_clock")
+    if clock not in {"prediction_delivery", "source_time_assumption"}:
+        raise ValueError("runtime compute clock must be explicit, not a silent wall-clock fallback")
+    if clock == "prediction_delivery" and (
+        params.get("exec_book_visibility_mode") != "message_schedule"
+        or "prediction" not in (params.get("_exec_message_delivery") or {})
+    ):
+        raise ValueError("prediction_delivery compute requires a prediction message schedule")
+    start = params.get("replay_event_clock_start_ts_ms")
+    if start is not None and params["runtime_compute_initial_bucket_end_ms"] > int(start):
+        raise ValueError("runtime compute initial watermark cannot be in the future")
+    if not str(params.get("_runtime_compute_sample_semantics", "")).strip():
+        raise ValueError("runtime compute samples require placement semantics")
+    result = {}
+    for path in sorted(paths):
+        rows = np.asarray(raw[path], dtype=np.float64)
+        if (
+            rows.ndim != 2 or rows.shape[1] != 3 or not len(rows)
+            or not np.all(np.isfinite(rows)) or np.any(rows < 0)
+            or np.any(rows[:, 0] > rows[:, 1])
+        ):
+            raise ValueError(
+                "runtime compute rows must be finite nonnegative Nx3 with pre <= enqueue"
+            )
+        result[path] = np.ascontiguousarray(rows)
+    return result
 
 
 def _local_work_samples(params: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -360,8 +490,12 @@ def _local_work_samples(params: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarr
     if np.any(tail > 0.0) or np.any(loop > 0.0):
         sleep = float(params.get("replay_main_loop_sleep_ms", 0) or 0)
         mode = str(params.get("rest_gateway_timing_mode", "disabled") or "disabled").lower()
-        if not np.isfinite(sleep) or sleep <= 0.0 or mode != "sampled_serial":
-            raise ValueError("local work requires main-loop sampled_serial replay")
+        if not np.isfinite(sleep) or sleep <= 0.0 or mode not in {
+            "sampled_serial", "sampled_async_fifo"
+        }:
+            raise ValueError(
+                "local work requires main-loop sampled_serial or sampled_async_fifo replay"
+            )
     return tail, loop
 
 
@@ -371,11 +505,15 @@ def configure_fixed_latency_distribution(
     scenario: str,
     profile_id: str,
     environment: str | Mapping[str, Any],
-    baseline_clip_quantile: float = 0.99,
+    baseline_clip_quantile: float = 1.0,
     stress_spike_probability: float = 0.001,
     stress_spike_multiplier: float = 5.0,
 ) -> MutableMapping[str, Any]:
-    """Freeze stable latency samples; synthetic tail spikes are stress-only."""
+    """Freeze observed latency samples, preserving their empirical tail by default.
+
+    A clip quantile below 1.0 explicitly selects a trimmed sensitivity or a
+    historical reproduction. Synthetic tail spikes remain stress-only.
+    """
     _local_work_samples(params)
     normalized_scenario = str(scenario or "baseline").lower()
     if normalized_scenario not in {"baseline", "stress"}:
@@ -383,6 +521,11 @@ def configure_fixed_latency_distribution(
     clip_quantile = float(baseline_clip_quantile)
     if not 0.5 <= clip_quantile <= 1.0:
         raise ValueError("baseline latency clip quantile must be within [0.5, 1.0]")
+    if params.get("rest_gateway_timing_mode") == "sampled_async_fifo" and clip_quantile != 1.0:
+        raise ValueError(
+            "sampled_async_fifo preserves complete paired timing rows; "
+            "baseline_clip_quantile must be 1.0"
+        )
     probability = float(stress_spike_probability)
     multiplier = float(stress_spike_multiplier)
     if not 0.0 <= probability <= 1.0:
@@ -644,7 +787,7 @@ def build_replay_contract(
         ):
             raise ValueError("pre-snapshot compute samples must align with and not exceed total")
         if (
-            rest_gateway_mode != "sampled_serial"
+            rest_gateway_mode not in {"sampled_serial", "sampled_async_fifo"}
             or float(params.get("replay_main_loop_sleep_ms", 0) or 0) <= 0
         ):
             raise ValueError("pre-snapshot compute requires main-loop sampled_serial replay")
@@ -664,32 +807,19 @@ def build_replay_contract(
                 "total_accounting": "pre_plus_post_equals_total_not_added_again",
             },
         )
-    if rest_gateway_mode not in {"disabled", "paired_npz", "sampled_serial"}:
+    if rest_gateway_mode not in {"disabled", "paired_npz", "sampled_serial", "sampled_async_fifo"}:
         raise ValueError(
-            "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
+            "rest_gateway_timing_mode must be disabled, paired_npz, sampled_serial "
+            "or sampled_async_fifo"
         )
     requote_tail_work_samples, main_loop_work_samples = _local_work_samples(params)
-    direct_return_samples = params.get("_serial_rest_return_samples_by_operation")
+    compute_by_path = runtime_compute_sample_rows(params, purpose=normalized_purpose)
+    direct_return_samples = rest_return_sample_rows(params)
     direct_return_semantics = str(
         params.get("_serial_rest_return_sample_semantics", "") or ""
     ).strip()
-    if direct_return_samples is not None:
-        if rest_gateway_mode != "sampled_serial" or params.get("rest_gateway_timing_profile_path"):
-            raise ValueError("direct REST-return samples require sampled_serial without a profile")
-        if not isinstance(direct_return_samples, Mapping) or set(direct_return_samples) != {
-            "new", "cancel"
-        }:
-            raise ValueError("direct REST-return samples require new and cancel operations")
-        if not direct_return_semantics:
-            raise ValueError("direct REST-return samples must declare observed or proxy semantics")
-        for values in direct_return_samples.values():
-            rows = np.asarray(values, dtype=np.float64)
-            if (
-                rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0
-                or not np.all(np.isfinite(rows)) or np.any(rows < 0.0)
-                or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
-            ):
-                raise ValueError("invalid effective/ACK/HTTP REST-return sample triples")
+    http_result_statuses = rest_http_result_statuses(params)
+    bulk_cancel_samples = bulk_cancel_sample_rows(params)
     rest_gateway_identity: dict[str, Any] | None = None
     if rest_gateway_mode == "paired_npz":
         profile_path = _resolve_path(
@@ -713,7 +843,7 @@ def build_replay_contract(
             },
             "seed": int(params.get("rest_gateway_timing_seed", latency_seed) or latency_seed),
         }
-    elif rest_gateway_mode == "sampled_serial":
+    elif rest_gateway_mode in {"sampled_serial", "sampled_async_fifo"}:
         rest_gateway_identity = {
             "mode": rest_gateway_mode,
             "evidence_scope": "diagnostic_only",
@@ -756,6 +886,64 @@ def build_replay_contract(
                     for operation, values in sorted(direct_return_samples.items())
                 },
             )
+        if rest_gateway_mode == "sampled_async_fifo":
+            if direct_return_samples is None:
+                raise ValueError("sampled_async_fifo requires paired effective/ACK/HTTP samples")
+            if str(params.get("replay_event_clock", "trade")) != "merged" or float(
+                params.get("replay_main_loop_sleep_ms", 0) or 0
+            ) <= 0:
+                raise ValueError("sampled_async_fifo requires a merged main-loop clock")
+            if params.get("order_transport", "rest") != "rest" or params.get(
+                "cross_side_order_lanes_enabled", False
+            ):
+                raise ValueError("sampled_async_fifo models REST with one GLOBAL worker")
+            capacity = params.get("async_order_lane_capacity", 8)
+            if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
+                raise ValueError("async_order_lane_capacity must be a positive integer")
+            rest_gateway_identity.update(
+                request_start="max_request_ready_previous_global_http_return",
+                decision_thread="not_blocked_by_http_return",
+                decision_thread_scope="ordinary_new_cancel_only",
+                worker_count=1,
+                queue_order="global_fifo",
+                queue_capacity=capacity,
+                max_admitted_including_active=capacity + 1,
+                cancel_continuation="authoritative_terminal_visible_then_fresh_decision",
+                queue_wait="endogenous_per_arm_not_replayed_from_baseline",
+                http_result_status_by_operation=http_result_statuses,
+                local_authority_clock=(
+                    "first_private_callback_or_validated_http_result_per_operation"
+                    if http_result_statuses else "private_callback_only_http_releases_worker"
+                ),
+                synchronous_ioc_close={
+                    "backend": "python_only",
+                    "evidence_scope": "diagnostic_only",
+                    "exchange_match": "single_sweep_at_exchange_effective_time",
+                    "liquidity_scope": "supplied_l2_depth_or_top_of_book_bound",
+                    "physical_state": "reserve_fill_and_expire_remainder_at_exchange_match",
+                    "local_economics": "private_fill_visibility_not_http_result",
+                    "zero_fill_terminal": (
+                        "first_private_terminal_or_validated_zero_filled_expired_result"
+                    ),
+                    "worker_release": "http_return_independent_of_fill_visibility",
+                    "caller_completion": (
+                        "max_http_return_and_private_fill_proof_no_account_trades_timing"
+                    ),
+                    # The live positive-RESULT path separately fetches account
+                    # trades. Private-fill timing is only a conservative proof
+                    # visibility proxy, not an observed accountTrades roundtrip.
+                    "unmodeled": ["account_trades_lookup_latency_and_proof_recovery"],
+                },
+            )
+            if bulk_cancel_samples is not None:
+                rest_gateway_identity["bulk_cancel"] = {
+                    "samples": _sample_identity(bulk_cancel_samples),
+                    "sample_semantics": params["_bulk_cancel_timing_sample_semantics"],
+                    "clock": "drain_admitted_fifo_then_one_exclusive_request",
+                    "decision_thread": "await_bulk_http_future",
+                    "terminal_authority": "per_order_private_visibility_not_bulk_http",
+                    "within_batch_phase_model": "shared_sampled_phases_for_surviving_orders",
+                }
     diagnostic_latency_selected = bool(
         private_fill_visibility_enabled
         or decision_to_gateway_identity is not None
@@ -1121,7 +1309,7 @@ def build_replay_contract(
             "cancel_order_fixed_ms": float(params.get("cancel_order_latency_ms", 0.0) or 0.0),
             "jitter_ms": float(params.get("latency_jitter_ms", 0.0) or 0.0),
             "baseline_clip_quantile": float(
-                params.get("latency_baseline_clip_quantile", 0.99) or 0.99
+                params.get("latency_baseline_clip_quantile", 1.0) or 1.0
             ),
             "stress_spike_probability": float(
                 params.get("latency_stress_spike_probability", 0.001) or 0.0
@@ -1148,7 +1336,11 @@ def build_replay_contract(
         ] = {
             "enabled": True,
             "trigger": "replacement_cancel_authoritative_local_terminal",
-            "decision_clock": "next_merged_100ms_wake",
+            "decision_clock": (
+                "terminal_visible_interrupts_main_loop_sleep"
+                if rest_gateway_mode == "sampled_async_fifo"
+                else "next_merged_100ms_wake"
+            ),
             "side_scope": "terminal_side_only",
             "quote_state": "fresh_recompute_no_cached_price_or_quantity",
             "normal_cadence_advanced": False,
@@ -1161,7 +1353,11 @@ def build_replay_contract(
     if main_loop_sleep_ms:
         contract["causal_event_semantics"]["main_loop"] = {
             "replay_main_loop_sleep_ms": main_loop_sleep_ms,
-            "wake_clock": "actual_tick_and_rest_return_then_sleep",
+            "wake_clock": (
+                "decision_completion_then_interruptible_sleep_independent_of_global_worker"
+                if rest_gateway_mode == "sampled_async_fifo"
+                else "actual_tick_and_rest_return_then_sleep"
+            ),
             "requote_anchor": "actual_requote_start",
             "dynamic_requote_clock": (
                 "delivered_1s_bars_before_due_check"
@@ -1182,7 +1378,11 @@ def build_replay_contract(
                     "samples": _sample_identity(requote_tail_work_samples),
                     "sampling": "same_total_sample_index_and_seed_per_requote_entry",
                     "seed": decision_to_gateway_latency_seed,
-                    "clock": "after_last_http_return_or_no_request_compute",
+                    "clock": (
+                        "after_request_enqueue_or_no_request_compute"
+                        if rest_gateway_mode == "sampled_async_fifo"
+                        else "after_last_http_return_or_no_request_compute"
+                    ),
                 }
             if np.any(main_loop_work_samples > 0.0):
                 local_work["loop"] = {
@@ -1193,6 +1393,20 @@ def build_replay_contract(
                     "seed": decision_to_gateway_latency_seed,
                 }
             contract["causal_event_semantics"]["main_loop"]["local_work"] = local_work
+    if compute_by_path:
+        contract["latency"]["runtime_compute"] = {
+            "backend": "python_only",
+            "evidence_scope": "diagnostic_only",
+            "paths": {path: _sample_identity(rows) for path, rows in compute_by_path.items()},
+            "columns": ["pre_snapshot_ms", "total_to_enqueue_ms", "post_enqueue_ms"],
+            "selection": "bucket_progress_not_observed_path_frequencies",
+            "clock": params["runtime_compute_clock"],
+            "sampling": "one_keyed_paired_row_per_actual_requote_entry",
+            "bucket_ms": params["runtime_compute_bucket_ms"],
+            "initial_bucket_end_ms": params["runtime_compute_initial_bucket_end_ms"],
+            "seed": decision_to_gateway_latency_seed,
+            "semantics": params["_runtime_compute_sample_semantics"],
+        }
     if private_fill_visibility_enabled:
         contract["latency"]["private_fill_visibility"] = {
             "evidence_scope": "diagnostic_only",
@@ -1257,7 +1471,9 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
             errors.append(
                 "replacement terminal continuation requires merged 100ms replay clock"
             )
-        if float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0:
+        if float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0 and (
+            serial_rest_gateway.get("mode") != "sampled_async_fifo"
+        ):
             errors.append(
                 "replacement terminal continuation does not support main-loop timing"
             )

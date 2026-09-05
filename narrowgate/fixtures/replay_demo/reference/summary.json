@@ -22,7 +22,7 @@
     "terminal_value_usdc": "0.00200000"
   },
   "campaign_terminal_value_usdc": "0.00200000",
-  "canonical_summary_sha256": "1b89a0d5aa584cd2750cc405def20f9be593a8228a52c6a8281e0a15cce5f340",
+  "canonical_summary_sha256": "d7cf9397ed43c47c1e7b861d13b146a9bba35a7c27acb105b4fb7b6183f07a2e",
   "classification": {
     "classification": "synthetic_non_economic",
     "economic_authority": "none",
@@ -179,28 +179,6 @@
         "expected": 14,
         "observed": 14,
         "passed": true
-      },
-      {
-        "check": "offline_permissions_locked",
-        "expected": {
-          "external_order_submission": false,
-          "live_runtime_import": false,
-          "network_access": false,
-          "private_evidence_read": false,
-          "runtime_clock_read": false
-        },
-        "observed": {
-          "external_order_submission": false,
-          "live_runtime_import": false,
-          "network_access": false,
-          "private_evidence_read": false,
-          "runtime_clock_read": false
-        },
-        "passed": true
-      },
-      {
-        "check": "synthetic_non_economic_boundary",
-        "passed": true
       }
     ],
     "economic_evidence_eligible": false,
@@ -221,7 +199,7 @@
     },
     "contract": {
       "artifact_id": "public_replay_demo_contract",
-      "sha256": "f5ec7f12d7ee92614428003daa6ad2ba0f0d91cef981577b2875fa63c65a8ec7",
+      "sha256": "d60491ce0fe921441472f1e728cdfe73eeeaaa763587f94bef3999d00a06b3b2",
       "version": "narrowgate_replay_demo_contract.v1"
     },
     "state_contract_version": "continuous_replay_state.v2",

@@ -11,6 +11,7 @@ from research.families.f03_causal_13_head.ml_model import drop_all_missing_train
 from strategy.model_contract import (
     LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
     PRIVATE_DEPLOYMENT_AUTHORITY,
+    REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
     REQUIRED_FEATURE_DAG_ID,
     REQUIRED_FEATURE_DAG_SHA256,
     REQUIRED_FEATURE_SEMANTICS_VERSION,
@@ -221,9 +222,14 @@ def test_causal_model_bundle_resolves_matching_feature_manifest(tmp_path, monkey
     monkeypatch.setattr(backtest_tick, "FEATURES_DIR", tmp_path / "legacy")
     monkeypatch.delenv("MM_FEATURE_DIR", raising=False)
     assert backtest_tick.resolve_ml_feature_dir() == feature_dir.resolve()
+    assert (
+        backtest_tick.resolve_ml_feature_dir(require_training_panel=True) == feature_dir.resolve()
+    )
 
 
-def test_causal_model_bundle_rejects_wrong_feature_manifest(tmp_path, monkeypatch) -> None:
+def test_new_inference_panel_does_not_have_to_equal_training_manifest(
+    tmp_path, monkeypatch,
+) -> None:
     feature_dir = tmp_path / "features"
     model_dir = tmp_path / "models"
     feature_dir.mkdir()
@@ -240,8 +246,136 @@ def test_causal_model_bundle_rejects_wrong_feature_manifest(tmp_path, monkeypatc
     )
     monkeypatch.setattr(backtest_tick, "MODEL_DIR", model_dir)
     monkeypatch.setenv("MM_FEATURE_DIR", str(feature_dir))
+    assert backtest_tick.resolve_ml_feature_dir() == feature_dir.resolve()
     with np.testing.assert_raises_regex(RuntimeError, "Feature manifest hash mismatch"):
-        backtest_tick.resolve_ml_feature_dir()
+        backtest_tick.resolve_ml_feature_dir(require_training_panel=True)
+
+
+def _inference_panel_fixture(tmp_path, monkeypatch):
+    import lightgbm as lgb
+
+    panel = tmp_path / "new-dates"
+    model = tmp_path / "models"
+    panel.mkdir()
+    model.mkdir()
+    manifest = {
+        "schema_version": 3,
+        "symbol": "BTCUSDC",
+        "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
+        "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
+        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+        "feature_bucket_ms": 10000,
+        "feature_ready_offset_ms": 10000,
+        "feature_timestamp_semantics": "left_label_bucket_end",
+        "feature_cutoff_semantics": "strict_exclusive_completed_bucket_end",
+        "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+        "microstructure_5s_semantics": (
+            "trailing_five_seconds_from_causal_left_labelled_1s_bars"
+        ),
+        "labels_materialized": False,
+        "market_stage": "minimal",
+        "reference_symbol": "BTCUSDT",
+        "daily_files": [{"day": "2099-01-02"}],
+    }
+    (panel / "causal_feature_manifest.json").write_text(json.dumps(manifest))
+    frame = pd.DataFrame(
+        {"a": [0.0, 1.0, 2.0], "b": [2.0, 1.0, 0.0]},
+        index=pd.date_range("2099-01-02", periods=3, freq="10s", tz="UTC"),
+    )
+    frame.to_parquet(panel / "features_2099-01-02.parquet")
+    booster = lgb.train(
+        {"objective": "regression", "verbose": -1, "num_threads": 1,
+         "min_data_in_leaf": 1, "num_leaves": 2},
+        lgb.Dataset(frame, label=[0.1, 0.5, 0.9]), num_boost_round=1,
+    )
+    booster.save_model(str(model / "dir_10s.txt"))
+    metadata = {
+        **{k: v for k, v in manifest.items() if k not in {"daily_files", "labels_materialized"}},
+        "feature_cols": ["a", "b"],
+        "feature_manifest_path": str(tmp_path / "training" / "causal_feature_manifest.json"),
+        "feature_manifest_sha256": "f" * 64,
+    }
+    meta_path = model / "dir_10s_meta.json"
+    meta_path.write_text(json.dumps(metadata))
+    monkeypatch.setattr(backtest_tick, "MODEL_DIR", model)
+    monkeypatch.setattr(backtest_tick, "SYMBOL", "BTCUSDC")
+    monkeypatch.delenv("MM_FEATURE_DIR", raising=False)
+    monkeypatch.delenv("MM_FEATURE_WARMUP_DIR", raising=False)
+    start = pd.Timestamp("2099-01-02", tz="UTC").value // 1_000_000
+    trades = pd.DataFrame({"transact_time": [start, start + 30_000]})
+    return panel, manifest, meta_path, metadata, trades
+
+
+def test_new_dates_inference_uses_frozen_model_with_compatible_actual_panel(tmp_path, monkeypatch):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    result = backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+    assert result is not None
+    assert len(result[0]) == 3
+    assert np.all(np.isfinite(result[1]))
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("symbol", "ETHUSDC"), ("feature_semantics_version", 5),
+    ("feature_dag_id", "another-graph"), ("feature_dag_sha256", "0" * 64),
+    ("feature_bucket_ms", 1000), ("feature_ready_offset_ms", 0),
+    ("feature_cutoff_semantics", "inclusive"),
+    ("calendar_timestamp_semantics", "raw-integer-guessed-unit"),
+    ("market_stage", "another-stage"), ("reference_symbol", "ETHUSDT"),
+])
+def test_explicit_inference_panel_cannot_bypass_semantic_checks(
+    tmp_path, monkeypatch, field, value,
+):
+    panel, manifest, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    manifest[field] = value
+    (panel / "causal_feature_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match=f"incompatible (?:inference )?{field}"):
+        backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+
+
+def test_inference_warmup_panel_cannot_bypass_semantic_checks(tmp_path, monkeypatch):
+    panel, manifest, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    warmup = tmp_path / "warmup"
+    warmup.mkdir()
+    manifest["feature_cutoff_semantics"] = "inclusive"
+    (warmup / "causal_feature_manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setenv("MM_FEATURE_WARMUP_DIR", str(warmup))
+    with pytest.raises(RuntimeError, match="incompatible feature_cutoff_semantics"):
+        backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+
+
+@pytest.mark.parametrize("columns", [["a"], ["b", "a"], ["a", "renamed"], ["a", "a"], []])
+def test_inference_rejects_model_width_or_feature_name_mismatch(tmp_path, monkeypatch, columns):
+    panel, _, meta_path, metadata, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    metadata["feature_cols"] = columns
+    meta_path.write_text(json.dumps(metadata))
+    with pytest.raises(RuntimeError, match="model feature width/order differs from metadata"):
+        backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+
+
+def test_inference_allows_extra_and_reordered_stored_feature_columns(tmp_path, monkeypatch):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    before = backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+    path = panel / "features_2099-01-02.parquet"
+    frame = pd.read_parquet(path)
+    frame["unconsumed"] = 99.0
+    frame.loc[:, ["unconsumed", "b", "a"]].to_parquet(path)
+    after = backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+    np.testing.assert_array_equal(after[1], before[1])
+
+
+def test_inference_rejects_duplicate_actual_feature_columns(tmp_path, monkeypatch):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    path = panel / "features_2099-01-02.parquet"
+    duplicate_frame = pd.read_parquet(path)
+    duplicate_frame.columns = ["a", "a"]
+    original_read = pd.read_parquet
+
+    def read(source, *args, **kwargs):
+        return duplicate_frame.copy() if source == path else original_read(source, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", read)
+    with pytest.raises(RuntimeError, match="duplicate feature columns"):
+        backtest_tick.load_ml_predictions(trades, feature_dir=panel)
 
 
 def test_live_prediction_uses_canonical_features_without_ret_stacking() -> None:

@@ -304,6 +304,85 @@ def _runtime_reload_kwargs(paths: dict[str, Path]) -> dict[str, object]:
     }
 
 
+def _rewrite_bound_artifact(paths, manifest, policy, bundle) -> None:
+    """Rebind a synthetic fixture after an intentional semantic mutation."""
+    bundle.pop("canonical_sha256", None)
+    bundle["canonical_sha256"] = _canonical_sha(bundle)
+    bundle_sha = _write_json(paths["bundle"], bundle)
+    policy.pop("canonical_sha256", None)
+    policy["predicate_bundle_file_sha256"] = bundle_sha
+    policy["canonical_sha256"] = _canonical_sha(policy)
+    policy_sha = _write_json(paths["policy"], policy)
+    manifest.pop("artifact_sha256", None)
+    manifest["policy_file_sha256"] = policy_sha
+    manifest["predicate_bundle_file_sha256"] = bundle_sha
+    manifest["artifact_sha256"] = _canonical_sha(manifest)
+    _write_json(paths["manifest"], manifest)
+
+
+@pytest.mark.parametrize("annotations", [None, {}, {
+    "research_supported": True, "owner_risk_accepted": False,
+    "action_authorized": True, "live_authorized": True,
+}])
+def test_research_annotations_do_not_control_artifact_loading(tmp_path, annotations):
+    reference, paths = _artifact(tmp_path)
+    manifest, policy, bundle = (
+        json.loads(paths[name].read_text(encoding="ascii"))
+        for name in ("manifest", "policy", "bundle")
+    )
+    for field in ("research_supported", "owner_risk_accepted"):
+        manifest.pop(field)
+    policy.pop("evidence_boundary")
+    if annotations is not None:
+        manifest.update(annotations)
+        policy["evidence_boundary"] = annotations
+    _rewrite_bound_artifact(paths, manifest, policy, bundle)
+    loaded = subject.LiveBuyE3CooldownPolicy.from_files(**_runtime_reload_kwargs(paths))
+    assert loaded.evaluator.rules == reference.evaluator.rules
+    assert loaded.evaluator.predicate_columns == reference.evaluator.predicate_columns
+    assert loaded.definitions == reference.definitions
+    assert loaded.direct_predicates == reference.direct_predicates
+    for values in product((-1, 0, 1), repeat=2):
+        row = dict(zip(loaded.evaluator.predicate_columns, values, strict=True))
+        kwargs = {"predicate_values": row, "baseline_duration_ms": 170_000}
+        assert loaded.evaluator.evaluate(**kwargs) == reference.evaluator.evaluate(**kwargs)
+
+
+@pytest.mark.parametrize("mutation, expected", [
+    ("manifest_schema", "artifact_manifest_identity_drifted"),
+    ("policy_schema", "policy_identity_drifted"),
+    ("side", "policy_identity_drifted"),
+    ("action", "action_outside_allowlist"),
+    ("rules", "rules_missing"),
+    ("features", "predicate_bundle_identity_drifted"),
+])
+def test_research_annotations_cannot_expand_runtime_semantics(tmp_path, mutation, expected):
+    _reference, paths = _artifact(tmp_path)
+    manifest, policy, bundle = (
+        json.loads(paths[name].read_text(encoding="ascii"))
+        for name in ("manifest", "policy", "bundle")
+    )
+    policy["evidence_boundary"] = {
+        "research_supported": True, "owner_risk_accepted": True,
+        "live_authorized": True, "action_authorized": True,
+    }
+    if mutation == "manifest_schema":
+        manifest["schema_version"] = "unsupported"
+    elif mutation == "policy_schema":
+        policy["schema_version"] = "unsupported"
+    elif mutation == "side":
+        policy["side"] = "SELL"
+    elif mutation == "action":
+        policy["policy"]["ordered_first_match_rules"][0]["action"] = "FIXED_9999S"
+    elif mutation == "rules":
+        policy["policy"]["ordered_first_match_rules"] = None
+    else:
+        bundle["uses_trade_predicates"] = True
+    _rewrite_bound_artifact(paths, manifest, policy, bundle)
+    with pytest.raises(ValueError, match=expected):
+        subject.LiveBuyE3CooldownPolicy.from_files(**_runtime_reload_kwargs(paths))
+
+
 def test_artifact_hash_drift_is_rejected_at_startup(tmp_path: Path) -> None:
     _runtime, paths = _artifact(tmp_path)
     kwargs = _runtime_reload_kwargs(paths)

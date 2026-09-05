@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from live import runtime_policy
 from scripts.preflight_live_deploy import validate_deploy_config
 from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
 from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
@@ -225,6 +226,7 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     assert identity["f05_buy_e3_artifacts"] == {"enabled": False}
     assert identity["startup_gates_not_validated"] == [
         "deployment_envelope",
+        "policy_approvals",
         "locked_runtime",
         "stopped_exchange_reconciliation",
     ]
@@ -255,7 +257,6 @@ def test_preflight_accepts_private_config_and_bundle_outside_repository(
 
 def test_preflight_enabled_buy_e3_missing_artifacts_fails_closed(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_path = _write_fixture(tmp_path)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -269,7 +270,6 @@ def test_preflight_enabled_buy_e3_missing_artifacts_fails_closed(
         }
     )
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    monkeypatch.setenv("NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY", "1")
 
     with pytest.raises(ValueError, match="requires strategy.buy_e3"):
         validate_deploy_config(config_path, tmp_path)
@@ -320,11 +320,6 @@ def test_preflight_derives_policy_leaf_hashes_from_files_not_yaml(
         }
     )
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    monkeypatch.setenv(
-        "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
-        "1",
-    )
-    monkeypatch.setenv("NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY", "1")
     observed: dict[str, dict[str, object]] = {}
 
     def fake_boolean_from_files(_cls, **kwargs):
@@ -673,24 +668,18 @@ def test_preflight_env_flag_cannot_lend_artifact_identity_to_override(
         )
 
 
-def test_preflight_rejects_unrepaired_q90_action(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("obsolete_flag", [None, "1"])
+def test_preflight_cannot_grant_policy_approval_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, obsolete_flag,
 ) -> None:
-    monkeypatch.delenv(
-        "NARROWGATE_ALLOW_UNREPAIRED_Q90_ACTION_DEPLOY", raising=False
-    )
+    def forbidden():
+        raise AssertionError("default preflight must not evaluate deployment approval")
 
-    with pytest.raises(ValueError, match="POST_CANCEL_RECOVERY"):
-        validate_deploy_config(
-            _write_fixture(tmp_path, q90_action_enabled=True),
-            tmp_path,
-        )
-
-
-def test_preflight_labels_explicit_unrepaired_q90_private_approval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY", "1")
+    monkeypatch.setattr(runtime_policy, "deployment_envelope_runtime_authority", forbidden)
+    if obsolete_flag is None:
+        monkeypatch.delenv("NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY", raising=False)
+    else:
+        monkeypatch.setenv("NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY", obsolete_flag)
 
     identity = validate_deploy_config(
         _write_fixture(tmp_path, q90_action_enabled=True),
@@ -698,13 +687,74 @@ def test_preflight_labels_explicit_unrepaired_q90_private_approval(
     )
 
     assert identity["dynamic_fill_hazard_action_enabled"] is True
-    assert identity["q90_post_cancel_recovery_contract_supported"] is False
-    assert identity["q90_action_deploy_authority"] == "private_deployment_approved"
-    assert identity["q90_action_runtime_authority"] == (
-        "private_deployment_approved"
+    assert identity["policy_admission"] == "not_evaluated_requires_deployment_envelope"
+    assert "policy_approvals" in identity["startup_gates_not_validated"]
+    assert "q90_action_runtime_authority" not in identity
+    assert "q90_owner_override_effective" not in identity
+
+
+def _verified_fixture_authority(config_path: Path, approvals: list[str]) -> dict:
+    authorization_path = (
+        config_path.parent / "models/bundle/deployment_authorization.json"
+    ).resolve()
+    return {
+        "config_file_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "policy_approvals": approvals,
+        "model_policy_member_paths": {"model_authorization": str(authorization_path)},
+        "model_policy_member_sha256": {
+            "model_authorization": hashlib.sha256(authorization_path.read_bytes()).hexdigest(),
+        },
+    }
+
+
+@pytest.mark.parametrize("approvals", [[], ["f05_boolean_cooldown"], ["q90_action"]])
+def test_preflight_opt_in_checks_verified_policy_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approvals: list[str],
+) -> None:
+    config_path = _write_fixture(tmp_path, q90_action_enabled=True)
+    authority = _verified_fixture_authority(config_path, approvals)
+    monkeypatch.setattr(
+        runtime_policy, "deployment_envelope_runtime_authority", lambda: authority,
     )
-    assert identity["q90_owner_override_requested"] is True
-    assert identity["q90_owner_override_effective"] is True
+    monkeypatch.setenv("NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY", "1")
+
+    if "q90_action" not in approvals:
+        with pytest.raises(ValueError, match="does not approve enabled policy: q90_action"):
+            validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
+        return
+
+    identity = validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
+    assert identity["policy_admission"] == {
+        "approved_policies": ["q90_action"],
+        "authorization_source": "deployment_envelope",
+    }
+    assert identity["startup_gates_not_validated"] == [
+        "locked_runtime", "stopped_exchange_reconciliation",
+    ]
+
+
+@pytest.mark.parametrize("drift", ["config", "model_authorization"])
+def test_preflight_opt_in_binds_exact_config_and_artifact_locators(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str,
+) -> None:
+    config_path = _write_fixture(tmp_path, q90_action_enabled=True)
+    authority = _verified_fixture_authority(config_path, ["q90_action"])
+    if drift == "config":
+        authority["config_file_sha256"] = "0" * 64
+        expected_error = "deploy config differs from deployment envelope"
+    else:
+        authority["model_policy_member_paths"]["model_authorization"] = str(
+            config_path.resolve()
+        )
+        authority["model_policy_member_sha256"]["model_authorization"] = authority[
+            "config_file_sha256"
+        ]
+        expected_error = "policy_artifact_authority_config_path_drifted:model_authorization"
+    monkeypatch.setattr(
+        runtime_policy, "deployment_envelope_runtime_authority", lambda: authority,
+    )
+    with pytest.raises(ValueError, match=expected_error):
+        validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
 
 
 def _enable_remote_lifecycle_collection(

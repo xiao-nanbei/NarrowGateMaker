@@ -53,9 +53,16 @@ def _identity_path(path: Path, repo_root: Path) -> str:
         return str(path)
 
 
-def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]:
+def validate_deploy_config(
+    config_path: Path,
+    repo_root: Path,
+    *,
+    check_policy_approval: bool = False,
+) -> dict[str, Any]:
     config_path = config_path.resolve()
-    config_text = config_path.read_text(encoding="utf-8")
+    config_bytes = config_path.read_bytes()
+    config_sha256 = hashlib.sha256(config_bytes).hexdigest()
+    config_text = config_bytes.decode("utf-8")
     if PUBLIC_TEMPLATE_MARKER in config_text:
         raise ValueError(
             f"{config_path} is marked {PUBLIC_TEMPLATE_MARKER}; "
@@ -65,11 +72,6 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     from execution.order_lifecycle_journal_storage_v2 import (
         BOUNDED_REMOTE_SPOOL,
         validate_lifecycle_journal_storage,
-    )
-    from live.runtime_policy import (
-        f05_boolean_cooldown_runtime_policy,
-        f05_buy_e3_runtime_policy,
-        q90_action_runtime_policy,
     )
     from research.families.f02_empirical_p3_touch.fill_probability import (
         FillProbabilityModel,
@@ -296,28 +298,6 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
             "hash-bound override identity"
         )
 
-    q90_policy = q90_action_runtime_policy(
-        bool(strategy.get("dynamic_fill_hazard_action_enabled", False))
-    )
-    q90_policy_fields = {
-        key: value
-        for key, value in q90_policy.items()
-        if key != "schema_version"
-    }
-    f05_policy = f05_boolean_cooldown_runtime_policy(
-        bool(strategy.get("boolean_cooldown_policy_enabled", False)),
-        evidence_route=str(
-            strategy.get(
-                "boolean_cooldown_evidence_route",
-                "private_deployment_approval",
-            )
-        ),
-    )
-    f05_policy_fields = {
-        key: value
-        for key, value in f05_policy.items()
-        if key != "schema_version"
-    }
     f05_artifact_identity: dict[str, Any] = {"enabled": False}
     if bool(strategy.get("boolean_cooldown_policy_enabled", False)):
         from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
@@ -382,15 +362,6 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         }
 
     buy_e3_enabled = bool(strategy.get("buy_e3_cooldown_policy_enabled", False))
-    buy_e3_policy = f05_buy_e3_runtime_policy(
-        buy_e3_enabled,
-        evidence_route=str(
-            strategy.get(
-                "buy_e3_cooldown_evidence_route",
-                "private_deployment_buy_e3",
-            )
-        ),
-    )
     buy_e3_artifact_identity: dict[str, Any] = {"enabled": False}
     if buy_e3_enabled:
         from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
@@ -454,9 +425,44 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
             "predicate_bundle_sha256": runtime.evaluator.predicate_bundle_sha256,
         }
 
+    policy_admission: str | dict[str, Any] = (
+        "not_evaluated_requires_deployment_envelope"
+    )
+    startup_gates_not_validated = [
+        "deployment_envelope",
+        "policy_approvals",
+        "locked_runtime",
+        "stopped_exchange_reconciliation",
+    ]
+    if check_policy_approval:
+        from types import SimpleNamespace
+
+        from live.runtime_policy import (
+            admit_runtime_policies,
+            deployment_envelope_runtime_authority,
+        )
+        from strategy.maker_engine import validate_live_artifact_authority
+
+        deployment_authority = deployment_envelope_runtime_authority()
+        if config_sha256 != deployment_authority["config_file_sha256"]:
+            raise ValueError("deploy config differs from deployment envelope")
+        validate_live_artifact_authority(
+            SimpleNamespace(strategy=SimpleNamespace(**strategy)),
+            artifact_authority=deployment_authority,
+            model_authorization_path=model_authorization_path,
+        )
+        policy_admission = admit_runtime_policies(
+            strategy,
+            deployment_authority=deployment_authority,
+        )
+        startup_gates_not_validated = [
+            "locked_runtime",
+            "stopped_exchange_reconciliation",
+        ]
+
     return {
         "config_path": str(config_path),
-        "config_sha256": _sha256(config_path),
+        "config_sha256": config_sha256,
         "model_dir": _identity_path(model_dir, repo_root),
         "model_authorization_path": _identity_path(
             model_authorization_path,
@@ -509,32 +515,19 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         },
         "use_bar_pricing": bool(strategy.get("use_bar_pricing", True)),
         **clock_limits,
-        "q90_runtime_policy_schema_version": q90_policy["schema_version"],
-        **q90_policy_fields,
-        "q90_action_deploy_authority": q90_policy[
-            "q90_action_runtime_authority"
-        ],
-        "f05_boolean_cooldown_runtime_policy_schema_version": f05_policy[
-            "schema_version"
-        ],
-        **f05_policy_fields,
+        "dynamic_fill_hazard_action_enabled": bool(
+            strategy.get("dynamic_fill_hazard_action_enabled", False)
+        ),
+        "f05_boolean_cooldown_enabled": bool(
+            strategy.get("boolean_cooldown_policy_enabled", False)
+        ),
         "f05_boolean_cooldown_artifacts": f05_artifact_identity,
-        "f05_buy_e3_runtime_policy_schema_version": buy_e3_policy[
-            "schema_version"
-        ],
-        **{
-            key: value
-            for key, value in buy_e3_policy.items()
-            if key != "schema_version"
-        },
+        "f05_buy_e3_enabled": buy_e3_enabled,
         "f05_buy_e3_artifacts": buy_e3_artifact_identity,
         "lifecycle_journal_v2": lifecycle_identity,
         "validation_scope": "config_model_p3_and_enabled_policy_artifacts",
-        "startup_gates_not_validated": [
-            "deployment_envelope",
-            "locked_runtime",
-            "stopped_exchange_reconciliation",
-        ],
+        "policy_admission": policy_admission,
+        "startup_gates_not_validated": startup_gates_not_validated,
     }
 
 
@@ -546,10 +539,19 @@ def main() -> int:
         type=Path,
         default=Path(__file__).resolve().parents[1],
     )
+    parser.add_argument(
+        "--check-policy-approval",
+        action="store_true",
+        help="admit enabled policies against the invocation-bound deployment envelope",
+    )
     args = parser.parse_args()
 
     try:
-        identity = validate_deploy_config(args.config, args.repo_root.resolve())
+        identity = validate_deploy_config(
+            args.config,
+            args.repo_root.resolve(),
+            check_policy_approval=bool(args.check_policy_approval),
+        )
     except (OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
         parser.error(str(exc))
 

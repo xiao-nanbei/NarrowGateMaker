@@ -39,28 +39,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from models import backtest_tick as bt  # noqa: E402
-from research.families.f01_fixed_parameter_racing import daily_smoke_sweep as smoke  # noqa: E402
 from models import data_windows  # noqa: E402
-from research.system_engineering.audit.market_data_latency import (  # noqa: E402
-    SIMULATION_MODES,
-    MarketDataLatencySimulator,
-)
-from research.families.f10_live_replay_attribution.audit.metrics import (  # noqa: E402
-    TradeRow,
-    build_campaigns,
-    campaign_label_rows,
-)
 from models.audit.support import norm_side, safe_float  # noqa: E402
 from models.backtest_config import (  # noqa: E402
+    REPLAY_LOCATOR_FIELDS,
     add_queue_calibration_params,
     load_tick_base_params,
     validate_formal_replay_calibration,
 )
 from models.exchange_book_replay import CryptoHFTExchangeBookTape  # noqa: E402
-from research.families.f04_external_market_alpha.reference_replay import (  # noqa: E402
-    apply_global_flow_visibility_delay,
-    load_causal_1s_global_flow,
-)
 from models.replay_contract import (  # noqa: E402
     DEFAULT_LATENCY_ENVIRONMENT,
     configure_fixed_latency_distribution,
@@ -70,11 +57,73 @@ from models.replay_contract import (  # noqa: E402
     write_replay_contract,
 )
 from models.symbol_paths import DEFAULT_SYMBOL  # noqa: E402
+from research.families.f01_fixed_parameter_racing import daily_smoke_sweep as smoke  # noqa: E402
+from research.families.f04_external_market_alpha.reference_replay import (  # noqa: E402
+    apply_global_flow_visibility_delay,
+    load_causal_1s_global_flow,
+)
+from research.families.f10_live_replay_attribution.audit.metrics import (  # noqa: E402
+    TradeRow,
+    build_campaigns,
+    campaign_label_rows,
+)
+from research.system_engineering.audit.market_data_latency import (  # noqa: E402
+    SIMULATION_MODES,
+    MarketDataLatencySimulator,
+)
+from research.system_engineering.audit.rest_latency_calibration import (  # noqa: E402
+    load_runtime_timing_samples,
+)
 from strategy.campaign_repair import CampaignRepairModel  # noqa: E402
 
 
 def _normalize_days(days: list[str]) -> list[str]:
     return smoke._normalize_days(days)
+
+
+def _apply_runtime_timing_samples(
+    base: dict[str, Any], path: Path, *, effective_time_assumption: str,
+    arms: list[smoke.SmokeArm] | None = None,
+    bulk_cancel_model: str = "unmodeled",
+) -> dict[str, Any]:
+    """Bind measured gateway rows without changing the configured transport."""
+    if (
+        base.get("order_transport") != "rest"
+        or base.get("async_order_lanes_enabled") is not True
+        or base.get("cross_side_order_lanes_enabled") is not False
+    ):
+        raise ValueError("runtime timing samples require the configured REST async GLOBAL FIFO")
+    capacity = base.get("async_order_lane_capacity")
+    if type(capacity) is not int or capacity <= 0:
+        raise ValueError("runtime timing samples require the configured positive lane capacity")
+    calibrated = load_runtime_timing_samples(
+        path, effective_time_assumption=effective_time_assumption,
+        bulk_cancel_model=bulk_cancel_model,
+    )
+    bound_fields = set(calibrated["params"]) | {
+        "async_order_lane_capacity", "rng_seed", "strict_calibration",
+    }
+    # Action arms may change policy, not silently replace the measured
+    # environment while the report still describes the original samples.
+    for arm in arms or ():
+        forbidden = []
+        for name in arm.overrides:
+            normalized = name.lstrip("_")
+            if name in bound_fields or "latency" in name or normalized.startswith((
+                "replay_", "rest_gateway_", "serial_rest_", "bulk_cancel_", "empirical_requote_",
+                "exec_book_visibility_", "exec_depth_visibility_", "exec_trade_visibility_",
+                "decision_to_gateway_", "pre_snapshot_compute_", "requote_tail_work_",
+                "main_loop_work_",
+            )):
+                forbidden.append(name)
+        if forbidden:
+            raise ValueError(
+                f"runtime timing arm {arm.name!r} changes bound environment fields: "
+                + ", ".join(sorted(forbidden))
+            )
+    base.update(calibrated["params"])
+    base["replay_evidence_scope"] = "runtime_gateway_only_diagnostic"
+    return calibrated["calibration"]
 
 
 def _resolve_cpp_parity_days(
@@ -1670,6 +1719,16 @@ def _write_markdown(
         f"```text\n{daily.to_string(index=False) if not daily.empty else '(empty)'}\n```",
         "",
     ]
+    calibration = meta.get("runtime_timing_calibration")
+    if calibration:
+        lines[9:9] = [
+            "## Runtime timing scope",
+            "",
+            "Gateway-only diagnostic; not a complete current-live baseline.",
+            "",
+            *[f"- {item}" for item in calibration["limitations"]],
+            "",
+        ]
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -2239,12 +2298,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--replay-purpose",
-        choices=("formal", "live_alignment"),
+        choices=("formal", "live_alignment", "diagnostic"),
         default="formal",
         help=(
             "formal produces strategy evidence under a frozen replay contract; "
             "live_alignment is diagnostic-only for units, clocks, state machines, "
-            "and gate ordering."
+            "and gate ordering; diagnostic is model/sensitivity analysis without "
+            "promotion authority."
         ),
     )
     parser.add_argument(
@@ -2265,6 +2325,41 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--rng-seed", type=int, default=42)
     parser.add_argument("--latency-seed", type=int, default=59)
     parser.add_argument(
+        "--replay-locator-projection",
+        type=Path,
+        default=None,
+        help=(
+            "Diagnostic-only local model/policy path projection bound to the original "
+            "--config bytes. Does not change policy values or grant live authority."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-timing-samples",
+        type=Path,
+        default=None,
+        help=(
+            "Anonymous per-request HTTP/private-ACK timing JSON for a Python diagnostic "
+            "with an explicit REST async GLOBAL FIFO config. Gateway only: compute, "
+            "snapshot ages and decision-to-dispatch are not injected."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-effective-time-assumption",
+        choices=("dispatch", "exchange_event_proxy", "observable_upper_bound"),
+        default=None,
+        help="Required with --runtime-timing-samples; exchange-effective time is not observed.",
+    )
+    parser.add_argument(
+        "--runtime-bulk-cancel-model",
+        choices=("unmodeled", "matched_risk_case"),
+        default="unmodeled",
+        help=(
+            "Optional single matched non-shutdown risk case (n=1), not a stable distribution. "
+            "matched_risk_case reuses shared effective/private/HTTP phases for all batch "
+            "targets as an explicit modeling assumption. Default leaves bulk cancel unmodeled."
+        ),
+    )
+    parser.add_argument(
         "--latency-profile-id",
         default="provider_neutral_latency_profile_v1",
         help="Environment/version identity for the frozen REST/book latency distribution.",
@@ -2280,7 +2375,15 @@ def main(argv: list[str] | None = None) -> None:
         default="baseline",
         help="Rare synthetic stalls are enabled only by the stress scenario.",
     )
-    parser.add_argument("--latency-baseline-clip-quantile", type=float, default=0.99)
+    parser.add_argument(
+        "--latency-baseline-clip-quantile",
+        type=float,
+        default=1.0,
+        help=(
+            "1.0 preserves all observed latency samples; smaller values explicitly "
+            "select trimmed sensitivity or historical reproduction."
+        ),
+    )
     parser.add_argument("--latency-stress-spike-probability", type=float, default=0.001)
     parser.add_argument("--latency-stress-spike-multiplier", type=float, default=5.0)
     parser.add_argument(
@@ -2457,6 +2560,34 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.replay_locator_projection is not None and (
+        args.replay_purpose != "diagnostic" or args.config is None
+    ):
+        raise SystemExit("--replay-locator-projection requires diagnostic and explicit --config")
+    if args.runtime_timing_samples is not None:
+        if args.replay_purpose != "diagnostic" or args.engine != "python":
+            raise SystemExit(
+                "--runtime-timing-samples requires --replay-purpose diagnostic --engine python"
+            )
+        if args.config is None or args.runtime_effective_time_assumption is None:
+            raise SystemExit(
+                "--runtime-timing-samples requires --config and "
+                "--runtime-effective-time-assumption"
+            )
+        if args.live_perf_telemetry is not None or args.exec_book_visibility_profile is not None:
+            raise SystemExit(
+                "--runtime-timing-samples cannot be combined with --live-perf-telemetry "
+                "or --exec-book-visibility-profile; row means and snapshot ages are not "
+                "per-request/per-message latency samples"
+            )
+        if args.latency_scenario != "baseline" or args.latency_baseline_clip_quantile != 1.0:
+            raise SystemExit(
+                "--runtime-timing-samples uses unchanged empirical rows without clipping"
+            )
+    elif args.runtime_effective_time_assumption is not None:
+        raise SystemExit("--runtime-effective-time-assumption requires --runtime-timing-samples")
+    elif args.runtime_bulk_cancel_model != "unmodeled":
+        raise SystemExit("--runtime-bulk-cancel-model requires --runtime-timing-samples")
     if args.trace_fills_max <= 0:
         raise SystemExit(
             "campaign outcome audit requires --trace-fills-max > 0; "
@@ -2553,6 +2684,16 @@ def main(argv: list[str] | None = None) -> None:
     if not requested:
         raise SystemExit("Provide --arms and/or --fill-cooldown-grid")
     arms = [arms_by_name[name] for name in requested]
+    if args.replay_locator_projection is not None:
+        locator_fields = {name.split(".", 1)[1] for name in REPLAY_LOCATOR_FIELDS}
+        locator_fields.update({"resolved_model_dir", "_replay_locator_projection"})
+        for arm in arms:
+            forbidden = set(arm.overrides) & locator_fields
+            if forbidden:
+                raise ValueError(
+                    f"locator-bound arm {arm.name!r} changes model/policy locations: "
+                    + ", ".join(sorted(forbidden))
+                )
     if args.engine == "cpp" and any(
         bool(arm.overrides.get("post_fill_quote_response_enabled", False)) for arm in arms
     ):
@@ -2568,6 +2709,7 @@ def main(argv: list[str] | None = None) -> None:
         base = load_tick_base_params(
             symbol=args.symbol,
             config_path=args.config,
+            locator_projection_path=args.replay_locator_projection,
             configure_symbol=bt.configure_symbol,
             require_historical_bbo=True,
             queue_calibration_path=args.queue_calibration_path,
@@ -2709,6 +2851,16 @@ def main(argv: list[str] | None = None) -> None:
         base["exec_depth_visibility_source_offset_ms"] = int(
             args.exec_depth_visibility_source_offset_ms
         )
+    runtime_timing_calibration: dict[str, Any] = {}
+    if args.runtime_timing_samples is not None:
+        runtime_timing_calibration = _apply_runtime_timing_samples(
+            base,
+            args.runtime_timing_samples,
+            effective_time_assumption=args.runtime_effective_time_assumption,
+            arms=arms,
+            bulk_cancel_model=args.runtime_bulk_cancel_model,
+        )
+
     configure_fixed_latency_distribution(
         base,
         scenario=args.latency_scenario,
@@ -2719,6 +2871,8 @@ def main(argv: list[str] | None = None) -> None:
         stress_spike_multiplier=args.latency_stress_spike_multiplier,
     )
     base["replay_purpose"] = args.replay_purpose
+    if args.replay_purpose == "diagnostic":
+        base.setdefault("replay_evidence_scope", "replay_diagnostic_only")
     base["replay_initial_state_mode"] = args.initial_state_mode
     base["replay_promotion_eligible"] = False
     if args.initial_state_mode == "frozen_standard":
@@ -2819,7 +2973,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         validate_frozen_replay_contract(base)
         base["strict_calibration_validated"] = True
-        base["replay_evidence_scope"] = (
+        base["replay_evidence_scope"] = base.get("replay_evidence_scope") or (
             "formal_stress_only"
             if args.latency_scenario == "stress"
             else (
@@ -3206,7 +3360,10 @@ def main(argv: list[str] | None = None) -> None:
         "window_cache_version": data_windows.WINDOW_CACHE_VERSION,
         "config_path": str(args.config.expanduser()) if args.config else "",
         "config_sha256": _sha256(args.config.expanduser() if args.config else None),
+        "replay_locator_projection": base.get("_replay_locator_projection"),
         "live_like_replay_baseline": bool(args.live_like_replay_baseline),
+        "replay_evidence_scope": str(base.get("replay_evidence_scope", "legacy_replay_diagnostic")),
+        "runtime_timing_calibration": runtime_timing_calibration,
         "live_perf_telemetry": str(args.live_perf_telemetry) if args.live_perf_telemetry else "",
         "live_perf_telemetry_sha256": _sha256(
             args.live_perf_telemetry.expanduser() if args.live_perf_telemetry else None

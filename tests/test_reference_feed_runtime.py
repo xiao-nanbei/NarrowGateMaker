@@ -14,6 +14,44 @@ from live.ws_handler import WSHandler
 from strategy.signal import SignalEngine
 
 
+class _FakeFuturesSocket:
+    def __init__(self, owner, *, on_abort=None):
+        self._owner = owner
+        self._on_abort = on_abort
+        self.shutdown_called = False
+
+    def abort(self):
+        self._owner.stopped = True
+        if self._on_abort is not None:
+            self._on_abort()
+
+    def shutdown(self):
+        self.shutdown_called = True
+
+
+class _FakeFuturesSocketManager:
+    def __init__(self, owner, *, on_abort=None, remains_alive=False):
+        self.ws = _FakeFuturesSocket(owner, on_abort=on_abort)
+        self._remains_alive = remains_alive
+        self.join_timeouts = []
+
+    def join(self, timeout=None):
+        self.join_timeouts.append(timeout)
+
+    def is_alive(self):
+        return self._remains_alive
+
+
+class _FakeFuturesClient:
+    def __init__(self, *, on_abort=None, remains_alive=False):
+        self.stopped = False
+        self.socket_manager = _FakeFuturesSocketManager(
+            self,
+            on_abort=on_abort,
+            remains_alive=remains_alive,
+        )
+
+
 def test_cross_trade_batch_matches_single_event_state(monkeypatch):
     monkeypatch.delenv("NARROWGATE_CPP_GLOBAL_FLOW", raising=False)
     single = SignalEngine(enable_ml=False, global_flow_shadow_enabled=True)
@@ -159,14 +197,11 @@ def test_ws_handler_private_first_start_keeps_all_market_producers_dormant(
     events = []
     websocket_clients = []
 
-    class FakeWebSocketClient:
+    class FakeWebSocketClient(_FakeFuturesClient):
         def __init__(self, **kwargs):
+            super().__init__()
             self.kwargs = kwargs
-            self.stopped = False
             websocket_clients.append(self)
-
-        def stop(self):
-            self.stopped = True
 
     monkeypatch.setattr(
         "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
@@ -360,21 +395,21 @@ def test_ws_handler_public_start_failure_keeps_admitted_private_stream_running(
     clients = []
     close_threads = []
 
-    class FakeWebSocketClient:
+    class FakeWebSocketClient(_FakeFuturesClient):
         def __init__(self, **kwargs):
-            self.stopped = False
             self.on_close = kwargs["on_close"]
-            clients.append(self)
 
-        def stop(self):
-            self.stopped = True
-            thread = threading.Thread(target=self.on_close, args=(None,))
-            close_threads.append(thread)
-            thread.start()
-            # A real connector stop joins its socket-manager thread.  This
-            # bounded join proves close callbacks do not wait on the broader
-            # startup lock held by the cleanup path.
-            thread.join(timeout=0.2)
+            def on_abort():
+                thread = threading.Thread(target=self.on_close, args=(None,))
+                close_threads.append(thread)
+                thread.start()
+                # A real connector stop joins its socket-manager thread.  This
+                # bounded join proves close callbacks do not wait on the broader
+                # startup lock held by the cleanup path.
+                thread.join(timeout=0.2)
+
+            super().__init__(on_abort=on_abort)
+            clients.append(self)
 
     monkeypatch.setattr(
         "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
@@ -420,14 +455,11 @@ def test_ws_handler_public_close_during_startup_fails_without_reconnect(
 ):
     clients = []
 
-    class ClosingWebSocketClient:
+    class ClosingWebSocketClient(_FakeFuturesClient):
         def __init__(self, **kwargs):
-            self.stopped = False
+            super().__init__()
             clients.append(self)
             kwargs["on_close"](None)
-
-        def stop(self):
-            self.stopped = True
 
     monkeypatch.setattr(
         "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
@@ -444,6 +476,7 @@ def test_ws_handler_public_close_during_startup_fails_without_reconnect(
     monkeypatch.setattr(handler, "_start_spot_stream", Mock())
     monkeypatch.setattr(handler, "_start_external_venue_streams", Mock())
     monkeypatch.setattr(handler, "_arm_stream_silence_watchdog", Mock())
+
     reconnect = Mock()
     monkeypatch.setattr(handler, "_reconnect_market", reconnect)
 
@@ -469,13 +502,10 @@ def test_ws_handler_close_at_public_activation_boundary_reconnects(
 ):
     clients = []
 
-    class ActiveWebSocketClient:
+    class ActiveWebSocketClient(_FakeFuturesClient):
         def __init__(self, **_kwargs):
-            self.stopped = False
+            super().__init__()
             clients.append(self)
-
-        def stop(self):
-            self.stopped = True
 
     monkeypatch.setattr(
         "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
@@ -493,7 +523,9 @@ def test_ws_handler_close_at_public_activation_boundary_reconnects(
     monkeypatch.setattr(handler, "_start_spot_stream", Mock())
     monkeypatch.setattr(handler, "_start_external_venue_streams", Mock())
     monkeypatch.setattr(handler, "_arm_stream_silence_watchdog", Mock())
-    reconnect = Mock()
+
+    replacements = (_FakeFuturesClient(), _FakeFuturesClient())
+    reconnect = Mock(return_value=replacements)
     monkeypatch.setattr(handler, "_reconnect_market", reconnect)
 
     handler.start_private_user_stream(rest, listen_key_client=object())
@@ -506,9 +538,335 @@ def test_ws_handler_close_at_public_activation_boundary_reconnects(
         expected_user_stream_generation=1,
     )
     handler._on_market_close(None)
+    deadline = time.monotonic() + 1.0
+    while not reconnect.called and time.monotonic() < deadline:
+        time.sleep(0.001)
 
-    reconnect.assert_called_once_with()
+    reconnect.assert_called_once()
+    assert reconnect.call_args.kwargs["session_id"] > 0
+    assert all(client.stopped for client in clients)
+    assert handler._ws_market is replacements[0]
+    assert handler._ws_public is replacements[1]
     assert handler._public_market_streams_started is True
+
+
+def test_market_reconnect_is_single_flight_and_stops_both_old_clients_first(
+    monkeypatch,
+):
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+    handler._market_session_id = 7
+    stop_threads = []
+
+    old_market = _FakeFuturesClient(
+        on_abort=lambda: stop_threads.append(threading.current_thread().name)
+    )
+    old_public = _FakeFuturesClient(
+        on_abort=lambda: stop_threads.append(threading.current_thread().name)
+    )
+    handler._ws_market = old_market
+    handler._ws_public = old_public
+    build_entered = threading.Event()
+    release_build = threading.Event()
+    builds = []
+
+    replacements = (_FakeFuturesClient(), _FakeFuturesClient())
+
+    def rebuild(*, session_id):
+        assert old_market.stopped is True
+        assert old_public.stopped is True
+        builds.append(session_id)
+        build_entered.set()
+        assert release_build.wait(timeout=1.0)
+        return replacements
+
+    monkeypatch.setattr(handler, "_reconnect_market", rebuild)
+
+    handler._on_market_close(None, session_id=7)
+    assert build_entered.wait(timeout=1.0)
+    handler._on_public_close(None, session_id=7)
+    release_build.set()
+    deadline = time.monotonic() + 1.0
+    while handler._market_reconnect_requested and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert builds == [8]
+    assert stop_threads == [
+        "futures-market-reconnect",
+        "futures-market-reconnect",
+    ]
+    assert handler._ws_market is replacements[0]
+    assert handler._ws_public is replacements[1]
+    assert handler._market_reconnect_requested is False
+
+
+def test_old_market_session_message_is_ignored_after_reconnect_generation():
+    signal = SimpleNamespace(on_depth=Mock())
+    handler = WSHandler(SimpleNamespace(signal=signal), Config())
+    handler._running = True
+    handler._market_session_id = 4
+    handler._market_depth_seen = {"btcusdc": 0.0}
+    payload = {
+        "e": "depthUpdate",
+        "s": "BTCUSDC",
+        "E": 1,
+        "u": 2,
+        "pu": 1,
+        "b": [],
+        "a": [],
+    }
+
+    handler._on_market_message(None, payload, session_id=3)
+
+    signal.on_depth.assert_not_called()
+    assert handler._market_depth_seen["btcusdc"] == 0.0
+
+
+def test_market_reconnect_stop_failure_does_not_build_replacement(monkeypatch):
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+    handler._market_session_id = 9
+
+    public = _FakeFuturesClient()
+    handler._ws_market = _FakeFuturesClient(remains_alive=True)
+    handler._ws_public = public
+    rebuild = Mock()
+    monkeypatch.setattr(handler, "_reconnect_market", rebuild)
+
+    assert handler._request_market_reconnect("test_stop_failure") is True
+    deadline = time.monotonic() + 1.0
+    while (
+        handler._public_market_streams_started
+        or handler._market_reconnect_requested
+    ) and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert public.stopped is True
+    rebuild.assert_not_called()
+    assert handler._ws_market is not None
+    assert handler._ws_public is public
+    assert handler._public_market_streams_started is False
+    assert handler._market_session_id == 10
+
+
+def test_replacement_socket_close_during_build_leaves_streams_stopped(monkeypatch):
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+    handler._market_session_id = 2
+
+    replacements = (_FakeFuturesClient(), _FakeFuturesClient())
+
+    def closes_while_building(*, session_id):
+        handler._on_public_close(None, session_id=session_id)
+        return replacements
+
+    monkeypatch.setattr(handler, "_reconnect_market", closes_while_building)
+
+    assert handler._request_market_reconnect("test_build_close") is True
+    deadline = time.monotonic() + 1.0
+    while (
+        handler._public_market_streams_started
+        or handler._market_reconnect_requested
+    ) and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert handler._public_market_streams_started is False
+    assert handler._market_reconnect_requested is False
+    assert handler._ws_market is None
+    assert handler._ws_public is None
+    assert all(client.stopped for client in replacements)
+
+
+def test_market_reconnect_second_constructor_failure_stops_first_client(
+    monkeypatch,
+):
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+    created = []
+
+    def constructor(**_kwargs):
+        if created:
+            raise RuntimeError("second constructor failed")
+        client = _FakeFuturesClient()
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(
+        "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
+        constructor,
+    )
+
+    assert handler._request_market_reconnect("constructor_failure") is True
+    deadline = time.monotonic() + 1.0
+    while (
+        handler._public_market_streams_started
+        or handler._market_reconnect_requested
+    ) and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert len(created) == 1
+    assert created[0].stopped is True
+    assert handler._ws_market is None
+    assert handler._ws_public is None
+    assert handler._public_market_streams_started is False
+
+
+def test_failed_replacement_cleanup_retains_but_fences_live_reader(monkeypatch):
+    signal = SimpleNamespace(on_depth=Mock())
+    handler = WSHandler(SimpleNamespace(signal=signal), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+    created = []
+
+    def constructor(**kwargs):
+        if created:
+            raise RuntimeError("second constructor failed")
+        client = _FakeFuturesClient(remains_alive=True)
+        client.kwargs = kwargs
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(
+        "binance.websocket.um_futures.websocket_client.UMFuturesWebsocketClient",
+        constructor,
+    )
+
+    assert handler._request_market_reconnect("cleanup_failure") is True
+    deadline = time.monotonic() + 1.0
+    while (
+        handler._public_market_streams_started
+        or handler._market_reconnect_requested
+    ) and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    assert handler._ws_market is created[0]
+    assert handler._public_market_streams_started is False
+    created[0].kwargs["on_message"](
+        None,
+        {
+            "e": "depthUpdate",
+            "s": "BTCUSDC",
+            "E": 1,
+            "u": 2,
+            "pu": 1,
+            "b": [],
+            "a": [],
+        },
+    )
+    signal.on_depth.assert_not_called()
+
+
+def test_market_client_shutdown_has_bounded_reader_join_and_retains_reference():
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+
+    class Socket:
+        def __init__(self):
+            self.aborted = False
+            self.shutdown_called = False
+
+        def abort(self):
+            self.aborted = True
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+    class Manager:
+        def __init__(self):
+            self.ws = Socket()
+            self.join_timeouts = []
+
+        def join(self, timeout=None):
+            self.join_timeouts.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    client = SimpleNamespace(socket_manager=Manager())
+    handler._ws_market = client
+
+    with pytest.raises(RuntimeError, match="callback quiescence"):
+        handler.stop()
+
+    assert client.socket_manager.ws.aborted is True
+    assert client.socket_manager.ws.shutdown_called is True
+    assert client.socket_manager.join_timeouts == [2.0]
+    assert handler._ws_market is client
+
+
+def test_market_client_without_sdk_socket_manager_is_rejected():
+    with pytest.raises(TypeError, match="must expose its socket_manager"):
+        WSHandler._stop_market_client(SimpleNamespace(stop=Mock()))
+
+
+def test_stop_while_market_reconnect_builds_does_not_publish_new_clients(
+    monkeypatch,
+):
+    handler = WSHandler(SimpleNamespace(signal=object()), Config())
+    handler._running = True
+    handler._public_market_streams_started = True
+
+    old_clients = (_FakeFuturesClient(), _FakeFuturesClient())
+    replacements = (_FakeFuturesClient(), _FakeFuturesClient())
+    handler._ws_market, handler._ws_public = old_clients
+    build_entered = threading.Event()
+    release_build = threading.Event()
+
+    def rebuild(*, session_id):
+        assert session_id > 0
+        build_entered.set()
+        assert release_build.wait(timeout=1.0)
+        return replacements
+
+    monkeypatch.setattr(handler, "_reconnect_market", rebuild)
+    assert handler._request_market_reconnect("stop_race") is True
+    assert build_entered.wait(timeout=1.0)
+
+    stop_thread = threading.Thread(target=handler.stop)
+    stop_thread.start()
+    deadline = time.monotonic() + 1.0
+    while handler._running and time.monotonic() < deadline:
+        time.sleep(0.001)
+    release_build.set()
+    stop_thread.join(timeout=1.0)
+
+    assert not stop_thread.is_alive()
+    assert all(client.stopped for client in old_clients)
+    assert all(client.stopped for client in replacements)
+    assert handler._ws_market is None
+    assert handler._ws_public is None
+    assert handler._running is False
+
+
+def test_spot_subscription_hot_reload_is_rejected_before_config_mutation():
+    previous = Config()
+    candidate = Config()
+    candidate.multi_market.enabled = True
+    candidate.multi_market.market_stage = "enhanced"
+    handler = WSHandler(SimpleNamespace(signal=object()), previous)
+    handler._running = True
+    handler._public_market_streams_started = True
+
+    with pytest.raises(ValueError, match="spot market subscriptions are restart-only"):
+        handler.on_config_reload(previous, candidate)
+
+    assert handler.cfg is previous
+
+
+def test_testnet_hot_reload_is_rejected_before_config_mutation():
+    previous = Config()
+    candidate = Config()
+    candidate.api.testnet = not previous.api.testnet
+    handler = WSHandler(SimpleNamespace(signal=object()), previous)
+    handler._running = True
+
+    with pytest.raises(ValueError, match="api.testnet is restart-only"):
+        handler.on_config_reload(previous, candidate)
+
+    assert handler.cfg is previous
 
 
 def test_ws_handler_private_callback_waits_wholly_behind_startup_barrier():

@@ -14,9 +14,6 @@ AUTHORITY_ENV = (
     "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH",
     "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256",
     "NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH",
-    "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY",
-    "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY",
-    "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
 )
 NORMAL_ENV = (
     "NARROWGATE_TEST_NORMAL_FROM_ENV",
@@ -360,7 +357,9 @@ def test_candidate_verify_owns_static_deploy_preflight(tmp_path: Path) -> None:
     )
 
     assert set(_read_records(capture)) == {"preflight"}
-    assert "preflight_live_deploy.py" in args_capture.read_text(encoding="utf-8")
+    arguments = args_capture.read_text(encoding="utf-8")
+    assert "preflight_live_deploy.py" in arguments
+    assert "--check-policy-approval" in arguments
 
 
 def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -> None:
@@ -376,6 +375,13 @@ def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -
 
     records = _read_records(capture)
     assert set(records) == {"preflight", "main"}
+    preflight_arguments = [
+        line
+        for line in args_capture.read_text(encoding="utf-8").splitlines()
+        if "preflight_live_deploy.py" in line
+    ]
+    assert len(preflight_arguments) == 1
+    assert "--check-policy-approval" not in preflight_arguments[0]
     for record in records.values():
         for name, value in invocation.items():
             assert record[name] == f"SET:{value}"
@@ -457,7 +463,7 @@ def test_reconcile_stopped_requires_quiescence_and_preserves_invocation_authorit
 ) -> None:
     root, profile, capture, args_capture = _stage_run_sh(tmp_path)
     environment = _base_environment(root, profile, capture, args_capture)
-    environment["NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"] = "1"
+    environment["NARROWGATE_DEPLOYMENT_ENVELOPE_PATH"] = "/private/release-envelope.json"
     output = (tmp_path / "exchange-reconciliation.json").resolve()
 
     subprocess.run(
@@ -477,8 +483,10 @@ def test_reconcile_stopped_requires_quiescence_and_preserves_invocation_authorit
 
     records = _read_records(capture)
     assert set(records) == {"main"}
-    assert records["main"]["NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"] == "SET:1"
-    assert records["main"]["NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY"] == "UNSET"
+    assert records["main"]["NARROWGATE_DEPLOYMENT_ENVELOPE_PATH"] == (
+        "SET:/private/release-envelope.json"
+    )
+    assert records["main"]["NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256"] == "UNSET"
     arguments = args_capture.read_text(encoding="utf-8")
     assert f"--write-stopped-reconciliation {output}" in arguments
     assert f"--config {root / 'live' / 'config.yaml'}" in arguments

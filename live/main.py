@@ -73,10 +73,8 @@ from live.config import (
 )
 from live.runtime_gc import GcPauseMonitor
 from live.runtime_policy import (
+    admit_runtime_policies,
     deployment_envelope_runtime_authority,
-    f05_boolean_cooldown_runtime_policy,
-    f05_buy_e3_runtime_policy,
-    q90_action_runtime_policy,
     write_runtime_identity,
 )
 from live.ws_handler import WSHandler
@@ -2262,6 +2260,7 @@ def record_startup_runtime_identity(
     cfg,
     config_path: Path,
     native_runtime: dict,
+    policy_admission: Mapping[str, Any],
     safety_authority: Mapping[str, Any] | None = None,
     dry_run: bool,
     engine: MakerEngine | None = None,
@@ -2269,20 +2268,6 @@ def record_startup_runtime_identity(
 ) -> tuple[Path, dict]:
     """Persist and return the identity that actually governs this process."""
     resolved_config = config_path.expanduser().resolve()
-    q90_policy = q90_action_runtime_policy(bool(cfg.strategy.dynamic_fill_hazard_action_enabled))
-    q90_policy_fields = {key: value for key, value in q90_policy.items() if key != "schema_version"}
-    f05_policy = f05_boolean_cooldown_runtime_policy(
-        bool(cfg.strategy.boolean_cooldown_policy_enabled),
-        evidence_route=cfg.strategy.boolean_cooldown_evidence_route,
-    )
-    f05_policy_fields = {key: value for key, value in f05_policy.items() if key != "schema_version"}
-    f05_buy_e3_policy = f05_buy_e3_runtime_policy(
-        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
-        evidence_route=cfg.strategy.buy_e3_cooldown_evidence_route,
-    )
-    f05_buy_e3_policy_fields = {
-        key: value for key, value in f05_buy_e3_policy.items() if key != "schema_version"
-    }
     model_dir = Path(str(cfg.ml.model_dir)).expanduser()
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
@@ -2341,13 +2326,11 @@ def record_startup_runtime_identity(
         "order_lifecycle_journal_v2_enabled": bool(cfg.lifecycle_journal_v2.enabled),
         "order_lifecycle_journal_v2_storage_profile": str(cfg.lifecycle_journal_v2.storage_profile),
         "native_runtime": native_runtime,
-        "q90_runtime_policy_schema_version": q90_policy["schema_version"],
-        **q90_policy_fields,
-        "f05_boolean_cooldown_runtime_policy_schema_version": f05_policy["schema_version"],
-        **f05_policy_fields,
+        "policy_admission": dict(policy_admission),
+        "dynamic_fill_hazard_action_enabled": bool(cfg.strategy.dynamic_fill_hazard_action_enabled),
+        "f05_boolean_cooldown_enabled": bool(cfg.strategy.boolean_cooldown_policy_enabled),
         "f05_boolean_cooldown_ema_warmup_s": float(cfg.strategy.boolean_cooldown_ema_warmup_s),
-        "f05_buy_e3_runtime_policy_schema_version": f05_buy_e3_policy["schema_version"],
-        **f05_buy_e3_policy_fields,
+        "f05_buy_e3_enabled": bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
         "f05_buy_e3_ema_warmup_s": float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
     }
     if engine is not None:
@@ -3869,6 +3852,9 @@ def main():
         artifact_authority=safety_authority,
         model_authorization_path=model_authorization_path,
     )
+    policy_admission = admit_runtime_policies(
+        vars(cfg.strategy), deployment_authority=safety_authority
+    )
     set_restart_only_config_sha256(running_config_sha256)
 
     if args.live:
@@ -4132,6 +4118,7 @@ def main():
             cfg=cfg,
             config_path=resolved_config_path,
             native_runtime=native_runtime,
+            policy_admission=policy_admission,
             safety_authority=safety_authority,
             dry_run=False,
             engine=engine,
@@ -4142,25 +4129,8 @@ def main():
             runtime_identity_path,
             json.dumps(runtime_identity, sort_keys=True),
         )
-        if runtime_identity["q90_owner_override_effective"]:
-            logger.warning(
-                "PRIVATE_DEPLOYMENT_APPROVAL q90_action=ON authority=%s",
-                runtime_identity["q90_action_runtime_authority"],
-            )
-        if runtime_identity["f05_boolean_cooldown_owner_override_effective"]:
-            logger.warning(
-                "PRIVATE_DEPLOYMENT_APPROVAL f05_boolean_cooldown=ON authority=%s",
-                runtime_identity["f05_boolean_cooldown_runtime_authority"],
-            )
-        if runtime_identity["f05_buy_e3_owner_override_effective"]:
-            logger.warning(
-                "PRIVATE_DEPLOYMENT_APPROVAL f05_buy_e3=ON authority=%s "
-                "release_root=%s",
-                runtime_identity["f05_buy_e3_runtime_authority"],
-                runtime_identity["startup_attestation"]["deployment_envelope"][
-                    "canonical_sha256"
-                ],
-            )
+        for policy in policy_admission["approved_policies"]:
+            logger.warning("RELEASE_POLICY_APPROVAL %s=ON", policy)
         if prospective_epoch is not None:
             logger.info(
                 "PROSPECTIVE_BASELINE_EPOCH_BOUND id=%s identity=%s manifest=%s",

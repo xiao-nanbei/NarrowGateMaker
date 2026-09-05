@@ -1450,8 +1450,10 @@ def test_build_deployment_envelope_b0_omits_buy_e3_extension(
         "build_bundle",
         "config_bundle",
         "model_policy_bundle",
+        "policy_approvals",
         "canonical_sha256",
     }
+    assert envelope["policy_approvals"] == []
     assert set(envelope["build_bundle"]) == {"manifest_path", "root_sha256"}
     assert set(envelope["config_bundle"]) == {"member_paths", "root_sha256"}
     assert set(envelope["model_policy_bundle"]) == {
@@ -1479,6 +1481,95 @@ def test_build_deployment_envelope_b0_omits_buy_e3_extension(
     assert not hasattr(runtime_policy, "DEPLOYMENT_ENVELOPE_FILE_SHA256_ENV")
     authority = runtime_policy.deployment_envelope_runtime_authority(environ=environment)
     assert authority["execution_commit"] == envelope["source"]["commit"]
+    assert authority["policy_approvals"] == []
+
+
+def test_deployment_envelope_binds_canonical_policy_approvals_and_loads_legacy_empty(
+    tmp_path: Path,
+) -> None:
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
+    output = tmp_path / "deployment-envelope.json"
+    result = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
+        policy_approvals=("q90_action", "f05_boolean_cooldown"),
+        output_path=output,
+    )
+
+    assert result["envelope"]["policy_approvals"] == [
+        "f05_boolean_cooldown",
+        "q90_action",
+    ]
+    authority = subject.load_deployment_envelope(
+        output,
+        expected_root_sha256=result["canonical_sha256"],
+    )
+    assert authority["policy_approvals"] == [
+        "f05_boolean_cooldown",
+        "q90_action",
+    ]
+
+    noncanonical = dict(result["envelope"])
+    noncanonical["policy_approvals"] = list(
+        reversed(noncanonical["policy_approvals"])
+    )
+    noncanonical[subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD] = (
+        subject.canonical_sha256(
+            noncanonical,
+            subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD,
+        )
+    )
+    noncanonical_path = tmp_path / "noncanonical-envelope.json"
+    subject._write_json_authority(  # noqa: SLF001
+        noncanonical_path,
+        noncanonical,
+    )
+    with pytest.raises(subject.LockedRuntimeError, match="not canonical"):
+        subject.load_deployment_envelope(
+            noncanonical_path,
+            expected_root_sha256=noncanonical[
+                subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD
+            ],
+        )
+
+    with pytest.raises(subject.LockedRuntimeError, match="duplicated"):
+        subject.build_deployment_envelope(
+            repository_root=repository,
+            active_config_path=repository / "config.yaml",
+            native_build_receipt_path=native_receipt,
+            model_authorization_path=model_authorization,
+            policy_approvals=("q90_action", "q90_action"),
+            output_path=tmp_path / "duplicate.json",
+        )
+    with pytest.raises(subject.LockedRuntimeError, match="unknown"):
+        subject.build_deployment_envelope(
+            repository_root=repository,
+            active_config_path=repository / "config.yaml",
+            native_build_receipt_path=native_receipt,
+            model_authorization_path=model_authorization,
+            policy_approvals=("unregistered_policy",),
+            output_path=tmp_path / "unknown.json",
+        )
+
+    legacy = dict(result["envelope"])
+    legacy.pop("policy_approvals")
+    legacy[subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD] = subject.canonical_sha256(
+        legacy,
+        subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD,
+    )
+    legacy_path = tmp_path / "legacy-envelope.json"
+    subject._write_json_authority(legacy_path, legacy)  # noqa: SLF001
+    legacy_authority = subject.load_deployment_envelope(
+        legacy_path,
+        expected_root_sha256=legacy[
+            subject.DEPLOYMENT_ENVELOPE_CANONICAL_FIELD
+        ],
+    )
+    assert legacy_authority["policy_approvals"] == []
 
 
 def test_native_build_bundle_rejects_non_live_or_skipped_qualification(

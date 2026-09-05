@@ -5,6 +5,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from research.families.f01_fixed_parameter_racing import (
+    campaign_outcome_replay_audit as campaign_audit,
+)
 from research.families.f01_fixed_parameter_racing.audit.paired_screening import (
     RANKING_AUTHORITY,
     screen_paired_daily_arms,
@@ -60,6 +63,265 @@ def test_campaign_audit_rejects_disabled_fill_trace():
                 "0",
             ]
         )
+
+
+def _runtime_fifo_params():
+    return {
+        "order_transport": "rest",
+        "async_order_lanes_enabled": True,
+        "cross_side_order_lanes_enabled": False,
+        "async_order_lane_capacity": 3,
+        "rest_gateway_timing_mode": "sampled_async_fifo",
+    }
+
+
+def _runtime_calibration_stub(monkeypatch):
+    params = {
+        **_runtime_fifo_params(),
+        "replay_purpose": "diagnostic",
+        "replay_event_clock": "merged",
+        "replay_main_loop_sleep_ms": 100,
+        "_serial_rest_return_samples_by_operation": {
+            "new": [[1.0, 4.0, 6.0], [2.0, 15.0, 1200.0]],
+            "cancel": [[1.0, 5.0, 7.0]],
+        },
+        "_serial_rest_return_sample_semantics": "observed paired samples; explicit proxy",
+    }
+    del params["async_order_lane_capacity"]
+    calibration = {
+        "source": {"path": "synthetic.json", "sha256": "synthetic-test-only"},
+        "sample_counts": {"new": 2, "cancel": 1},
+        "compute": {"consumed_by_replay": False},
+        "limitations": ["Gateway only; compute and source clocks remain uncalibrated."],
+    }
+    calls = []
+
+    def load(path, *, effective_time_assumption, bulk_cancel_model="unmodeled"):
+        calls.append((path, effective_time_assumption, bulk_cancel_model))
+        return {"params": params, "calibration": calibration}
+
+    monkeypatch.setattr(campaign_audit, "load_runtime_timing_samples", load)
+    return calls, calibration
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("order_transport", "websocket_api_ab"),
+    ("async_order_lanes_enabled", False),
+    ("cross_side_order_lanes_enabled", True),
+    ("cross_side_order_lanes_enabled", None),
+    ("async_order_lane_capacity", 0),
+    ("async_order_lane_capacity", True),
+    ("async_order_lane_capacity", 3.0),
+    ("async_order_lane_capacity", None),
+])
+def test_campaign_runtime_timing_does_not_override_transport(monkeypatch, key, value):
+    calls, _ = _runtime_calibration_stub(monkeypatch)
+    base = _runtime_fifo_params()
+    base[key] = value
+    before = dict(base)
+    with pytest.raises(ValueError, match="configured"):
+        campaign_audit._apply_runtime_timing_samples(
+            base, Path("samples.json"), effective_time_assumption="dispatch"
+        )
+    assert calls == []
+    assert base == before
+
+
+@pytest.mark.parametrize("key", [
+    "replay_main_loop_sleep_ms", "replay_event_clock", "replay_promotion_eligible",
+    "replay_evidence_scope", "latency_seed", "latency_baseline_clip_quantile", "rng_seed",
+    "async_order_lane_capacity", "rest_gateway_timing_mode", "order_transport",
+    "_serial_rest_return_samples_by_operation", "_serial_rest_http_result_status_by_operation",
+    "_serial_rest_return_sample_semantics", "_decision_to_gateway_latency_samples_ms",
+    "_exec_book_visibility_paired_delay_ms", "exec_depth_visibility_source_offset_ms",
+    "_pre_snapshot_compute_latency_samples_ms", "_main_loop_work_samples_ms",
+    "_requote_tail_work_samples_ms", "_empirical_requote_ts_ms",
+    "_bulk_cancel_timing_samples_ms", "_bulk_cancel_timing_sample_semantics",
+])
+def test_campaign_runtime_timing_arms_cannot_replace_environment(monkeypatch, key):
+    _runtime_calibration_stub(monkeypatch)
+    base = _runtime_fifo_params()
+    before = dict(base)
+    arm = campaign_audit.smoke.SmokeArm(
+        name="candidate", group="test", note="synthetic", overrides={key: 1},
+    )
+    with pytest.raises(ValueError, match="changes bound environment fields"):
+        campaign_audit._apply_runtime_timing_samples(
+            base, Path("samples.json"), effective_time_assumption="dispatch", arms=[arm],
+        )
+    assert base == before
+
+
+def test_campaign_runtime_timing_cli_checks_arm_environment_before_replay(monkeypatch):
+    _runtime_calibration_stub(monkeypatch)
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        campaign_audit, "load_tick_base_params", lambda **_k: _runtime_fifo_params()
+    )
+    arm = campaign_audit.smoke.SmokeArm(
+        name="baseline", group="test", note="synthetic", overrides={
+            "replay_main_loop_sleep_ms": 500,
+            "_serial_rest_return_samples_by_operation": {
+                "new": [[0.0, 1.0, 2.0]], "cancel": [[0.0, 1.0, 2.0]],
+            },
+            "_serial_rest_http_result_status_by_operation": {},
+        },
+    )
+    monkeypatch.setattr(campaign_audit, "_arm_map", lambda: {"baseline": arm})
+    monkeypatch.setattr(
+        campaign_audit, "_run_day_campaign_audit", lambda **_k: pytest.fail("replay started")
+    )
+    with pytest.raises(ValueError, match="changes bound environment fields"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline",
+            "--replay-purpose", "diagnostic", "--config", "explicit.yaml",
+            "--runtime-timing-samples", "samples.json",
+            "--runtime-effective-time-assumption", "dispatch",
+        ])
+
+
+@pytest.mark.parametrize(("extra", "message"), [
+    (["--replay-purpose", "formal"], "requires --replay-purpose diagnostic"),
+    (["--replay-purpose", "live_alignment"], "requires --replay-purpose diagnostic"),
+    (["--engine", "cpp"], "requires --replay-purpose diagnostic"),
+    (["--live-perf-telemetry", "old.csv"], "cannot be combined"),
+    (["--exec-book-visibility-profile", "snapshot.csv"], "cannot be combined"),
+    (["--latency-baseline-clip-quantile", "0.99"], "without clipping"),
+    (["--latency-scenario", "stress"], "unchanged empirical rows"),
+])
+def test_campaign_runtime_timing_cli_rejects_mixed_models(extra, message):
+    with pytest.raises(SystemExit, match=message):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline",
+            "--replay-purpose", "diagnostic", "--config", "explicit.yaml",
+            "--runtime-timing-samples", "samples.json",
+            "--runtime-effective-time-assumption", "dispatch", *extra,
+        ])
+
+
+@pytest.mark.parametrize("missing", ["config", "assumption", "samples"])
+def test_campaign_runtime_timing_cli_requires_explicit_inputs(missing):
+    args = ["--days", "2026-01-01", "--replay-purpose", "diagnostic"]
+    if missing != "config":
+        args.extend(["--config", "explicit.yaml"])
+    if missing != "assumption":
+        args.extend(["--runtime-effective-time-assumption", "dispatch"])
+    if missing != "samples":
+        args.extend(["--runtime-timing-samples", "samples.json"])
+    with pytest.raises(SystemExit, match="requires --"):
+        campaign_audit_main(args)
+
+
+def test_campaign_runtime_bulk_cli_requires_runtime_samples():
+    with pytest.raises(SystemExit, match="bulk-cancel-model requires --runtime-timing-samples"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--replay-purpose", "diagnostic",
+            "--runtime-bulk-cancel-model", "matched_risk_case",
+        ])
+
+
+@pytest.mark.parametrize("args", [[], ["--config", "original.yaml"],
+                                 ["--replay-purpose", "diagnostic"]])
+def test_replay_locator_cli_requires_diagnostic_and_explicit_config(args):
+    with pytest.raises(SystemExit, match="requires diagnostic and explicit --config"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--replay-locator-projection", "locators.json", *args,
+        ])
+
+
+def test_replay_locator_cli_forwards_projection_without_starting_replay(monkeypatch):
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    captured = {}
+
+    class ConfigNotRead(Exception):
+        pass
+
+    def load(**kwargs):
+        captured.update(kwargs)
+        raise ConfigNotRead
+
+    monkeypatch.setattr(campaign_audit, "load_tick_base_params", load)
+    with pytest.raises(ConfigNotRead):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline",
+            "--replay-purpose", "diagnostic", "--config", "original.yaml",
+            "--replay-locator-projection", "locators.json",
+        ])
+    assert captured["config_path"] == Path("original.yaml")
+    assert captured["locator_projection_path"] == Path("locators.json")
+
+
+@pytest.mark.parametrize("key", ["model_dir", "resolved_model_dir",
+                                 "buy_e3_cooldown_policy_path"])
+def test_replay_locator_cli_rejects_arm_path_overrides(monkeypatch, key):
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    arm = campaign_audit.smoke.SmokeArm(
+        name="baseline", group="test", note="synthetic", overrides={key: "/other"},
+    )
+    monkeypatch.setattr(campaign_audit, "_arm_map", lambda: {"baseline": arm})
+    with pytest.raises(ValueError, match="changes model/policy locations"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline",
+            "--replay-purpose", "diagnostic", "--config", "original.yaml",
+            "--replay-locator-projection", "locators.json",
+        ])
+
+
+@pytest.mark.parametrize("overrides", [
+    {}, {"fill_cooldown": 85.0, "replace_terminal_continuation": False, "order_size": 0.002},
+])
+@pytest.mark.parametrize("bulk_model", ["unmodeled", "matched_risk_case"])
+def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
+    monkeypatch, tmp_path, overrides, bulk_model,
+):
+    calls, calibration = _runtime_calibration_stub(monkeypatch)
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        campaign_audit, "load_tick_base_params", lambda **_k: _runtime_fifo_params()
+    )
+    arm = campaign_audit.smoke.SmokeArm(
+        name="baseline", group="test", note="synthetic", overrides=overrides,
+    )
+    monkeypatch.setattr(campaign_audit, "_arm_map", lambda: {"baseline": arm})
+
+    class ReplayNotStarted(Exception):
+        pass
+
+    captured = {}
+
+    def stop_before_replay(**kwargs):
+        captured.update(kwargs)
+        raise ReplayNotStarted
+
+    monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", stop_before_replay)
+    monkeypatch.setenv("MM_RESULTS_DIR", str(tmp_path))
+    with pytest.raises(ReplayNotStarted):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline",
+            "--replay-purpose", "diagnostic", "--config", "explicit.yaml",
+            "--runtime-timing-samples", "samples.json",
+            "--runtime-effective-time-assumption", "observable_upper_bound",
+            "--runtime-bulk-cancel-model", bulk_model,
+        ])
+    base = captured["base"]
+    assert calls == [(Path("samples.json"), "observable_upper_bound", bulk_model)]
+    assert base["async_order_lane_capacity"] == 3
+    assert base["replay_evidence_scope"] == "runtime_gateway_only_diagnostic"
+    assert base["replay_promotion_eligible"] is False
+    assert base["replay_event_clock"] == "merged"
+    assert base["latency_baseline_clip_quantile"] == 1.0
+    assert base["_serial_rest_return_samples_by_operation"]["new"][1] == [2, 15, 1200]
+    assert captured["arms"][0].overrides == overrides
+    assert not any(key.startswith("_decision_to_gateway") for key in base)
+    assert not any(key.startswith("_exec_book_visibility_delay_samples") for key in base)
+    output = tmp_path / "diagnostic.md"
+    campaign_audit._write_markdown(output, pd.DataFrame(), pd.DataFrame(), {
+        "tag": "synthetic", "symbol": "BTCUSDC", "days": [], "arms": [],
+        "runtime_timing_calibration": calibration,
+    })
+    rendered = output.read_text()
+    assert "not a complete current-live baseline" in rendered
+    assert calibration["limitations"][0] in rendered
 
 
 def test_load_initial_states_supports_gzip_live_ledger(tmp_path: Path):

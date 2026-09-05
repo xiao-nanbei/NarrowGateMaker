@@ -852,6 +852,7 @@ def test_direct_rest_return_samples_run_with_source_message_clock() -> None:
 
 def _ioc_inventory_path(
     *, initial_sign: int, maker_closes_before_ioc: bool = False, new_service_ms: float = 0.0,
+    param_overrides: dict[str, object] | None = None, top_qty: float = 0.001,
 ):
     timestamps = np.asarray([0, 10_000, 70_000, 85_000, 100_000, 120_000, 140_000])
     prices = np.asarray([100.0, 110.0, 110.0, 90.0, 90.0, 120.0, 90.0])
@@ -873,9 +874,13 @@ def _ioc_inventory_path(
         "transact_time": timestamps, "price": prices,
         "quantity": quantities, "is_buyer_maker": maker_flags,
     })
+    if param_overrides and "replay_event_clock_end_ts_ms" in param_overrides:
+        trades = trades.loc[
+            trades.transact_time <= int(param_overrides["replay_event_clock_end_ts_ms"])
+        ]
     depth = HistoricalL2Data(
         ts_ms=l2_ts, bid_px=(mid - 0.1)[:, None], ask_px=(mid + 0.1)[:, None],
-        bid_qty=np.full((l2_ts.size, 1), 0.001), ask_qty=np.full((l2_ts.size, 1), 0.001),
+        bid_qty=np.full((l2_ts.size, 1), top_qty), ask_qty=np.full((l2_ts.size, 1), top_qty),
     )
     return simulate_tick(
         trades, np.asarray([0]), np.asarray([1.0]),
@@ -893,7 +898,8 @@ def _ioc_inventory_path(
          "_serial_rest_return_samples_by_operation": {
              "new": [[new_service_ms, new_service_ms, new_service_ms]],
              "cancel": [[0.0, 0.0, 0.0]],
-         }, "_serial_rest_return_sample_semantics": "synthetic_zero_service"},
+         }, "_serial_rest_return_sample_semantics": "synthetic_zero_service",
+         **(param_overrides or {})},
         l2_data=depth,
     )
 
@@ -911,7 +917,7 @@ def test_ioc_physical_inventory_update_allows_later_reduce_only_maker_fill(initi
     assert fills[0]["exchange_accepted"] is True
     assert fills[0]["local_new_ack_published"] is True
     assert fills[0]["last_exchange_fill_ts_ms"] == fills[0]["fill_ts"]
-    assert fills[0]["last_private_fill_visible_ts_ms"] == fills[0]["fill_ts"]
+    assert fills[0]["last_private_fill_visible_ts_ms"] == fills[0]["fill_ts"] + 20
     assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
     assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
     assert result["exchange_pending_quantity"] == pytest.approx(0.0, abs=1e-12)
@@ -943,9 +949,9 @@ def test_ioc_trace_uses_actual_execution_boundary_not_previous_trade_timestamp()
     fills = [row for row in result["_fill_trace"] if row["fill_fee_rate"] == 0.01]
     assert fills
     for fill in fills:
-        assert fill["fill_ts"] >= fill["activate_ts"]
+        assert fill["fill_ts"] == fill["activate_ts"]
         assert fill["fill_ts"] == fill["last_exchange_fill_ts_ms"]
-        assert fill["fill_ts"] == fill["last_private_fill_visible_ts_ms"]
+        assert fill["fill_ts"] + 20 == fill["last_private_fill_visible_ts_ms"]
 
 
 @pytest.mark.parametrize("initial_sign", [-1, 1])
@@ -1854,6 +1860,427 @@ def test_serial_http_stop_drops_unsent_new_intent_and_drains_inflight_submit(tmp
     assert result["rest_gateway_pending_decision_count"] == 0
 
 
+def _async_fifo_params(*, new=(2.0, 5.0, 300.0), cancel=(2.0, 11.0, 400.0)):
+    return {
+        "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_async_fifo",
+        "replay_main_loop_sleep_ms": 100, "async_order_lane_capacity": 8,
+        "_serial_rest_return_samples_by_operation": {"new": [new], "cancel": [cancel]},
+        "_serial_rest_return_sample_semantics": "synthetic_test_only",
+        "trace_decisions_max": 100, "planned_quote_stop_ts_ms": 0,
+    }
+
+
+@pytest.mark.parametrize("initial_watermark,first_path", [
+    (0, "cached_no_new_bucket"), (-1_000, "new_bucket"), (-5_000, "catch_up"),
+])
+def test_runtime_compute_selects_causal_bucket_path_and_preserves_paired_phases(
+    initial_watermark, first_path,
+) -> None:
+    from models.backtest_tick import _deterministic_decision_to_gateway_latency_ms
+
+    paths = {
+        "cached_no_new_bucket": [[20.0, 40.0, 5.0], [30.0, 60.0, 7.0]],
+        "new_bucket": [[40.0, 80.0, 10.0], [60.0, 100.0, 15.0]],
+        "catch_up": [[80.0, 120.0, 20.0], [100.0, 160.0, 30.0]],
+    }
+    params = {
+        **_async_fifo_params(new=(2.0, 5.0, 10.0)),
+        "_runtime_compute_samples_by_path": paths,
+        "runtime_compute_bucket_ms": 1_000,
+        "runtime_compute_initial_bucket_end_ms": initial_watermark,
+        "runtime_compute_clock": "source_time_assumption",
+        "_runtime_compute_sample_semantics": "synthetic paired local phases",
+        "decision_to_gateway_latency_seed": 19,
+        "requote_interval": 0.2, "rq_min": 0.2, "rq_max": 0.2,
+        "requote_threshold_bps": 1.0, "trace_decisions_max": 100,
+    }
+    result = _run(param_overrides=params)
+    repeated = _run(param_overrides=params)
+    assert repeated["_decision_trace"] == result["_decision_trace"]
+    assert repeated["_quote_trace"] == result["_quote_trace"]
+    counts = result["runtime_compute_path_counts"]
+    assert counts["catch_up"] == int(first_path == "catch_up")
+    assert counts["new_bucket"] >= 2
+    assert counts["cached_no_new_bucket"] >= 2
+    assert sum(counts.values()) == len(result["_decision_trace"]) // 2
+    first = result["_quote_trace"][0]
+    rows = np.asarray(paths[first_path])
+    expected_pre, expected_enqueue = (
+        _deterministic_decision_to_gateway_latency_ms(
+            rows[:, column], seed=19, decision_ts_ms=0,
+        ) for column in (0, 1)
+    )
+    assert result["_decision_trace"][0]["ts_ms"] == expected_pre
+    assert first["gateway_request_ts"] == expected_enqueue
+    assert first["activate_ts"] == expected_enqueue + 2
+
+
+def test_async_fifo_terminal_wakes_decision_but_not_network_worker() -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(), "replace_terminal_continuation": True,
+    })
+    initial = {r["side"]: r for r in result["_quote_trace"] if r["submit_ts"] == 0}
+    assert initial["BUY"]["gateway_request_ts"] == 0
+    assert initial["SELL"]["gateway_request_ts"] == initial["BUY"]["new_rest_return_ts"] == 300
+    assert initial["BUY"]["cancel_request_ts"] == 1_000
+    assert initial["BUY"]["outcome_ts"] == 1_011
+    assert initial["BUY"]["cancel_rest_return_ts"] == 1_400
+    assert initial["SELL"]["cancel_request_ts"] == 1_400
+    continuation = next(r for r in result["_quote_trace"] if r["submit_ts"] == 1_011)
+    assert continuation["side"] == "BUY"
+    assert continuation["gateway_request_ts"] == initial["SELL"]["cancel_rest_return_ts"] == 1_800
+    assert result["replace_terminal_continuation_decision_latency_max_ms"] == 0
+    assert result["rest_gateway_decision_deferral_count"] == 0
+    assert result["rest_gateway_max_inflight"] == 1
+    assert result["rest_gateway_timing_authority"] == "diagnostic_only"
+    intervals = sorted(
+        (r[start], r[end])
+        for r in result["_quote_trace"]
+        for start, end in (("gateway_request_ts", "new_rest_return_ts"),
+                           ("cancel_request_ts", "cancel_rest_return_ts"))
+        if r[start] >= 0
+    )
+    assert len(intervals) == result["rest_gateway_request_count"]
+    assert all(
+        left[1] <= right[0] for left, right in zip(intervals, intervals[1:], strict=False)
+    )
+
+
+def test_async_fifo_pending_new_reserves_ownership_while_worker_is_busy() -> None:
+    result = _run(param_overrides=_async_fifo_params(new=(2.0, 5.0, 2_500.0)))
+    assert {r["ts_ms"] for r in result["_decision_trace"]} >= {0, 1_000, 2_000}
+    assert result["rest_gateway_request_count"] == 2  # BUY NEW then SELL NEW
+    assert result["rest_gateway_pending_request_count"] == 3  # SELL HTTP + two queued CANCELs
+    assert len(result["_quote_trace"]) == 2  # no duplicate intent for queued same-side NEW
+    sell = [r for r in result["_quote_trace"] if r["side"] == "SELL"]
+    assert len(sell) == 1
+    assert sell[0]["gateway_request_ts"] == 2_500
+    assert sell[0]["activate_ts"] == 2_502
+
+
+def test_async_fifo_terminal_does_not_interrupt_measured_local_compute() -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(), "replace_terminal_continuation": True,
+        "_decision_to_gateway_latency_samples_ms": [0.0],
+        "_requote_tail_work_samples_ms": [150.0],
+    })
+    initial = next(r for r in result["_quote_trace"] if r["side"] == "BUY" and r["submit_ts"] == 0)
+    # Quote starts at 1050, local work finishes at 1200. The callback at
+    # 1061 may interrupt sleep, but cannot run a second decision mid-compute.
+    assert initial["cancel_request_ts"] == 1_050
+    assert initial["outcome_ts"] == 1_061
+    continuation = next(
+        r for r in result["_quote_trace"] if r["side"] == "BUY" and r["submit_ts"] > 0
+    )
+    assert continuation["submit_ts"] == 1_200
+    assert result["replace_terminal_continuation_decision_latency_max_ms"] == 139
+
+
+def test_async_fifo_stop_cannot_pretend_bulk_cancel_is_per_order_cancel() -> None:
+    with pytest.raises(NotImplementedError, match="bulk safety cancel"):
+        _run(param_overrides={
+            **_async_fifo_params(new=(2.0, 2_300.0, 300.0)),
+            "planned_quote_stop_ts_ms": 100,
+        })
+
+
+def test_async_bulk_waits_for_accepted_fifo_then_one_request_and_private_terminals() -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(), "planned_quote_stop_ts_ms": 100,
+        "_bulk_cancel_timing_samples_ms": [[4.0, 40.0, 6.0]],
+        "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+        "_serial_rest_http_result_status_by_operation": {"new": "NEW", "cancel": "CANCELED"},
+    })
+    assert result["bulk_cancel_request_count"] == 1
+    assert result["rest_gateway_request_count"] == 3  # two NEWs, one bulk
+    orders = {row["side"]: row for row in result["_quote_trace"]}
+    assert set(orders) == {"BUY", "SELL"}
+    assert orders["SELL"]["gateway_request_ts"] == 300  # accepted NEW was not revoked
+    for order in orders.values():
+        assert order["cancel_request_ts"] == 600  # both NEW HTTP futures drained
+        assert order["cancel_effective_ts"] == 604
+        assert order["cancel_rest_return_ts"] == 606
+        assert order["outcome_ts"] == 640  # bulk success was NOT per-order CANCELED
+    assert result["replay_main_loop_synchronous_wait_ms"] == 506
+    assert result["replay_main_loop_synchronous_request_pending"] is False
+
+
+def test_async_bulk_does_not_resurrect_an_order_filled_while_fifo_drains() -> None:
+    result = _run(crossing_fill_ts_ms=200, param_overrides={
+        **_async_fifo_params(), "planned_quote_stop_ts_ms": 100,
+        "_bulk_cancel_timing_samples_ms": [[4.0, 40.0, 6.0]],
+        "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+        "_private_fill_visibility_latency_samples_ms": [20.0],
+    })
+    buy = next(row for row in result["_quote_trace"] if row["side"] == "BUY")
+    assert buy["outcome"] == "fill"
+    assert buy["outcome_ts"] == 220
+    assert result["bulk_cancel_request_count"] == 1
+    assert len([row for row in result["_quote_trace"] if row["side"] == "BUY"]) == 1
+
+
+def test_async_bulk_does_not_recancel_physically_terminal_order_or_accelerate_ack() -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(new=(2.0, 900.0, 300.0), cancel=(2.0, 900.0, 400.0)),
+        "planned_quote_stop_ts_ms": 1_100,
+        "_bulk_cancel_timing_samples_ms": [[4.0, 40.0, 6.0]],
+        "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+    })
+    buy = next(row for row in result["_quote_trace"] if row["side"] == "BUY")
+    sell = next(row for row in result["_quote_trace"] if row["side"] == "SELL")
+    assert buy["cancel_request_ts"] == 1_000
+    assert buy["cancel_effective_ts"] == 1_002
+    assert buy["cancel_rest_return_ts"] == 1_400
+    assert buy["cancel_private_visibility_ts"] == buy["outcome_ts"] == 1_900
+    assert sell["cancel_request_ts"] == 1_400
+    assert sell["cancel_effective_ts"] == 1_404
+    assert sell["outcome_ts"] == 1_440
+    assert result["bulk_cancel_request_count"] == 1
+
+
+def _async_close_params(**kwargs):
+    return {
+        **_async_fifo_params(**kwargs), "initial_inventory": 0.001,
+        "initial_entry_price": 110.0, "circuit_breaker_sigma": 0.1,
+        "pnl_volatility_horizon_s": 1.0, "use_bar_pricing": False,
+        "circuit_breaker_exit_mode": "maker_close",
+    }
+
+
+@pytest.mark.parametrize("private_fill", [False, True])
+def test_async_fifo_synchronous_close_waits_while_private_events_continue(private_fill) -> None:
+    result = _run(
+        crossing_fill_ts_ms=1_100 if private_fill else None, crossing_side="SELL",
+        param_overrides={
+            **_async_close_params(new=(2.0, 5.0, 2_500.0)),
+            "_private_fill_visibility_latency_samples_ms": [20.0],
+        },
+    )
+    close = result["_quote_trace"][0]
+    assert close["side"] == "SELL"
+    assert close["submit_ts"] == close["gateway_request_ts"] == 1_000
+    assert close["new_ack_ts"] == 1_005
+    assert close["new_rest_return_ts"] == 3_500
+    assert result["replay_main_loop_synchronous_request_count"] == 1
+    assert result["replay_main_loop_synchronous_wait_ms"] == 2_500
+    assert result["replay_main_loop_synchronous_request_pending"] is False
+    assert result["replay_main_loop_tick_count"] == 16
+    assert result["rest_gateway_max_inflight"] == 1
+    if private_fill:
+        assert close["outcome"] == "fill"
+        assert close["outcome_ts"] == 1_120  # fill is consumed before HTTP return
+        later = result["_quote_trace"][1:]
+        assert {row["submit_ts"] for row in later} == {3_600}
+        assert len([r for r in result["_quote_trace"] if r["order_id"] == close["order_id"]]) == 1
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+@pytest.mark.parametrize("http_ms", [300.0, 900.0])
+@pytest.mark.parametrize("top_qty", [0.0, 0.0005, 0.001])
+def test_async_ioc_reserves_physical_fill_then_publishes_one_local_terminal(
+    initial_sign, http_ms, top_qty,
+) -> None:
+    result = _ioc_inventory_path(
+        initial_sign=initial_sign, top_qty=top_qty,
+        param_overrides={
+            **_async_fifo_params(new=(2.0, 900.0, http_ms)),
+            "lot_size": 0.0001, "replay_event_clock_end_ts_ms": 72_000,
+            "_private_fill_visibility_latency_samples_ms": [500.0],
+            "_bulk_cancel_timing_samples_ms": [[2.0, 11.0, 400.0]],
+            "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+            "_serial_rest_http_result_status_by_operation": {"new": "NEW"},
+        },
+    )
+    ioc = [row for row in result["_quote_trace"] if "ioc_terminal_visible_ts" in row]
+    assert len(ioc) == 1  # no late HTTP/new-ACK resurrection or second sweep
+    terminal = ioc[0]
+    assert terminal["activate_ts"] == terminal["gateway_request_ts"] + 2
+    visible_at = (
+        terminal["activate_ts"] + 500 if top_qty
+        else min(terminal["new_ack_ts"], terminal["new_rest_return_ts"])
+    )
+    assert terminal["outcome_ts"] == terminal["ioc_terminal_visible_ts"] == visible_at
+    assert terminal["ioc_local_terminal"] is True
+    assert terminal["exchange_remaining"] == 0.0  # IOC remainder never rests
+    assert terminal["remaining"] == pytest.approx(0.001 - top_qty)
+    assert result["final_inventory"] == pytest.approx(initial_sign * (0.001 - top_qty))
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(result["final_inventory"])
+    assert result["private_fill_exchange_match_count"] == int(top_qty > 0)
+    assert result["private_fill_visible_count"] == int(top_qty > 0)
+    assert result["rest_gateway_max_inflight"] == 1
+    assert result["rest_gateway_pending_request_count"] == 0
+    assert result["replay_main_loop_synchronous_request_pending"] is False
+    fills = result["_fill_trace"]
+    assert len(fills) == int(top_qty > 0)
+    if fills:
+        fill = fills[0]
+        assert fill["fill_ts"] == terminal["activate_ts"]
+        assert fill["last_private_fill_visible_ts_ms"] == visible_at
+        assert fill["fill_qty"] == pytest.approx(top_qty)
+        assert fill["fill_fee_usdc"] == pytest.approx(top_qty * fill["quote_px"] * 0.01)
+        # Positive HTTP RESULT is not itself a fill/commission proof, even
+        # though ordinary NEW results are enabled in the same gateway model.
+        assert visible_at != terminal["new_rest_return_ts"]
+
+
+@pytest.mark.parametrize("http_ms", [300.0, 900.0])
+@pytest.mark.parametrize("end_ms", [70_100, 70_400, 70_600, 71_000])
+def test_async_ioc_http_releases_worker_independently_of_private_fill_and_close_caller(
+    http_ms, end_ms,
+) -> None:
+    result = _ioc_inventory_path(
+        initial_sign=-1,
+        param_overrides={
+            **_async_fifo_params(new=(2.0, 900.0, http_ms)),
+            "replay_event_clock_end_ts_ms": end_ms,
+            "_private_fill_visibility_latency_samples_ms": [500.0],
+            "_bulk_cancel_timing_samples_ms": [[2.0, 11.0, 400.0]],
+            "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+        },
+    )
+    visible = end_ms >= 70_502
+    returned = end_ms >= 70_000 + http_ms
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
+    assert result["final_inventory"] == pytest.approx(0.0 if visible else -0.001, abs=1e-12)
+    assert result["private_fill_exchange_match_count"] == 1
+    assert result["private_fill_visible_count"] == int(visible)
+    assert result["private_fill_pending_visibility_count"] == int(not visible)
+    assert result["economic_pnl_complete"] is visible
+    assert result["rest_gateway_pending_request_count"] == int(not returned)
+    assert result["replay_main_loop_synchronous_request_pending"] is not (visible and returned)
+    assert result["rest_gateway_max_inflight"] == 1
+    fills = result["_fill_trace"]
+    assert len(fills) == int(visible)
+    if fills:
+        assert fills[0]["fill_ts"] == 70_002
+        assert fills[0]["last_private_fill_visible_ts_ms"] == 70_502
+    assert all(
+        row["ts_ms"] < 70_000 or row["ts_ms"] >= max(70_502, 70_000 + http_ms) + 100
+        for row in result["_decision_trace"]
+    )
+
+
+@pytest.mark.parametrize("private_ms", [0.0, 500.0])
+def test_async_ioc_preserves_compute_clock_without_adding_work_to_exchange_or_callback(
+    private_ms,
+) -> None:
+    result = _ioc_inventory_path(
+        initial_sign=-1,
+        param_overrides={
+            **_async_fifo_params(new=(2.0, 900.0, 300.0)),
+            "replay_event_clock_end_ts_ms": 78_000,
+            "_private_fill_visibility_latency_samples_ms": [private_ms],
+            "_bulk_cancel_timing_samples_ms": [[2.0, 11.0, 400.0]],
+            "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+            "_main_loop_work_samples_ms": [[17.0, 23.0]],
+            "_decision_to_gateway_latency_samples_ms": [55.0],
+            "_requote_tail_work_samples_ms": [31.0],
+        },
+    )
+    terminal = next(row for row in result["_quote_trace"] if "ioc_terminal_visible_ts" in row)
+    assert terminal["submit_ts"] == terminal["gateway_request_ts"] == 70_434
+    assert terminal["activate_ts"] == 70_436
+    assert terminal["outcome_ts"] == 70_436 + private_ms
+    assert result["_fill_trace"][0]["fill_ts"] == 70_436
+    assert result["rest_gateway_max_inflight"] == 1
+    assert result["replay_main_loop_synchronous_request_pending"] is False
+
+
+@pytest.mark.parametrize("private_delay,next_submit", [(11.0, 1_000), (500.0, 1_100)])
+def test_async_fifo_sync_close_cancel_resumes_only_after_private_terminal(
+    private_delay, next_submit,
+) -> None:
+    trades, bbo = _inputs()
+    bbo.best_bid[bbo.ts_ms >= 600] = 98.9
+    bbo.best_ask[bbo.ts_ms >= 600] = 99.1
+    # Move again while cancel is pending: immediate continuation uses the
+    # price computed at 600, not a new snapshot at its 1000 HTTP return.
+    bbo.best_bid[bbo.ts_ms >= 800] = 97.9
+    bbo.best_ask[bbo.ts_ms >= 800] = 98.1
+    result = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), **_async_close_params(cancel=(2.0, private_delay, 400.0)),
+         "requote_interval": 0.1, "rq_min": 0.1, "rq_max": 0.1,
+         "_serial_rest_http_result_status_by_operation": {"new": "NEW", "cancel": "CANCELED"}},
+        bbo_data=bbo,
+    )
+    initial, replacement = result["_quote_trace"][:2]
+    assert initial["cancel_request_ts"] == 600
+    assert initial["cancel_rest_return_ts"] == 1_000
+    # Unlike ordinary async cancel, the live synchronous close-cancel caller
+    # discards its RESULT and checks OrderManager's private-stream ownership.
+    assert initial["cancel_ack_ts"] == initial["outcome_ts"] == 600 + private_delay
+    assert replacement["submit_ts"] == replacement["gateway_request_ts"] == next_submit
+    assert replacement["price"] == (99.0 if private_delay == 11.0 else 98.0)
+    assert replacement["submit_ts"] >= initial["outcome_ts"]
+    assert result["rest_gateway_max_inflight"] == 1
+
+
+@pytest.mark.parametrize("statuses,new_ack,cancel_ack", [
+    ({}, 900, 1_900), ({"new": "NEW", "cancel": "CANCELED"}, 300, 1_400),
+])
+def test_async_fifo_only_declared_validated_http_results_contribute_authority(
+    statuses, new_ack, cancel_ack,
+) -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(new=(2.0, 900.0, 300.0), cancel=(2.0, 900.0, 400.0)),
+        "replace_terminal_continuation": True,
+        "_serial_rest_http_result_status_by_operation": statuses,
+    })
+    initial = next(r for r in result["_quote_trace"] if r["side"] == "BUY")
+    assert initial["new_ack_ts"] == new_ack
+    assert initial["new_private_visibility_ts"] == 900
+    assert initial["outcome_ts"] == initial["cancel_ack_ts"] == cancel_ack
+    assert initial["cancel_private_visibility_ts"] == 1_900
+    assert next(r for r in result["_quote_trace"] if r["submit_ts"] > 0)["submit_ts"] == cancel_ack
+    assert result["rest_gateway_http_result_status_by_operation"] == statuses
+
+
+def test_async_fifo_private_authority_before_validated_http_is_not_delayed() -> None:
+    result = _run(param_overrides={
+        **_async_fifo_params(), "replace_terminal_continuation": True,
+        "_serial_rest_http_result_status_by_operation": {"new": "NEW", "cancel": "CANCELED"},
+    })
+    initial = next(r for r in result["_quote_trace"] if r["side"] == "BUY")
+    assert initial["new_ack_ts"] == initial["new_private_visibility_ts"] == 5
+    assert initial["cancel_ack_ts"] == initial["cancel_private_visibility_ts"] == 1_011
+    assert next(r for r in result["_quote_trace"] if r["submit_ts"] > 0)["submit_ts"] == 1_011
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_async_fifo_late_cancel_response_never_resurrects_private_full_fill(side) -> None:
+    result = _run(crossing_fill_ts_ms=1_100, crossing_side=side, param_overrides={
+        **_async_fifo_params(cancel=(150.0, 400.0, 200.0)),
+        "_private_fill_visibility_latency_samples_ms": [10.0],
+    })
+    initial = next(r for r in result["_quote_trace"] if r["submit_ts"] == 0 and r["side"] == side)
+    assert initial["outcome"] == "fill"
+    assert initial["outcome_ts"] == 1_110
+    assert len([r for r in result["_quote_trace"] if r["order_id"] == initial["order_id"]]) == 1
+    assert result["private_fill_exchange_match_count"] == result["private_fill_visible_count"] == 1
+    if side == "SELL":
+        assert initial["async_cancel_queued"] is True
+        assert initial["cancel_request_ts"] == -1  # no dispatch yet at private terminal
+
+
+def test_async_fifo_queue_capacity_fails_explicitly_instead_of_dropping_or_blocking() -> None:
+    with pytest.raises(RuntimeError, match="GLOBAL asynchronous order lane is full"):
+        _run(param_overrides={
+            **_async_fifo_params(new=(2.0, 5.0, 2_500.0)),
+            "async_order_lane_capacity": 1,
+        })
+
+
+@pytest.mark.parametrize("override", [
+    {"replay_main_loop_sleep_ms": 0}, {"async_order_lane_capacity": 0},
+    {"cross_side_order_lanes_enabled": True}, {"order_transport": "websocket"},
+    {"replay_event_clock": "trade"},
+])
+def test_async_fifo_rejects_unmodeled_or_unbounded_execution(override) -> None:
+    with pytest.raises(ValueError, match="sampled_async_fifo requires|requires merged"):
+        _run(param_overrides={**_async_fifo_params(), **override})
+
+
 def test_serial_http_zero_profile_and_multiline_pairs(tmp_path) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
@@ -1913,9 +2340,11 @@ def test_serial_http_zero_profile_and_multiline_pairs(tmp_path) -> None:
     assert len(seen) > 1
 
 
-@pytest.mark.parametrize("main_loop_sleep_ms", [0, 100])
+@pytest.mark.parametrize("mode,main_loop_sleep_ms", [
+    ("sampled_serial", 0), ("sampled_serial", 100), ("sampled_async_fifo", 100),
+])
 def test_serial_http_continuation_merges_native_book_boundaries(
-    tmp_path, main_loop_sleep_ms,
+    tmp_path, mode, main_loop_sleep_ms,
 ) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
@@ -1938,17 +2367,19 @@ def test_serial_http_continuation_merges_native_book_boundaries(
     result = simulate_tick(
         trades, np.asarray([base]), np.asarray([1.0]),
         {**_params(), "replay_purpose": "diagnostic",
-         "rest_gateway_timing_mode": "sampled_serial",
+         "rest_gateway_timing_mode": mode,
          "rest_gateway_timing_profile_path": str(profile),
          "replay_main_loop_sleep_ms": main_loop_sleep_ms,
-         "planned_quote_stop_ts_ms": base + 2_000,
+         "replace_terminal_continuation": mode == "sampled_async_fifo",
+         "planned_quote_stop_ts_ms": 0 if mode == "sampled_async_fifo" else base + 2_000,
          "replay_event_clock_end_ts_ms": base + 4_000,
          "exchange_book_queue_mode": "diagnostic"},
         bbo_data=bbo, exchange_book_event_tape=[snapshot],
     )
-    phase_ms = 10 if main_loop_sleep_ms else 0
+    phase_ms = 10 if main_loop_sleep_ms and mode == "sampled_serial" else 0
+    decision_offset = 1_060 if mode == "sampled_async_fifo" else 1_000 + phase_ms
     replacements = [row for row in result["_quote_trace"]
-                    if row["submit_ts"] == base + 1_000 + phase_ms]
+                    if row["submit_ts"] == base + decision_offset]
     assert min(row["gateway_request_ts"] for row in replacements) == base + 1_160 + phase_ms
     assert result["rest_gateway_pending_decision_count"] == 0
 

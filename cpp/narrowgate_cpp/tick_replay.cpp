@@ -1839,14 +1839,13 @@ void append_order_trace(
 
 double markout_at_horizon(
     const TickReplayInput& input,
-    std::size_t fill_idx,
+    std::int64_t fill_ts,
     std::int64_t horizon_ms,
     double quote_price,
     Side side
 ) {
-    const std::int64_t target = input.trade_ts_ms.data()[fill_idx] + horizon_ms;
-    const auto first = input.trade_ts_ms.begin() + static_cast<std::ptrdiff_t>(fill_idx);
-    auto it = std::lower_bound(first, input.trade_ts_ms.end(), target);
+    const std::int64_t target = fill_ts + horizon_ms;
+    auto it = std::lower_bound(input.trade_ts_ms.begin(), input.trade_ts_ms.end(), target);
     if (it == input.trade_ts_ms.end()) {
         --it;
     }
@@ -1859,7 +1858,7 @@ void append_fill_trace(
     TickReplayResult& result,
     const TickReplayInput& input,
     const ReplayOrder& order,
-    std::size_t fill_idx,
+    std::int64_t fill_ts,
     double trade_price,
     double queue_before,
     double rem_before,
@@ -1876,7 +1875,7 @@ void append_fill_trace(
     TraceFillRow row;
     row.fill_sequence = static_cast<std::int64_t>(result.fill_trace.size());
     row.side = order.side;
-    row.fill_ts = input.trade_ts_ms.data()[fill_idx];
+    row.fill_ts = fill_ts;
     row.quote_ts = order.quote_ts;
     row.age_ms = std::max<std::int64_t>(0, row.fill_ts - order.quote_ts);
     row.quote_mid = order.mid_at_quote;
@@ -1891,10 +1890,10 @@ void append_fill_trace(
     row.fill_fee_usdc = order.price * fill_qty * maker_fee;
     row.inventory_before_fill = inventory_before_fill;
     row.inventory_after_fill = inventory_after_fill;
-    row.markout_1s = markout_at_horizon(input, fill_idx, 1'000, order.price, order.side);
-    row.markout_5s = markout_at_horizon(input, fill_idx, 5'000, order.price, order.side);
-    row.markout_20s = markout_at_horizon(input, fill_idx, 20'000, order.price, order.side);
-    row.markout_30s = markout_at_horizon(input, fill_idx, 30'000, order.price, order.side);
+    row.markout_1s = markout_at_horizon(input, fill_ts, 1'000, order.price, order.side);
+    row.markout_5s = markout_at_horizon(input, fill_ts, 5'000, order.price, order.side);
+    row.markout_20s = markout_at_horizon(input, fill_ts, 20'000, order.price, order.side);
+    row.markout_30s = markout_at_horizon(input, fill_ts, 30'000, order.price, order.side);
     row.ev_1s = row.markout_1s - maker_fee * order.price;
     row.ev_5s = row.markout_5s - maker_fee * order.price;
     row.ev_20s = row.markout_20s - maker_fee * order.price;
@@ -4895,7 +4894,7 @@ void process_side_fill(
             result,
             input,
             order,
-            trade_idx,
+            input.trade_ts_ms.data()[trade_idx],
             trade_price,
             queue_before,
             rem_before,
@@ -5103,7 +5102,9 @@ bool process_ioc_close_orders(
             result,
             input,
             order,
-            event_idx,
+            // IOC liquidity is swept at exchange activation, even when the
+            // synchronous caller observes the result on a later policy wake.
+            order.activate_ts,
             input.trade_price.data()[event_idx],
             0.0,
             order.quantity,

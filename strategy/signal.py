@@ -757,7 +757,7 @@ class SignalEngine:
         self._on_bar_callbacks = []
         # Receive-time depth observers run after the atomic depth update and
         # outside the signal lock. They may never mutate quote-book state.
-        self._on_depth_callbacks = []
+        self._on_depth_callbacks = ()
 
         # metrics state (polled every 5 min via REST)
         self._metrics_history: deque = deque(maxlen=72)  # 6h of 5min data
@@ -2031,12 +2031,19 @@ class SignalEngine:
                     self._cpp_execution_l2_engine = None
             market_generation = int(self._quote_market_generation)
             depth_generation = int(self._depth_generation)
-        for callback in tuple(self._on_depth_callbacks):
+            callbacks = self._on_depth_callbacks
+        if not callbacks:
+            return
+        # Freeze once per received event, not once per observer. Observers
+        # still run synchronously in registration order after the book commit.
+        bids = tuple(snap.bids)
+        asks = tuple(snap.asks)
+        for callback in callbacks:
             try:
                 callback(
-                    receive_ts_ns=int(snap.receive_ts_ns),
-                    bids=tuple(snap.bids),
-                    asks=tuple(snap.asks),
+                    receive_ts_ns=snap.receive_ts_ns,
+                    bids=bids,
+                    asks=asks,
                     market_generation=market_generation,
                     depth_generation=depth_generation,
                 )
@@ -2054,7 +2061,7 @@ class SignalEngine:
             raise TypeError("depth observer must be callable")
         with self._lock:
             if callback not in self._on_depth_callbacks:
-                self._on_depth_callbacks.append(callback)
+                self._on_depth_callbacks += (callback,)
 
     def quote_decision_snapshot(
         self,

@@ -56,12 +56,7 @@ from live.main import (
     start_engine_with_prospective_collection,
 )
 from live.runtime_policy import (
-    F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
-    F05_BUY_E3_OWNER_OVERRIDE_ENV,
-    Q90_ACTION_OWNER_OVERRIDE_ENV,
-    f05_boolean_cooldown_runtime_policy,
-    f05_buy_e3_runtime_policy,
-    q90_action_runtime_policy,
+    admit_runtime_policies,
     require_f05_boolean_cooldown_restart,
     require_f05_buy_e3_restart,
     require_q90_action_restart,
@@ -72,6 +67,14 @@ from strategy.inventory_manager import InventoryManager, PositionState
 from strategy.maker_engine import MakerEngine
 
 ROOT = Path(__file__).resolve().parents[1]
+POLICY_CASES = (
+    ("q90_action", "dynamic_fill_hazard_action_enabled", "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY"),
+    (
+        "f05_boolean_cooldown", "boolean_cooldown_policy_enabled",
+        "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
+    ),
+    ("f05_buy_e3", "buy_e3_cooldown_policy_enabled", "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"),
+)
 
 
 def test_failed_live_startup_closes_every_constructed_owner_without_engine_stop() -> None:
@@ -1656,41 +1659,73 @@ def test_side_bbo_floor_rejects_later_inward_spread_compression() -> None:
         _validate_config(cfg)
 
 
-def test_q90_action_is_runtime_fail_closed_without_owner_override() -> None:
-    with pytest.raises(ValueError, match="POST_CANCEL_RECOVERY"):
-        q90_action_runtime_policy(True, environ={})
+@pytest.mark.parametrize("policy, field, obsolete_env", POLICY_CASES)
+def test_obsolete_environment_flags_cannot_approve_a_policy(
+    monkeypatch, policy, field, obsolete_env,
+):
+    for _, _, env_name in POLICY_CASES:
+        monkeypatch.setenv(env_name, "1")
+    assert live_main.os.environ[obsolete_env] == "1"
+    with pytest.raises(ValueError, match=f"does not approve enabled policy: {policy}"):
+        admit_runtime_policies({field: True}, deployment_authority={"policy_approvals": []})
+    with pytest.raises(ValueError, match=f"does not approve enabled policy: {policy}"):
+        admit_runtime_policies(
+            {field: True},
+            deployment_authority={
+                "policy_approvals": [name for name, _, _ in POLICY_CASES if name != policy],
+            },
+        )
 
 
-def test_direct_runtime_config_validation_uses_the_same_q90_guard(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv(Q90_ACTION_OWNER_OVERRIDE_ENV, raising=False)
+@pytest.mark.parametrize("policy, field, obsolete_env", POLICY_CASES)
+def test_verified_policy_admission_ignores_research_annotations(
+    monkeypatch, policy, field, obsolete_env,
+):
+    monkeypatch.delenv(obsolete_env, raising=False)
+    strategy = {field: True}
+    authority = {"policy_approvals": [name for name, _, _ in POLICY_CASES]}
+    expected = {"approved_policies": [policy], "authorization_source": "deployment_envelope"}
+    assert admit_runtime_policies(strategy, deployment_authority=authority) == expected
+    strategy.update({
+        "boolean_cooldown_evidence_route": "arbitrary_research_annotation",
+        "buy_e3_cooldown_evidence_route": "not_an_authorization_channel",
+        "research_supported": False,
+        "hard_gates_passed": False,
+    })
+    authority.update({"research_verdict": "closed", "evidence_route": "diagnostic_only"})
+    monkeypatch.setenv(obsolete_env, "not-an-approval")
+    assert admit_runtime_policies(strategy, deployment_authority=authority) == expected
 
-    with pytest.raises(ValueError, match="POST_CANCEL_RECOVERY"):
-        _validate_config(_q90_action_config())
+
+def test_disabled_policies_do_not_acquire_runtime_action_approval():
+    for authority in (
+        {"policy_approvals": []},
+        {"policy_approvals": [name for name, _, _ in POLICY_CASES]},
+    ):
+        assert admit_runtime_policies({}, deployment_authority=authority) == {
+            "approved_policies": [], "authorization_source": "deployment_envelope",
+        }
 
 
-def test_direct_runtime_config_records_an_explicit_owner_override(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(Q90_ACTION_OWNER_OVERRIDE_ENV, "1")
+def test_direct_runtime_config_validation_does_not_grant_q90_approval(monkeypatch):
+    monkeypatch.delenv("NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY", raising=False)
+    cfg = _q90_action_config()
+    _validate_config(cfg)
+    with pytest.raises(ValueError, match="does not approve enabled policy"):
+        admit_runtime_policies(vars(cfg.strategy), deployment_authority={"policy_approvals": []})
 
-    _validate_config(_q90_action_config())
 
-
-def test_q90_owner_override_is_explicit_in_runtime_identity(tmp_path: Path) -> None:
-    policy = q90_action_runtime_policy(
-        True,
-        environ={Q90_ACTION_OWNER_OVERRIDE_ENV: "1"},
+def test_admitted_policy_identity_is_persisted_privately(tmp_path: Path) -> None:
+    policy = admit_runtime_policies(
+        {"dynamic_fill_hazard_action_enabled": True},
+        deployment_authority={"policy_approvals": ["q90_action"]},
     )
     path = tmp_path / "runtime_identity.json"
     write_runtime_identity(path, policy)
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert persisted["q90_action_runtime_authority"] == ("private_deployment_approved")
-    assert persisted["q90_owner_override_requested"] is True
-    assert persisted["q90_owner_override_effective"] is True
+    assert persisted == policy
 
 
 def test_runtime_identity_rejects_symlink_destination(tmp_path: Path) -> None:
@@ -3430,53 +3465,50 @@ def test_q90_action_state_cannot_change_via_sighup() -> None:
         require_q90_action_restart(False, True)
 
 
-def test_startup_identity_preserves_its_own_schema(tmp_path: Path) -> None:
+def test_startup_identity_records_admission_without_rechecking_policy_or_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("project_name: NarrowGate\n", encoding="utf-8")
-    cfg = Config()
+    cfg = _q90_action_config()
     cfg.logging.file = str(tmp_path / "maker.log")
+    admission = admit_runtime_policies(
+        vars(cfg.strategy), deployment_authority={"policy_approvals": ["q90_action"]},
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("startup recording must not re-evaluate policy approval")
+
+    class EnvironmentWithoutApprovalReads(dict):
+        def get(self, key, default=None):
+            if key in {env for _, _, env in POLICY_CASES}:
+                forbidden()
+            return super().get(key, default)
+
+    monkeypatch.setattr(live_main, "admit_runtime_policies", forbidden)
+    monkeypatch.setattr(
+        live_main.os, "environ", EnvironmentWithoutApprovalReads(live_main.os.environ)
+    )
 
     path, identity = record_startup_runtime_identity(
         cfg=cfg,
         config_path=config_path,
         native_runtime={"profile": "test"},
+        policy_admission=admission,
         dry_run=True,
     )
 
     assert path == tmp_path / "runtime_identity.json"
     assert identity["schema_version"] == "narrowgate_live_runtime_identity.v1"
-    assert identity["q90_runtime_policy_schema_version"] == ("narrowgate_runtime_policy.v1")
-    assert identity["q90_action_runtime_authority"] == ("action_suspended_shadow_only")
-
-
-def test_f05_boolean_cooldown_requires_private_label_and_approval() -> None:
-    with pytest.raises(ValueError, match="approved private deployment"):
-        f05_boolean_cooldown_runtime_policy(
-            True,
-            evidence_route="private_deployment_approval",
-            environ={},
-        )
-    with pytest.raises(ValueError, match="permanent"):
-        f05_boolean_cooldown_runtime_policy(
-            True,
-            evidence_route="research_supported_promotion",
-            environ={F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV: "1"},
-        )
-
-    policy = f05_boolean_cooldown_runtime_policy(
-        True,
-        evidence_route="private_deployment_approval",
-        environ={F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV: "1"},
-    )
-    assert policy["f05_boolean_cooldown_hard_gates_passed"] is False
-    assert policy["f05_boolean_cooldown_owner_override_effective"] is True
-    assert policy["f05_boolean_cooldown_runtime_authority"] == ("private_deployment_approved")
+    assert identity["policy_admission"] == admission
+    assert identity["dynamic_fill_hazard_action_enabled"] is True
+    assert json.loads(path.read_text())["policy_admission"] == admission
 
 
 def test_enabled_boolean_cooldown_config_does_not_require_yaml_leaf_hashes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV, "1")
+    monkeypatch.delenv("NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY", raising=False)
     cfg = Config()
     cfg.strategy.fill_cooldown = 85.0
     cfg.strategy.boolean_cooldown_policy_enabled = True
@@ -3484,6 +3516,7 @@ def test_enabled_boolean_cooldown_config_does_not_require_yaml_leaf_hashes(
     cfg.strategy.boolean_cooldown_predicate_bundle_path = "/private/bundle.json"
     cfg.strategy.boolean_cooldown_policy_sha256 = ""
     cfg.strategy.boolean_cooldown_predicate_bundle_sha256 = ""
+    cfg.strategy.boolean_cooldown_evidence_route = "research_annotation_only"
 
     _validate_config(cfg)
 
@@ -3512,33 +3545,10 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
     )
 
 
-def test_f05_buy_e3_requires_separate_private_approval_and_label() -> None:
-    with pytest.raises(ValueError, match="approved private deployment"):
-        f05_buy_e3_runtime_policy(
-            True,
-            evidence_route="private_deployment_buy_e3",
-            environ={},
-        )
-    with pytest.raises(ValueError, match="permanent"):
-        f05_buy_e3_runtime_policy(
-            True,
-            evidence_route="research_supported",
-            environ={F05_BUY_E3_OWNER_OVERRIDE_ENV: "1"},
-        )
-    policy = f05_buy_e3_runtime_policy(
-        True,
-        evidence_route="private_deployment_buy_e3",
-        environ={F05_BUY_E3_OWNER_OVERRIDE_ENV: "1"},
-    )
-    assert policy["f05_buy_e3_research_supported"] is False
-    assert policy["f05_buy_e3_hard_gates_passed"] is False
-    assert policy["f05_buy_e3_owner_override_effective"] is True
-
-
 def test_enabled_buy_e3_config_does_not_require_yaml_leaf_hashes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(F05_BUY_E3_OWNER_OVERRIDE_ENV, "1")
+    monkeypatch.delenv("NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY", raising=False)
     cfg = Config()
     cfg.strategy.fill_cooldown = 85.0
     cfg.strategy.buy_e3_cooldown_policy_enabled = True
@@ -3549,6 +3559,7 @@ def test_enabled_buy_e3_config_does_not_require_yaml_leaf_hashes(
     cfg.strategy.buy_e3_cooldown_artifact_sha256 = ""
     cfg.strategy.buy_e3_cooldown_policy_sha256 = ""
     cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256 = ""
+    cfg.strategy.buy_e3_cooldown_evidence_route = "research_annotation_only"
 
     _validate_config(cfg)
 
@@ -3704,3 +3715,36 @@ def test_order_lane_experiment_config_is_restart_only(
     with pytest.raises(ValueError, match=field_name):
         engine.on_config_reload(candidate)
     assert getattr(engine.cfg.api, field_name) != new_value
+
+
+def test_spot_subscription_reload_is_rejected_before_engine_mutation() -> None:
+    previous = Config()
+    candidate = copy.deepcopy(previous)
+    candidate.multi_market.enabled = True
+    candidate.multi_market.market_stage = "enhanced"
+    engine = MakerEngine.__new__(MakerEngine)
+    engine.cfg = previous
+    event_source = WSHandler(SimpleNamespace(signal=object()), previous)
+    event_source._running = True
+    event_source._public_market_streams_started = True
+    engine._event_source = event_source
+    engine._ws_handler = event_source
+
+    with pytest.raises(ValueError, match="spot market subscriptions are restart-only"):
+        engine.on_config_reload(candidate)
+
+    assert engine.cfg is previous
+    assert event_source.cfg is previous
+
+
+def test_testnet_reload_is_rejected_before_engine_mutation() -> None:
+    previous = Config()
+    candidate = copy.deepcopy(previous)
+    candidate.api.testnet = not previous.api.testnet
+    engine = MakerEngine.__new__(MakerEngine)
+    engine.cfg = previous
+
+    with pytest.raises(ValueError, match="api.testnet"):
+        engine.on_config_reload(candidate)
+
+    assert engine.cfg is previous

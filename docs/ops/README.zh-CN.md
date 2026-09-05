@@ -59,7 +59,7 @@ Markdown、current pointer 或多层 receipt。
 2. 发布精确 clean source release；
 3. materialize 完整 private runtime 与 artifact closure；
 4. 在目标机不联网解析依赖的前提下安装并验证 commit-bound environment；
-5. 根据准入的 runtime/config/model/policy closure 构建唯一 deployment envelope；
+5. 根据已验证的运行环境、配置、模型和策略工件构建唯一 deployment envelope，只登记操作者明确批准的策略；
 6. live 停止时创建 fresh exchange reconciliation；
 7. 通过唯一 process owner 启动并观察 runtime health；
 8. admission 通过后才构建 activation receipt 并原子发布紧凑 current pointer。
@@ -80,6 +80,10 @@ python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
 python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 ```
+
+策略许可保存在现有 deployment envelope 中，不由环境变量或研究结论授予。只有获得明确批准后，才为 `build-envelope` 添加对应的 `--approve-policy <policy>`，可重复指定 `q90_action`、`f05_boolean_cooldown`、`f05_buy_e3`。不得根据配置中的启用字段自动生成这些参数。Envelope 将批准列表与精确配置、策略工件绑定；启动入口在创建 engine 前只判断一次启用策略是否已获批准，之后将该结果直接传给运行身份记录和日志，不新增 receipt 或哈希链。
+
+配置校验与普通 `preflight_live_deploy.py` 只检查配置和工件兼容性；普通预检明确输出“未判断策略准入”，不能授权启动。现有发布事务的 `candidate-verify` 另以 `--check-policy-approval` 调用同一个授权函数，使缺少批准的候选在停旧服务前失败。这项停机前诊断不是启动凭据：新进程只判断一次自己已验证的 release，不能信任以前的预检输出。BUY E3 加载器不把 `research_supported`、`owner_risk_accepted` 或历史 `evidence_route` 说明当作许可，历史结论继续保存在研究记录中。旧的 `NARROWGATE_ALLOW_*_PRIVATE_DEPLOY` 环境变量不再授予权限。没有 `policy_approvals` 的旧 envelope 不批准任何可选策略：全部关闭时仍可使用；启用策略则必须构建经过批准的新 envelope，不能原地修改不可变发布。本次重构本身不代表获得部署或重启实盘的许可。
 
 Release、private environment、active config、locked runtime 与 deployment envelope
 已经在主机上准备好后，`activate-prepared-release` 用一次 SSH 事务完成余下 activation。
@@ -130,9 +134,7 @@ python3.12 scripts/live_deploy_common.py activate-prepared-release \
 本次 transaction 的 stopped-reconciliation 和 activation-receipt 输出必须使用尚不存在的
 新路径，且不能指向上述三个旧文件；已有 current pointer 仅在最终提交步骤被原子替换。
 
-私有 systemd `EnvironmentFile` 必须由独立的 `NAME=value` 行组成。追加 deployment grant
-之前必须确保上一行以换行结束，否则第一个 grant 会粘到前一个 secret value 后面。验证时不得
-打印该文件。
+私有 systemd `EnvironmentFile` 必须由独立的 `NAME=value` 行组成。追加运行配置选择项前必须确保上一行以换行结束，否则新字段会粘到前一个密钥值后面。策略许可保存在 deployment envelope 中，不放在该文件里。验证时不得打印该文件。
 
 Health admission 还要求 `reconciliationPending=false`，并且 `lastTickAge` 是零到一秒内的
 有限值。一秒上限来自现有 100ms 主循环安全时钟，并为有界 scheduler jitter 留出空间；

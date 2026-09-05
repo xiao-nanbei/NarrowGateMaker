@@ -143,10 +143,11 @@ path, expected = sys.argv[1:]
 with open(path, "rb") as handle:
     raw = handle.read()
 payload = json.loads(raw)
-if set(payload) != {
+required = {
     "schema_version", "status", "source", "build_bundle", "config_bundle",
     "model_policy_bundle", "canonical_sha256",
-}:
+}
+if set(payload) not in (required, required | {"policy_approvals"}):
     raise SystemExit("deployment release-root fields drifted")
 clone = dict(payload)
 observed = str(clone.pop("canonical_sha256", ""))
@@ -268,9 +269,6 @@ _load_runtime_environment() {
         NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH
         NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256
         NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH
-        NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY
-        NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY
-        NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY
     )
     local authority_present=()
     local authority_values=()
@@ -327,6 +325,11 @@ _load_runtime_environment() {
 }
 
 _run_deploy_preflight() {
+    local check_policy_approval="${1:-0}"
+    [[ "$check_policy_approval" == "0" || "$check_policy_approval" == "1" ]] || {
+        echo "Invalid deploy preflight policy-approval mode" >&2
+        return 1
+    }
     local preflight_tmp="$PREFLIGHT_STATE_FILE.tmp.$$"
     if ! _verify_startup_runtime; then
         rm -f "$preflight_tmp"
@@ -338,9 +341,15 @@ _run_deploy_preflight() {
         echo "Live Python version check failed; maker was not started." >&2
         return 1
     fi
+    local preflight_args=(
+        --config "$CONFIG_FILE"
+        --repo-root "$DIR"
+    )
+    if [[ "$check_policy_approval" == "1" ]]; then
+        preflight_args+=(--check-policy-approval)
+    fi
     if ! "$PYTHON_BIN" -I -B "$DIR/scripts/preflight_live_deploy.py" \
-        --config "$CONFIG_FILE" \
-        --repo-root "$DIR" > "$preflight_tmp"; then
+        "${preflight_args[@]}" > "$preflight_tmp"; then
         rm -f "$preflight_tmp"
         echo "Live preflight failed; maker was not started." >&2
         return 1
@@ -349,14 +358,12 @@ _run_deploy_preflight() {
 }
 
 candidate_verify() {
-    # This is the explicit, pre-stop candidate audit used by the deployment
-    # transaction. Until startup admission is bound to one reusable receipt,
-    # service/supervise/restart intentionally repeat the full preflight; main.py
-    # also validates the actual consumer state and publishes its dynamic
-    # startup attestation.
+    # Catch an unapproved candidate before stopping the selected release.
+    # Ordinary service preflight remains diagnostic; main admits the actual
+    # verified release once and never trusts this pre-stop output as a grant.
     mkdir -p "$DIR/logs"
     _load_runtime_environment
-    _run_deploy_preflight
+    _run_deploy_preflight 1
 }
 
 profile() {

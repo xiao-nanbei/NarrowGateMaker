@@ -52,6 +52,12 @@ WHEELHOUSE_CANONICAL_FIELD = "canonical_wheelhouse_sha256"
 INSTALL_CANONICAL_FIELD = "canonical_install_receipt_sha256"
 DEPLOYMENT_ENVELOPE_SCHEMA = "narrowgate_private_deployment_envelope.v1"
 DEPLOYMENT_ENVELOPE_CANONICAL_FIELD = "canonical_sha256"
+DEPLOYMENT_POLICY_CONFIG_FIELDS = {
+    "q90_action": "dynamic_fill_hazard_action_enabled",
+    "f05_boolean_cooldown": "boolean_cooldown_policy_enabled",
+    "f05_buy_e3": "buy_e3_cooldown_policy_enabled",
+}
+DEPLOYMENT_POLICY_APPROVALS = frozenset(DEPLOYMENT_POLICY_CONFIG_FIELDS)
 ACTIVATION_RECEIPT_SCHEMA = "narrowgate_private_activation_receipt.v1"
 ACTIVATION_RECEIPT_CANONICAL_FIELD = "canonical_sha256"
 ACTIVATION_RECEIPT_STATUS = "activation_complete"
@@ -2688,6 +2694,21 @@ def _validate_native_build_bundle(
     }
 
 
+def _normalize_deployment_policy_approvals(
+    policy_approvals: Iterable[str],
+) -> tuple[str, ...]:
+    """Return one deterministic, explicit release-policy approval set."""
+
+    if isinstance(policy_approvals, (str, bytes)):
+        raise LockedRuntimeError("deployment policy approvals are malformed")
+    normalized = tuple(str(value).strip() for value in policy_approvals)
+    if any(not value or value not in DEPLOYMENT_POLICY_APPROVALS for value in normalized):
+        raise LockedRuntimeError("deployment policy approval is unknown")
+    if len(set(normalized)) != len(normalized):
+        raise LockedRuntimeError("deployment policy approvals are duplicated")
+    return tuple(sorted(normalized))
+
+
 def build_deployment_envelope(
     *,
     repository_root: Path,
@@ -2700,6 +2721,7 @@ def build_deployment_envelope(
     policy_artifact_manifest_path: Path | None = None,
     policy_file_path: Path | None = None,
     predicate_bundle_path: Path | None = None,
+    policy_approvals: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Write one compact release root over source and three bundle roots."""
 
@@ -2760,6 +2782,9 @@ def build_deployment_envelope(
             ("predicate_bundle", _absolute(predicate_bundle_path)),
         ]
 
+    normalized_policy_approvals = _normalize_deployment_policy_approvals(
+        policy_approvals
+    )
     payload: dict[str, Any] = {
         "schema_version": DEPLOYMENT_ENVELOPE_SCHEMA,
         "status": "deployment_envelope_built",
@@ -2770,6 +2795,7 @@ def build_deployment_envelope(
         },
         "config_bundle": _content_bundle_reference((("config", active),)),
         "model_policy_bundle": _content_bundle_reference(policy_members),
+        "policy_approvals": list(normalized_policy_approvals),
     }
     payload[DEPLOYMENT_ENVELOPE_CANONICAL_FIELD] = canonical_sha256(
         payload, DEPLOYMENT_ENVELOPE_CANONICAL_FIELD
@@ -2800,7 +2826,7 @@ def _load_deployment_envelope_identity(
     )
     if observed_root != _require_exact_sha256(expected_root_sha256, "expected release root"):
         raise LockedRuntimeError("deployment release root drifted")
-    if set(payload) != {
+    legacy_fields = {
         "schema_version",
         "status",
         "source",
@@ -2808,7 +2834,10 @@ def _load_deployment_envelope_identity(
         "config_bundle",
         "model_policy_bundle",
         DEPLOYMENT_ENVELOPE_CANONICAL_FIELD,
-    }:
+    }
+    current_fields = legacy_fields | {"policy_approvals"}
+    observed_fields = frozenset(payload)
+    if observed_fields not in {frozenset(legacy_fields), frozenset(current_fields)}:
         raise LockedRuntimeError("deployment release-root fields drifted")
     if payload.get("status") != "deployment_envelope_built":
         raise LockedRuntimeError("deployment release-root status drifted")
@@ -2826,6 +2855,14 @@ def load_deployment_envelope(
         path,
         expected_root_sha256=expected_root_sha256,
     )
+    raw_policy_approvals = payload.get("policy_approvals", [])
+    if not isinstance(raw_policy_approvals, list):
+        raise LockedRuntimeError("deployment policy approvals are malformed")
+    policy_approvals = _normalize_deployment_policy_approvals(
+        raw_policy_approvals
+    )
+    if raw_policy_approvals != list(policy_approvals):
+        raise LockedRuntimeError("deployment policy approvals are not canonical")
     source = _require_mapping(payload.get("source"), "release source")
     if set(source) != {"commit", "tree"}:
         raise LockedRuntimeError("deployment source fields drifted")
@@ -2876,6 +2913,7 @@ def load_deployment_envelope(
         "config_file_sha256": config_leaves["config"],
         "model_policy_member_paths": policy_paths,
         "model_policy_member_sha256": policy_leaves,
+        "policy_approvals": list(policy_approvals),
         **{
             key: value
             for key, value in build.items()
@@ -3436,6 +3474,14 @@ def _build_parser() -> argparse.ArgumentParser:
     envelope.add_argument("--policy-artifact-manifest", type=Path)
     envelope.add_argument("--policy-file", type=Path)
     envelope.add_argument("--predicate-bundle", type=Path)
+    envelope.add_argument(
+        "--approve-policy",
+        action="append",
+        choices=sorted(DEPLOYMENT_POLICY_APPROVALS),
+        default=[],
+        dest="policy_approvals",
+        help="explicitly approve one release-bound live policy (repeatable)",
+    )
     envelope.add_argument("--output", type=Path, required=True)
     startup = subparsers.add_parser(
         "verify-envelope-startup",
@@ -3587,6 +3633,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy_artifact_manifest_path=args.policy_artifact_manifest,
                 policy_file_path=args.policy_file,
                 predicate_bundle_path=args.predicate_bundle,
+                policy_approvals=args.policy_approvals,
                 output_path=args.output,
             )
             print(
