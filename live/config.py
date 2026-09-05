@@ -555,6 +555,10 @@ class Config:
 
 BACKTEST_PARAM_SOURCES = (
     ("symbol", ("symbol",)),
+    ("order_transport", ("api", "order_transport")),
+    ("async_order_lanes_enabled", ("api", "async_order_lanes_enabled")),
+    ("cross_side_order_lanes_enabled", ("api", "cross_side_order_lanes_enabled")),
+    ("async_order_lane_capacity", ("api", "async_order_lane_capacity")),
     ("gamma", ("strategy", "gamma")),
     ("kappa", ("strategy", "kappa")),
     ("p3_kappa_eff_override", ("strategy", "p3_kappa_eff_override")),
@@ -916,13 +920,8 @@ def _parse(raw: dict) -> Config:
     return cfg
 
 
-def _validate_config(cfg: Config) -> None:
+def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None:
     """Validate loaded config before it can drive live/reload behavior."""
-    from live.runtime_policy import (
-        f05_boolean_cooldown_runtime_policy,
-        f05_buy_e3_runtime_policy,
-        q90_action_runtime_policy,
-    )
     from strategy.fill_cooldown import normalize_consecutive_reset_policy
 
     api_timeout = getattr(cfg.api, "timeout_s", None)
@@ -1081,7 +1080,9 @@ def _validate_config(cfg: Config) -> None:
         prospective_epoch_root=lifecycle_v2.prospective_epoch_root,
         required_mount=lifecycle_v2.required_mount,
         remote_spool_allowlisted_roots=lifecycle_v2.remote_spool_allowlisted_roots,
-        enabled=bool(lifecycle_v2.enabled),
+        # Replay validates the same configuration without requiring this host
+        # to mount the live process's journal storage. Structural checks remain.
+        enabled=bool(lifecycle_v2.enabled) and validate_live_storage,
     )
     if bool(lifecycle_v2.enabled):
         if not str(lifecycle_v2.baseline_identity_path).strip():
@@ -1205,17 +1206,6 @@ def _validate_config(cfg: Config) -> None:
             raise ValueError(
                 "dynamic fill-hazard action requires a 64-character SHA256"
             )
-    q90_action_runtime_policy(
-        bool(cfg.strategy.dynamic_fill_hazard_action_enabled)
-    )
-    f05_boolean_cooldown_runtime_policy(
-        bool(cfg.strategy.boolean_cooldown_policy_enabled),
-        evidence_route=cfg.strategy.boolean_cooldown_evidence_route,
-    )
-    f05_buy_e3_runtime_policy(
-        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
-        evidence_route=cfg.strategy.buy_e3_cooldown_evidence_route,
-    )
     if bool(cfg.strategy.boolean_cooldown_policy_enabled):
         if not math.isclose(
             float(cfg.strategy.fill_cooldown),

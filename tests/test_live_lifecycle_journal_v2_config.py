@@ -154,3 +154,36 @@ def test_bounded_remote_spool_requires_finite_session_bounds() -> None:
     )
     with pytest.raises(ValueError, match="max_duration_s"):
         _validate_config(Config(lifecycle_journal_v2=settings))
+
+
+def test_replay_config_does_not_require_remote_storage_but_live_still_does(monkeypatch):
+    cfg = Config(lifecycle_journal_v2=LifecycleJournalV2Config(
+        enabled=True, storage_profile=BOUNDED_REMOTE_SPOOL,
+        root=str(EXAMPLE_REMOTE_SPOOL / "journal"),
+        prospective_epoch_root=str(EXAMPLE_REMOTE_SPOOL / "epochs"),
+        remote_spool_allowlisted_roots=[str(EXAMPLE_REMOTE_SPOOL)],
+        baseline_identity_path="baseline.json", baseline_identity_sha256="a" * 64,
+    ))
+    monkeypatch.setattr(Path, "exists", lambda _path: False)
+    with pytest.raises(ValueError, match="existing non-symlink"):
+        _validate_config(cfg)
+
+    def unexpected_storage_probe(_path):
+        raise AssertionError("replay probed live host storage")
+
+    monkeypatch.setattr(Path, "exists", unexpected_storage_probe)
+    _validate_config(cfg, validate_live_storage=False)
+    assert cfg.lifecycle_journal_v2.enabled is True
+    cfg.lifecycle_journal_v2.baseline_identity_sha256 = ""
+    with pytest.raises(ValueError, match="baseline_identity_sha256"):
+        _validate_config(cfg, validate_live_storage=False)
+
+
+def test_replay_config_still_validates_storage_structure():
+    cfg = Config(lifecycle_journal_v2=LifecycleJournalV2Config(
+        storage_profile=BOUNDED_REMOTE_SPOOL,
+        root="/etc/private/journal", prospective_epoch_root="/etc/private/epochs",
+        remote_spool_allowlisted_roots=["/etc/private"],
+    ))
+    with pytest.raises(ValueError, match="sensitive directory"):
+        _validate_config(cfg, validate_live_storage=False)

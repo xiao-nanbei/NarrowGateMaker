@@ -17,10 +17,6 @@ import yaml
 
 import live.main as live_main
 from live.config import Config
-from live.runtime_policy import (
-    F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
-    F05_BUY_E3_OWNER_OVERRIDE_ENV,
-)
 from strategy.model_contract import REQUIRED_MODEL_HEADS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +40,7 @@ def test_formal_dry_run_exits_before_runtime_or_side_effects(
     for name in (
         "setup_logging",
         "audit_native_runtime",
+        "admit_runtime_policies",
         "record_startup_runtime_identity",
         "create_rest_client",
         "MakerEngine",
@@ -117,7 +114,7 @@ def test_formal_dry_run_uses_strict_config_validation(tmp_path: Path) -> None:
                 "boolean_cooldown_policy_path",
                 "boolean_cooldown_predicate_bundle_path",
             ),
-            F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
+            "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
         ),
         (
             "buy_e3_cooldown_policy_enabled",
@@ -126,7 +123,7 @@ def test_formal_dry_run_uses_strict_config_validation(tmp_path: Path) -> None:
                 "buy_e3_cooldown_policy_path",
                 "buy_e3_cooldown_predicate_bundle_path",
             ),
-            F05_BUY_E3_OWNER_OVERRIDE_ENV,
+            "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY",
         ),
     ),
 )

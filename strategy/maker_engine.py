@@ -140,6 +140,7 @@ from strategy.quote_core import (
     SPREAD_CAP_COMPRESS,
     SPREAD_CAP_PAUSE_EXPOSURE,
     DeferredNativeQuoteCoreResult,
+    QuoteCoreConfig,
     QuotePrediction,
     QuoteState,
     _exposure_increasing,
@@ -3087,11 +3088,20 @@ class MakerEngine:
 
     def on_config_reload(self, cfg):
         """Apply runtime config and propagate changes to signal + ws handler."""
+        event_source = self._active_event_source()
+        validate_event_source_reload = getattr(
+            event_source,
+            "validate_config_reload",
+            None,
+        )
+        if callable(validate_event_source_reload):
+            validate_event_source_reload(self.cfg, cfg)
         if cfg.lifecycle_journal_v2 != self.cfg.lifecycle_journal_v2:
             raise ValueError(
                 "lifecycle_journal_v2 configuration is restart-only and cannot be hot-reloaded"
             )
         for field_name in (
+            "testnet",
             "async_order_lanes_enabled",
             "cross_side_order_lanes_enabled",
             "async_order_lane_capacity",
@@ -7612,6 +7622,97 @@ class MakerEngine:
         threshold = self._adverse_markout_pause_threshold()
         return self._side_markout_ema(side) < -threshold and now < self._mo_pause_until.get(side, 0.0)
 
+    def _prepare_quote_runtime(self) -> tuple[QuoteCoreConfig, Any | None]:
+        """Prepare model/config caches and native scratch without a quote decision.
+
+        Startup calls this after exchange filters are synchronized. The quote
+        path reuses it so existing config/model reload keys remain authoritative;
+        no market snapshot, inventory, prediction, or policy clock is consumed.
+        """
+        cfg = self.cfg
+        fill_model = _get_fill_model(self._model_dir)
+        p3_delta_star = 0.0
+        p3_kappa_eff = 0.0
+        p3_identity = None
+        if fill_model is not None:
+            cache_key = (self._model_dir, id(fill_model))
+            cache = getattr(self, "_fill_model_quote_cache", None)
+            if cache is None or cache[0] != cache_key:
+                delta_star = fill_model.optimal_delta()
+                cache = (
+                    cache_key,
+                    delta_star,
+                    fill_model.effective_kappa(delta_star),
+                    fill_model.semantic_identity(require_artifact_hash=True),
+                )
+                self._fill_model_quote_cache = cache
+            p3_delta_star = float(cache[1])
+            p3_kappa_eff = float(cache[2])
+            p3_identity = dict(cache[3])
+        p3_kappa_eff_override = float(
+            getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
+        )
+        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+            raise RuntimeError(
+                "nonzero p3_kappa_eff_override has no independently bound "
+                "touch-curve identity and is forbidden"
+            )
+        ret_metadata = getattr(self.signal, "_model_metadata", {}).get("ret_10s", {})
+        f03_action_contract = (
+            f03_direct_quote_action_contract(ret_metadata)
+            if bool(getattr(cfg.ml, "enabled", False))
+            and float(getattr(cfg.ml, "ret_skew", 0.0) or 0.0) > 0.0
+            else {"compatible": False, "horizon_s": 0.0}
+        )
+        f03_ret_action_horizon_s = float(f03_action_contract["horizon_s"])
+        f03_ret_action_compatible = bool(f03_action_contract["compatible"])
+        quote_cfg_key = (
+            id(cfg),
+            p3_delta_star,
+            p3_kappa_eff,
+            str((p3_identity or {}).get("artifact_sha256", "")),
+            f03_ret_action_horizon_s,
+            f03_ret_action_compatible,
+        )
+        quote_cfg_cache = getattr(self, "_quote_core_config_cache", None)
+        if quote_cfg_cache is None or quote_cfg_cache[0] != quote_cfg_key:
+            quote_cfg_cache = (
+                quote_cfg_key,
+                quote_core_config_from_live_config(
+                    cfg,
+                    p3_delta_star=p3_delta_star,
+                    p3_kappa_eff=p3_kappa_eff,
+                    p3_identity=p3_identity,
+                    f03_ret_action_horizon_s=f03_ret_action_horizon_s,
+                    f03_ret_action_compatible=f03_ret_action_compatible,
+                ),
+            )
+            self._quote_core_config_cache = quote_cfg_cache
+        quote_cfg = quote_cfg_cache[1]
+        native_stage_enabled = os.environ.get(
+            "NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not native_stage_enabled:
+            return quote_cfg, None
+        if bool(getattr(cfg.strategy, "ber_exposure_add_only", False)):
+            raise RuntimeError(
+                "native quote-policy stage does not admit the two-pass BER quote path"
+            )
+        if bool(getattr(cfg.strategy, "local_extreme_guard_enabled", False)) or float(
+            getattr(cfg.strategy, "fragile_order_ttl_s", 0.0) or 0.0
+        ) > 0.0:
+            raise RuntimeError(
+                "native quote-policy stage requires local-extreme/fragile TTL off"
+            )
+        stage_key = (quote_cfg_key, id(quote_cfg))
+        if (
+            getattr(self, "_native_quote_policy_stage", None) is None
+            or getattr(self, "_native_quote_policy_stage_key", None) != stage_key
+        ):
+            self._native_quote_policy_stage = make_native_quote_policy_stage(quote_cfg)
+            self._native_quote_policy_stage_key = stage_key
+        return quote_cfg, self._native_quote_policy_stage
+
     def _compute_quotes(
         self,
         quote_snapshot: QuoteDecisionSnapshot,
@@ -7654,35 +7755,9 @@ class MakerEngine:
 
         now = time.time()
 
-        fill_model = _get_fill_model(self._model_dir)
+        quote_cfg, native_stage = self._prepare_quote_runtime()
         snap = self.inventory.snapshot
         tox_bid, tox_ask = self._toxicity_probs(pred)
-        p3_delta_star = 0.0
-        p3_kappa_eff = 0.0
-        p3_identity = None
-        if fill_model is not None:
-            cache_key = (self._model_dir, id(fill_model))
-            cache = getattr(self, "_fill_model_quote_cache", None)
-            if cache is None or cache[0] != cache_key:
-                delta_star = fill_model.optimal_delta()
-                cache = (
-                    cache_key,
-                    delta_star,
-                    fill_model.effective_kappa(delta_star),
-                    fill_model.semantic_identity(require_artifact_hash=True),
-                )
-                self._fill_model_quote_cache = cache
-            p3_delta_star = float(cache[1])
-            p3_kappa_eff = float(cache[2])
-            p3_identity = dict(cache[3])
-        p3_kappa_eff_override = float(
-            getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
-        )
-        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
-            raise RuntimeError(
-                "nonzero p3_kappa_eff_override has no independently bound "
-                "touch-curve identity and is forbidden"
-            )
         trade_intensity = getattr(getattr(cfg, "regime", None), "liq_baseline", 200.0)
         if self.signal._feat_history:
             trade_intensity = self.signal._feat_history[-1].get("trade_intensity_60s", trade_intensity)
@@ -7706,38 +7781,6 @@ class MakerEngine:
             hold_time_s=hold_time,
             unrealized_pnl=float(getattr(snap, "unrealized_pnl", 0.0)),
         )
-        ret_metadata = getattr(self.signal, "_model_metadata", {}).get("ret_10s", {})
-        f03_action_contract = (
-            f03_direct_quote_action_contract(ret_metadata)
-            if bool(getattr(cfg.ml, "enabled", False))
-            and float(getattr(cfg.ml, "ret_skew", 0.0) or 0.0) > 0.0
-            else {"compatible": False, "horizon_s": 0.0}
-        )
-        f03_ret_action_horizon_s = float(f03_action_contract["horizon_s"])
-        f03_ret_action_compatible = bool(f03_action_contract["compatible"])
-        quote_cfg_key = (
-            id(cfg),
-            p3_delta_star,
-            p3_kappa_eff,
-            str((p3_identity or {}).get("artifact_sha256", "")),
-            f03_ret_action_horizon_s,
-            f03_ret_action_compatible,
-        )
-        quote_cfg_cache = getattr(self, "_quote_core_config_cache", None)
-        if quote_cfg_cache is None or quote_cfg_cache[0] != quote_cfg_key:
-            quote_cfg_cache = (
-                quote_cfg_key,
-                quote_core_config_from_live_config(
-                    cfg,
-                    p3_delta_star=p3_delta_star,
-                    p3_kappa_eff=p3_kappa_eff,
-                    p3_identity=p3_identity,
-                    f03_ret_action_horizon_s=f03_ret_action_horizon_s,
-                    f03_ret_action_compatible=f03_ret_action_compatible,
-                ),
-            )
-            self._quote_core_config_cache = quote_cfg_cache
-        quote_cfg = quote_cfg_cache[1]
         quote_pred = QuotePrediction(
             dir_10s=pred.dir_10s,
             vol_10s=pred.vol_10s,
@@ -7750,31 +7793,8 @@ class MakerEngine:
             or getattr(cfg.strategy, "buy_fill_selection_live_enabled", False)
         )
         quote_depth = quote_depth_from_book(depth_raw)
-        native_stage_enabled = os.environ.get(
-            "NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0"
-        ).strip().lower() in {"1", "true", "yes", "on"}
         self._native_quote_policy_results = {}
-        if native_stage_enabled:
-            if bool(getattr(cfg.strategy, "ber_exposure_add_only", False)):
-                raise RuntimeError(
-                    "native quote-policy stage does not admit the two-pass BER quote path"
-                )
-            if bool(getattr(cfg.strategy, "local_extreme_guard_enabled", False)) or float(
-                getattr(cfg.strategy, "fragile_order_ttl_s", 0.0) or 0.0
-            ) > 0.0:
-                raise RuntimeError(
-                    "native quote-policy stage requires local-extreme/fragile TTL off"
-                )
-            stage_key = (quote_cfg_key, id(quote_cfg))
-            if (
-                getattr(self, "_native_quote_policy_stage", None) is None
-                or getattr(self, "_native_quote_policy_stage_key", None)
-                != stage_key
-            ):
-                self._native_quote_policy_stage = make_native_quote_policy_stage(
-                    quote_cfg
-                )
-                self._native_quote_policy_stage_key = stage_key
+        if native_stage is not None:
             policy_metrics = self._current_l2_policy_metrics(mid, quote_snapshot)
             buy_common_input = self._native_common_policy_input(
                 Side.BUY,
@@ -7792,7 +7812,7 @@ class MakerEngine:
             )
             result, native_buy_policy, native_sell_policy = (
                 compute_native_quote_policy_stage_live(
-                    self._native_quote_policy_stage,
+                    native_stage,
                     quote_state,
                     quote_cfg,
                     quote_pred,
@@ -14288,10 +14308,11 @@ class MakerEngine:
             logger.warning(f"Warmup: metrics poll failed: {e}")
 
     def start(self):
-        self._running = True
+        self._running = False
         self._min_qty = self.cfg.lot_size  # default before exchange sync
         self._sync_exchange_filters()
         self._freeze_native_order_action_planner()
+        self._prepare_quote_runtime()
         self._prefill_warmup()
 
         # Cancel any stale orders left from crashed/killed previous session
@@ -14316,6 +14337,7 @@ class MakerEngine:
             logger.info(f"Leverage set to {self.cfg.strategy.leverage}x")
         except Exception as e:
             logger.warning(f"Set leverage failed: {e}")
+        self._running = True
         logger.info("MakerEngine started")
 
     def stop(self):

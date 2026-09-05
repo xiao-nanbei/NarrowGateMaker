@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
 import data_paths
+from models.backtest_config import load_live_config_as_params, load_tick_base_params
 from research.families.f05_fill_quality_quote_ev.audit import (
     freeze_multiscale_ema_boolean_cooldown_duration_policy as duration_freeze,
 )
@@ -133,3 +135,81 @@ def test_flat_pointer_consumers_accept_only_normalized_v12_binding(
     toxicity = toxicity_gate.validate_current_baseline()
     assert toxicity["config_path"] == archive.resolve()
     assert toxicity["config_path"] != live_alias.resolve()
+
+
+def _local_replay_projection(tmp_path):
+    config = tmp_path / "original.yaml"
+    config.write_text("strategy:\n  gamma: 0.023\nml:\n  model_dir: /remote/model\n")
+    model = tmp_path / "model"
+    model.mkdir()
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}")
+    payload = {
+        "schema_version": "narrowgate_local_replay_locator_projection.v1",
+        "visibility": "local_only_do_not_publish",
+        "authority": "none_locator_only",
+        "source_config": {
+            "path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+        },
+        "locator_overrides": {
+            "ml.model_dir": str(model),
+            "strategy.boolean_cooldown_policy_path": str(policy),
+        },
+    }
+    projection = tmp_path / "locators.json"
+    projection.write_text(json.dumps(payload))
+    return config, projection, payload
+
+
+def test_replay_locators_preserve_original_config_and_strategy(tmp_path, monkeypatch):
+    config, projection, payload = _local_replay_projection(tmp_path)
+    before = config.read_bytes()
+    monkeypatch.delenv("MM_MODEL_DIR", raising=False)
+    params = load_tick_base_params(
+        config_path=config, locator_projection_path=projection,
+        include_fill_probability=False, include_queue_calibration=False,
+    )
+    assert config.read_bytes() == before
+    assert params["gamma"] == 0.023
+    assert params["model_dir"] == payload["locator_overrides"]["ml.model_dir"]
+    assert params["boolean_cooldown_policy_path"] == str(tmp_path / "policy.json")
+    assert params["_config_path"] == str(config)
+    assert params["_config_source_sha256"] == hashlib.sha256(before).hexdigest()
+    assert params["_replay_locator_projection"]["source_config"] == payload["source_config"]
+
+
+@pytest.mark.parametrize("key", ["strategy.gamma", "api.key", "risk.max_daily_loss"])
+def test_replay_locators_reject_non_locator_overrides(tmp_path, key):
+    config, projection, payload = _local_replay_projection(tmp_path)
+    payload["locator_overrides"][key] = 0
+    projection.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="only the six"):
+        load_live_config_as_params(config, locator_projection_path=projection)
+
+
+@pytest.mark.parametrize("invalid", ["missing", "relative", "wrong_type", "sha", "source"])
+def test_replay_locators_reject_invalid_paths_or_source(tmp_path, invalid):
+    config, projection, payload = _local_replay_projection(tmp_path)
+    if invalid == "missing":
+        payload["locator_overrides"]["ml.model_dir"] = str(tmp_path / "absent")
+    elif invalid == "relative":
+        payload["locator_overrides"]["ml.model_dir"] = "model"
+    elif invalid == "wrong_type":
+        payload["locator_overrides"]["ml.model_dir"] = str(tmp_path / "policy.json")
+    elif invalid == "sha":
+        payload["source_config"]["sha256"] = "0" * 64
+    else:
+        payload["source_config"]["path"] = str(tmp_path / "different.yaml")
+    projection.write_text(json.dumps(payload))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        load_live_config_as_params(config, locator_projection_path=projection)
+
+
+def test_replay_locators_reject_environment_model_replacement(tmp_path, monkeypatch):
+    config, projection, _ = _local_replay_projection(tmp_path)
+    monkeypatch.setenv("MM_MODEL_DIR", str(tmp_path / "another-model"))
+    with pytest.raises(ValueError, match="MM_MODEL_DIR conflicts"):
+        load_tick_base_params(
+            config_path=config, locator_projection_path=projection,
+            include_fill_probability=False, include_queue_calibration=False,
+        )

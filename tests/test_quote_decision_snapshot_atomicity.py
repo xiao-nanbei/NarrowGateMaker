@@ -33,6 +33,75 @@ def _book_event(ts_ms: int, bid: float, ask: float, sequence: int) -> dict:
     }
 
 
+def test_depth_observers_share_one_immutable_payload_per_event() -> None:
+    signal = SignalEngine(enable_ml=False)
+    observed = []
+    for side in ("SELL", "BUY"):
+        signal.add_depth_observer(
+            lambda side=side, **payload: observed.append((side, payload))
+        )
+    for index in range(3):
+        ts_ms = 1_800_000_000_000 + index * 100
+        event = _depth_event(ts_ms, 99.0 + index, 2.0, 101.0 + index, 3.0)
+        receive_ns = ts_ms * 1_000_000 + 7_000_000
+        signal.on_depth(event, receive_ts_ns=receive_ns)
+        first, second = observed[-2:]
+        assert (first[0], second[0]) == ("SELL", "BUY")
+        left, right = first[1], second[1]
+        assert left == right == {
+            "receive_ts_ns": receive_ns,
+            "bids": ((99.0 + index, 2.0),),
+            "asks": ((101.0 + index, 3.0),),
+            "market_generation": index + 1,
+            "depth_generation": index + 1,
+        }
+        assert left["bids"] is right["bids"]
+        assert left["asks"] is right["asks"]
+        event["b"][0][0] = "0"
+        assert left["bids"][0][0] == 99.0 + index
+    assert len(observed) == 6
+    assert signal._depth_generation == 3
+
+
+def test_depth_observer_registry_is_stable_and_errors_do_not_drop_later_observers(
+    caplog,
+) -> None:
+    signal = SignalEngine(enable_ml=False)
+    observed = []
+
+    def later(**payload):
+        observed.append(("later", payload["depth_generation"]))
+
+    def first(**payload):
+        assert signal._lock.acquire(blocking=False)
+        signal._lock.release()
+        observed.append(("first", payload["depth_generation"]))
+        signal.add_depth_observer(later)
+        raise RuntimeError("observer failure")
+
+    def second(**payload):
+        observed.append(("second", payload["depth_generation"]))
+
+    signal.add_depth_observer(first)
+    signal.add_depth_observer(second)
+    signal.add_depth_observer(first)
+    initial_registry = signal._on_depth_callbacks
+    assert initial_registry == (first, second)
+    for index in range(2):
+        ts_ms = 1_800_000_000_000 + index * 100
+        signal.on_depth(
+            _depth_event(ts_ms, 99.0, 1.0, 101.0, 1.0),
+            receive_ts_ns=ts_ms * 1_000_000 + 1,
+        )
+    assert initial_registry == (first, second)
+    assert signal._on_depth_callbacks == (first, second, later)
+    assert observed == [
+        ("first", 1), ("second", 1),
+        ("first", 2), ("second", 2), ("later", 2),
+    ]
+    assert caplog.text.count("DEPTH_OBSERVER_FAILED") == 2
+
+
 def test_quote_decision_snapshot_is_immutable_across_feed_updates() -> None:
     signal = SignalEngine(enable_ml=False)
     base_ms = 1_800_000_000_000
@@ -550,7 +619,8 @@ def test_side_only_native_publication_preserves_opposite_side_without_materializ
     ] == 3
 
 
-def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch) -> None:
+@pytest.mark.parametrize("prewarm", [False, True])
+def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch, prewarm) -> None:
     signal = SignalEngine(enable_ml=False)
     base_ms = 1_800_000_000_000
     receive_ns = base_ms * 1_000_000 + 1_000_000
@@ -598,6 +668,8 @@ def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0")
 
+    if prewarm:
+        engine._prepare_quote_runtime()
     baseline = engine._compute_quotes(snapshot, 0.0, Prediction(), pricing_mid=100.0)
     baseline_context = copy.deepcopy(engine._last_quote_context)
     baseline_diagnostics = copy.deepcopy(engine._last_quote_diagnostics)
@@ -609,6 +681,8 @@ def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch
     )
 
     monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "1")
+    if prewarm:
+        engine._prepare_quote_runtime()
     staged = engine._compute_quotes(snapshot, 0.0, Prediction(), pricing_mid=100.0)
 
     assert staged == baseline
@@ -829,3 +903,150 @@ def test_routing_contract_rejects_post_only_cross_and_non_tick_price() -> None:
         can_ask=True,
         post_only_guard=guard,
     ).startswith("non_executable_tick_price")
+
+
+@pytest.mark.parametrize("native_enabled", [False, True])
+def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
+    monkeypatch, native_enabled
+) -> None:
+    import strategy.maker_engine as engine_module
+
+    calls = {"delta": 0, "kappa": 0, "identity": 0, "config": 0, "stage": 0}
+
+    class FillModel:
+        def __init__(self, artifact):
+            self.artifact = artifact
+
+        def optimal_delta(self):
+            calls["delta"] += 1
+            return 2.0
+
+        def effective_kappa(self, delta):
+            assert delta == 2.0
+            calls["kappa"] += 1
+            return 0.1
+
+        def semantic_identity(self, *, require_artifact_hash):
+            assert require_artifact_hash is True
+            calls["identity"] += 1
+            return {
+                "event_type": "touch",
+                "horizon_s": 10.0,
+                "distance_unit": "USDC_per_BTC",
+                "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+                "side": "pooled_buy_sell",
+                "queue_included": False,
+                "artifact_sha256": self.artifact,
+            }
+
+    model = FillModel("a" * 64)
+    original_config = engine_module.quote_core_config_from_live_config
+
+    def make_config(*args, **kwargs):
+        calls["config"] += 1
+        return original_config(*args, **kwargs)
+
+    def make_stage(cfg):
+        assert cfg.tick_size == 0.5
+        calls["stage"] += 1
+        return object()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("startup cache preparation consumed decision state")
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.cfg.tick_size = 0.5
+    engine.cfg.ml.enabled = False
+    engine._model_dir = "synthetic"
+    engine.signal = SimpleNamespace(_model_metadata={})
+    engine._requote_count = 17
+    engine._last_requote = 10.0
+    engine._fill_cooldown_until = {"BUY": 30.0, "SELL": 40.0}
+    engine._native_quote_policy_results = {"already_published": object()}
+    engine._compute_quotes = forbidden
+    previous = vars(engine).copy()
+    monkeypatch.setattr(engine_module, "_get_fill_model", lambda _: model)
+    monkeypatch.setattr(engine_module, "quote_core_config_from_live_config", make_config)
+    monkeypatch.setattr(engine_module, "make_native_quote_policy_stage", make_stage)
+    monkeypatch.setattr(engine_module.time, "time", forbidden)
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "1" if native_enabled else "0")
+
+    first_cfg, first_stage = engine._prepare_quote_runtime()
+    second_cfg, second_stage = engine._prepare_quote_runtime()
+
+    assert first_cfg is second_cfg
+    assert first_stage is second_stage
+    assert (first_stage is not None) is native_enabled
+    assert calls == {"delta": 1, "kappa": 1, "identity": 1, "config": 1,
+                     "stage": int(native_enabled)}
+    assert all(vars(engine)[key] is value for key, value in previous.items())
+    assert set(vars(engine)) - set(previous) == (
+        {"_fill_model_quote_cache", "_quote_core_config_cache"}
+        | ({"_native_quote_policy_stage", "_native_quote_policy_stage_key"}
+           if native_enabled else set())
+    )
+
+    # Runtime reload replaces cfg and invalidates the existing cache; warmup
+    # must not pin old strategy parameters or a replaced model object forever.
+    engine.cfg = copy.deepcopy(engine.cfg)
+    engine.cfg.strategy.gamma *= 2.0
+    engine._quote_core_config_cache = None
+    reloaded_cfg, reloaded_stage = engine._prepare_quote_runtime()
+    assert reloaded_cfg is not first_cfg
+    assert reloaded_cfg.gamma == first_cfg.gamma * 2.0
+    assert calls["delta"] == 1
+    assert calls["config"] == 2
+    if native_enabled:
+        assert reloaded_stage is not first_stage
+
+    model = FillModel("b" * 64)
+    replaced_cfg, _ = engine._prepare_quote_runtime()
+    assert replaced_cfg is not reloaded_cfg
+    assert calls == {"delta": 2, "kappa": 2, "identity": 2, "config": 3,
+                     "stage": 3 * int(native_enabled)}
+
+
+@pytest.mark.parametrize("warmup_fails", [False, True])
+def test_engine_start_prepares_quotes_after_filters_without_early_admission(warmup_fails) -> None:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine._running = False
+    events = []
+
+    def event(name):
+        assert engine._running is False
+        events.append(name)
+
+    def filters():
+        event("filters")
+        engine.cfg.tick_size = 0.5
+
+    def prepare():
+        event("quote_runtime")
+        assert engine.cfg.tick_size == 0.5
+        if warmup_fails:
+            raise ValueError("invalid quote model")
+
+    transport = SimpleNamespace(
+        cancel_open_orders=lambda **kwargs: event("cancel_all"),
+        change_leverage=lambda **kwargs: event("leverage"),
+    )
+    engine._sync_exchange_filters = filters
+    engine._freeze_native_order_action_planner = lambda: event("order_planner")
+    engine._prepare_quote_runtime = prepare
+    engine._prefill_warmup = lambda: event("market_prefill")
+    engine._order_transport = lambda: transport
+    engine._reconciliation_transport = lambda: transport
+
+    if warmup_fails:
+        with pytest.raises(ValueError, match="invalid quote model"):
+            engine.start()
+        assert engine._running is False
+        assert events == ["filters", "order_planner", "quote_runtime"]
+    else:
+        engine.start()
+        assert engine._running is True
+        assert events == [
+            "filters", "order_planner", "quote_runtime", "market_prefill", "cancel_all", "leverage"
+        ]

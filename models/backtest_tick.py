@@ -94,7 +94,13 @@ from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
 )
 from models.replay.continuous_accounting import FEE_ACCOUNTING_SEMANTICS
 from models.replay.replay_state_checkpoint import validate_replay_initial_state
-from models.replay_contract import _local_work_samples
+from models.replay_contract import (  # noqa: E402
+    _local_work_samples,
+    bulk_cancel_sample_rows,
+    rest_http_result_statuses,
+    rest_return_sample_rows,
+    runtime_compute_sample_rows,
+)
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
@@ -364,12 +370,18 @@ def terminal_pnl_decomposition(
 
 
 def _load_live_perf_latency_samples(path: "Path", mode: str = "avg") -> dict[str, "np.ndarray"]:
-    """Load empirical REST latency samples from live_perf_telemetry.csv.
+    """Load historical, per-telemetry-row REST-duration proxies.
 
-    中文说明：live telemetry 里的 new/cancel 是真实 REST 往返耗时。replay 的
-    latency 参数表示单个订单从提交/撤单请求到生效的延迟，所以默认用
-    sum/count 的 per-call 平均值；`max` 用于更保守 tail stress，`sum` 用于
-    模拟整轮 replace 的总阻塞成本。
+    ``avg`` returns one sum/count value per row, not the original per-request
+    distribution. Rows containing several calls lose their within-row tails.
+    ``max`` and ``sum`` are alternative aggregate proxies, not recovered request
+    samples. None measures exchange effectiveness or private ACK visibility;
+    using these legacy arrays for those clocks is an explicit modeling
+    assumption, not a measured one-way delay. In particular, do not halve RTT.
+
+    Async gateways record request timing separately in order_gateway_receipts;
+    zero REST counters here do not mean zero network latency. Preserve this
+    loader for historical reproduction, not as the current async profile.
     """
     if not path.exists():
         raise FileNotFoundError(f"Live perf telemetry not found: {path}")
@@ -3012,36 +3024,39 @@ def causal_prediction_ready_indices(
     return in_window.astype(np.int64, copy=False)
 
 
-def resolve_ml_feature_dir() -> Path:
-    """Resolve the feature panel bound to the selected model bundle.
+def resolve_ml_feature_dir(*, require_training_panel: bool = False) -> Path:
+    """Select an inference panel, or explicitly reproduce the training panel.
 
-    Causal-v2 bundles carry a manifest identity.  Replaying them against the
-    legacy canonical feature directory would silently mix data contracts, so
-    the manifest hash is enforced whenever the bundle provides one.  An
-    explicit ``MM_FEATURE_DIR`` keeps copied bundles portable across hosts.
+    Training provenance is not an inference interface: new dates necessarily
+    have a different manifest.  ``load_ml_predictions`` validates the actual
+    inference inputs, including explicitly supplied directories.  Only exact
+    training-panel reproduction requires the model's recorded manifest hash.
     """
     selected = Path(os.environ.get("MM_FEATURE_DIR", FEATURES_DIR)).expanduser().resolve()
     meta_paths = sorted(MODEL_DIR.glob("*_meta.json"))
     identities: set[tuple[str, str]] = set()
     for meta_path in meta_paths:
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         expected_sha = str(meta.get("feature_manifest_sha256", "") or "")
         manifest_path = str(meta.get("feature_manifest_path", "") or "")
         if expected_sha:
             identities.add((manifest_path, expected_sha))
     if not identities:
+        if require_training_panel:
+            raise RuntimeError(f"ML bundle has no training panel identity: {MODEL_DIR}")
         return selected
-    if len(identities) != 1:
+    if require_training_panel and len(identities) != 1:
         raise RuntimeError(f"ML bundle contains inconsistent feature manifests: {MODEL_DIR}")
 
-    recorded_path, expected_sha = next(iter(identities))
+    recorded_paths = {path for path, _ in identities}
+    recorded_path = next(iter(recorded_paths)) if len(recorded_paths) == 1 else ""
     if "MM_FEATURE_DIR" not in os.environ and recorded_path:
         recorded_dir = Path(recorded_path).expanduser().resolve().parent
         if recorded_dir.exists():
             selected = recorded_dir
+    if not require_training_panel:
+        return selected
+    _, expected_sha = next(iter(identities))
     manifest = selected / "causal_feature_manifest.json"
     if not manifest.exists():
         raise RuntimeError(
@@ -3057,6 +3072,73 @@ def resolve_ml_feature_dir() -> Path:
     return selected
 
 
+def _validate_ml_inference_panel(
+    feature_dir: Path, model_metadata: dict[str, dict],
+) -> None:
+    """Check the declared input ABI, not training dates, labels or file bytes."""
+    from strategy.model_contract import (
+        REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+        REQUIRED_FEATURE_DAG_ID,
+        REQUIRED_FEATURE_DAG_SHA256,
+        REQUIRED_FEATURE_SEMANTICS_VERSION,
+    )
+
+    manifest_path = feature_dir / "causal_feature_manifest.json"
+    panel = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected = {
+        "schema_version": 3,
+        "symbol": SYMBOL,
+        "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
+        "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
+        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+        "feature_bucket_ms": ML_FEATURE_BUCKET_MS,
+        "feature_ready_offset_ms": ML_FEATURE_BUCKET_MS,
+        "feature_timestamp_semantics": "left_label_bucket_end",
+        "feature_cutoff_semantics": "strict_exclusive_completed_bucket_end",
+        "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+        "microstructure_5s_semantics": (
+            "trailing_five_seconds_from_causal_left_labelled_1s_bars"
+        ),
+    }
+    for field, value in expected.items():
+        if panel.get(field) != value:
+            raise RuntimeError(
+                f"Inference panel {manifest_path}: incompatible {field}; "
+                f"expected={value!r}, actual={panel.get(field)!r}"
+            )
+    for name, meta in model_metadata.items():
+        # Manifest schema and ready offset are panel fields, not model fields.
+        for field in expected:
+            if field in {"schema_version", "feature_ready_offset_ms"}:
+                continue
+            if meta.get(field) != panel[field]:
+                raise RuntimeError(f"{name}: incompatible inference {field}")
+        for field in ("market_stage", "reference_symbol"):
+            if field not in meta or panel.get(field) != meta[field]:
+                raise RuntimeError(f"{name}: incompatible inference {field}")
+
+
+def _load_ml_inference_metadata(
+    feature_dir: Path, *, toxicity_horizon_s: int = 10,
+) -> dict[str, dict]:
+    """Validate actual input metadata once, for prediction or cached reuse."""
+    names = [
+        "dir_10s", "vol_10s", "ret_10s",
+        f"tox_bid_{int(toxicity_horizon_s)}s", f"tox_ask_{int(toxicity_horizon_s)}s",
+    ]
+    metadata = {
+        name: json.loads((MODEL_DIR / f"{name}_meta.json").read_text(encoding="utf-8"))
+        for name in names if (MODEL_DIR / f"{name}.txt").is_file()
+    }
+    _validate_ml_inference_panel(feature_dir, metadata)
+    warmup_raw = os.environ.get("MM_FEATURE_WARMUP_DIR", "").strip()
+    if warmup_raw:
+        warmup = Path(warmup_raw).expanduser().resolve()
+        if warmup != feature_dir:
+            _validate_ml_inference_panel(warmup, metadata)
+    return metadata
+
+
 def ensure_model_feature_columns(
     features: pd.DataFrame,
     feature_columns: list[str],
@@ -3065,6 +3147,10 @@ def ensure_model_feature_columns(
     feature_dir: Path,
     allow_missing_features: bool,
 ) -> pd.DataFrame:
+    if not feature_columns or len(feature_columns) != len(set(feature_columns)):
+        raise RuntimeError(f"{model_name} requires unique, non-empty feature_cols")
+    if not features.columns.is_unique:
+        raise RuntimeError(f"Inference panel {feature_dir} has duplicate feature columns")
     missing = [column for column in feature_columns if column not in features.columns]
     if not missing:
         return features
@@ -3127,6 +3213,11 @@ def load_ml_predictions(
         raise FileNotFoundError(
             f"Replay feature directory does not exist: {replay_feature_dir}"
         )
+    model_metadata = (
+        _load_ml_inference_metadata(
+            replay_feature_dir, toxicity_horizon_s=toxicity_horizon_s,
+        ) if run_model_inference else {}
+    )
     feature_files = sorted(replay_feature_dir.glob("features_*.parquet"))
     warmup_feature_dir_raw = os.environ.get("MM_FEATURE_WARMUP_DIR", "").strip()
     if warmup_feature_dir_raw:
@@ -3249,14 +3340,13 @@ def load_ml_predictions(
     if run_model_inference:
         for name in ["dir_10s", "vol_10s", "ret_10s", tox_bid_name, tox_ask_name]:
             model_path = MODEL_DIR / f"{name}.txt"
-            meta_path = MODEL_DIR / f"{name}_meta.json"
             if not model_path.exists():
                 continue
-            import json
             booster = lgb.Booster(model_file=str(model_path))
-            with open(meta_path) as f:
-                meta = json.load(f)
+            meta = model_metadata[name]
             feat_cols = meta["feature_cols"]
+            if booster.num_feature() != len(feat_cols) or booster.feature_name() != feat_cols:
+                raise RuntimeError(f"{name}: model feature width/order differs from metadata")
             features = ensure_model_feature_columns(
                 features,
                 feat_cols,
@@ -4126,7 +4216,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     if replace_terminal_continuation and (
         replay_event_clock != "merged"
         or replay_clock_interval_ms != 100
-        or float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0
+        or (
+            float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0
+            and params.get("rest_gateway_timing_mode") != "sampled_async_fifo"
+        )
     ):
         raise ValueError(
             "replace_terminal_continuation requires merged 100ms replay clock"
@@ -6804,12 +6897,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     rest_gateway_timing_mode = str(
         params.get("rest_gateway_timing_mode", "disabled") or "disabled"
     ).strip().lower()
-    if rest_gateway_timing_mode not in {"disabled", "paired_npz", "sampled_serial"}:
+    if rest_gateway_timing_mode not in {
+        "disabled", "paired_npz", "sampled_serial", "sampled_async_fifo",
+    }:
         raise ValueError(
-            "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
+            "rest_gateway_timing_mode must be disabled, paired_npz, sampled_serial "
+            "or sampled_async_fifo"
         )
     rest_gateway_timing_profile = None
-    sampled_serial_gateway = rest_gateway_timing_mode == "sampled_serial"
+    async_rest_gateway = rest_gateway_timing_mode == "sampled_async_fifo"
+    sampled_serial_gateway = rest_gateway_timing_mode in {
+        "sampled_serial", "sampled_async_fifo",
+    }
     rest_gateway_timing_enabled = rest_gateway_timing_mode != "disabled"
     rest_gateway_timing_seed = int(
         params.get("rest_gateway_timing_seed", latency_seed) or latency_seed
@@ -6822,33 +6921,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     raw_gateway_path = str(
         params.get("rest_gateway_timing_profile_path", "") or ""
     ).strip()
-    operation_return_samples = params.get("_serial_rest_return_samples_by_operation")
+    operation_return_samples = rest_return_sample_rows(params)
     direct_return_samples = operation_return_samples is not None
     direct_return_semantics = str(
         params.get("_serial_rest_return_sample_semantics", "") or ""
     ).strip()
-    if direct_return_samples:
-        if not sampled_serial_gateway or raw_gateway_path:
-            raise ValueError("direct REST-return samples require sampled_serial without a profile")
-        if not isinstance(operation_return_samples, Mapping) or set(operation_return_samples) != {
-            "new", "cancel"
-        }:
-            raise ValueError("direct REST-return samples require new and cancel operations")
-        if not direct_return_semantics:
-            raise ValueError("direct REST-return samples must declare observed or proxy semantics")
-        operation_return_samples = dict(operation_return_samples)
-        for operation, raw_rows in operation_return_samples.items():
-            rows = np.asarray(raw_rows, dtype=np.float64)
-            if (
-                rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0
-                or not np.all(np.isfinite(rows)) or np.any(rows < 0.0)
-                or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
-            ):
-                raise ValueError(
-                    "REST-return rows must be finite nonnegative effective/ACK/HTTP triples "
-                    "with effective <= ACK and effective <= HTTP"
-                )
-            operation_return_samples[operation] = np.ascontiguousarray(rows)
+    http_result_status_by_operation = rest_http_result_statuses(params)
     serial_rest_return_enabled = bool(
         sampled_serial_gateway and (raw_gateway_path or direct_return_samples)
     )
@@ -6861,6 +6939,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         raise ValueError("replay_main_loop_sleep_ms must be a non-negative integer")
     main_loop_sleep_ms = int(main_loop_sleep_raw)
     main_loop_enabled = main_loop_sleep_ms > 0
+    async_lane_capacity = int(params.get("async_order_lane_capacity", 8))
+    if async_rest_gateway and (
+        not main_loop_enabled or replay_event_clock != "merged"
+        or not serial_rest_return_enabled or async_lane_capacity <= 0
+        or bool(params.get("cross_side_order_lanes_enabled", False))
+        or str(params.get("order_transport", "rest")).strip().lower() != "rest"
+    ):
+        raise ValueError(
+            "sampled_async_fifo requires merged main-loop timing, REST-return samples, "
+            "positive capacity and one GLOBAL REST lane"
+        )
     if main_loop_enabled and (not serial_rest_return_enabled or replay_event_clock != "merged"):
         raise ValueError(
             "main-loop timing requires merged replay and sampled_serial REST-return timing"
@@ -6869,6 +6958,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         raise ValueError("pre-snapshot compute requires main-loop sampled_serial timing")
     requote_tail_work_samples_ms, main_loop_work_samples_ms = _local_work_samples(params)
     requote_tail_work_enabled = bool(np.any(requote_tail_work_samples_ms > 0.0))
+    runtime_compute_by_path = runtime_compute_sample_rows(params)
+    runtime_compute_path_counts = {path: 0 for path in runtime_compute_by_path}
+    runtime_compute_last_bucket_end_ms = int(
+        params.get("runtime_compute_initial_bucket_end_ms", 0)
+    )
+    runtime_compute_bucket_ms = int(params.get("runtime_compute_bucket_ms", 10_000))
+    if runtime_compute_by_path:
+        # Strata are chosen once at actual compute entry, never at every
+        # timer or independently for each phase/request within the decision.
+        decision_to_gateway_latency_enabled = True
+        pre_snapshot_compute_enabled = True
+        requote_tail_work_enabled = True
     main_loop_work_enabled = bool(np.any(main_loop_work_samples_ms > 0.0))
     if (requote_tail_work_enabled or main_loop_work_enabled) and not main_loop_enabled:
         raise ValueError("local work samples require main-loop sampled_serial diagnostic replay")
@@ -6879,6 +6980,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     pre_snapshot_compute_sum_ms = 0
     pre_snapshot_compute_discarded_count = 0
     main_loop_next_wake_ms: Optional[int] = None
+    main_loop_next_start_ms = 0
+    main_loop_idle_start_ms = 0
     main_loop_tick_complete_ms = 0
     main_loop_tick_count = 0
     main_loop_after_tick_ms = 0
@@ -6945,11 +7048,24 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     active_rest_gateway_timing: dict[str, dict[str, int]] = {}
     rest_gateway_sampled_row_count = 0
     rest_gateway_busy_until_ms = 0
+    # Queued requests reserve local ownership now, but obtain exchange/ACK
+    # deadlines only when the sole network worker actually dispatches them.
+    async_rest_queue: list[dict[str, Any]] = []
+    async_rest_active: dict[str, Any] | None = None
+    async_bulk_request: dict[str, Any] | None = None
+    bulk_cancel_samples = bulk_cancel_sample_rows(params)
+    bulk_cancel_request_count = 0
+    main_loop_waiting_request: dict[str, Any] | None = None
+    main_loop_synchronous_request_count = 0
+    main_loop_synchronous_wait_ms = 0
+    async_rest_sequence = 0
+    async_rest_queue_high_watermark = 0
+    async_rest_unset_ms = int(np.iinfo(np.int64).max // 1_000_000 - 1)
     rest_gateway_request_count = 0
     rest_gateway_busy_ms = 0
     rest_gateway_request_wait_ms = 0
     rest_gateway_decision_deferral_count = 0
-    rest_gateway_last_timing: dict[str, int] = {}
+    rest_gateway_last_timing: dict[str, Any] = {}
     serial_rest_decision: Optional[dict[str, Any]] = None
     serial_rest_sequence = 0
     rest_return_pending_coalesce_count = 0
@@ -13600,12 +13716,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         operation: int,
         order_ts: int,
         apply_decision_compute: bool = False,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         nonlocal rest_gateway_sampled_row_count
         nonlocal rest_gateway_busy_until_ms, rest_gateway_request_count
         nonlocal rest_gateway_busy_ms, rest_gateway_request_wait_ms
         nonlocal rest_gateway_last_slot_index
         nonlocal rest_gateway_last_timing
+        nonlocal async_rest_sequence, async_rest_queue_high_watermark
         normalized_slot = str(slot)
         if not rest_gateway_timing_enabled:
             raise RuntimeError("serial REST gateway timing is disabled")
@@ -13661,6 +13778,35 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
                 if response_samples is not None else max(effective_ms, ack_ms)
             )
+            if async_rest_gateway:
+                if async_bulk_request is not None:
+                    raise NotImplementedError(
+                        "new callback write admission during a bulk barrier is not modeled"
+                    )
+                if len(async_rest_queue) + int(async_rest_active is not None) >= (
+                    async_lane_capacity + 1
+                ):
+                    raise RuntimeError("GLOBAL asynchronous order lane is full")
+                async_rest_sequence += 1
+                rest_gateway_last_timing = {
+                    "request_ts_ms": async_rest_unset_ms,
+                    "exchange_effective_ts_ms": async_rest_unset_ms,
+                    "local_visibility_ts_ms": async_rest_unset_ms,
+                    "rest_return_ts_ms": async_rest_unset_ms,
+                    "origin_ts_ms": int(origin), "is_new": is_new,
+                    "effective_ms": effective_ms, "ack_ms": max(effective_ms, ack_ms),
+                    "service_ms": service_ms, "sequence": async_rest_sequence,
+                }
+                async_rest_queue.append(rest_gateway_last_timing)
+                async_rest_queue_high_watermark = max(
+                    async_rest_queue_high_watermark, len(async_rest_queue),
+                )
+                local_lifecycle_boundary_scheduler.schedule(
+                    ts_ms=max(int(origin), rest_gateway_busy_until_ms), phase="rest_return",
+                    event_id=f"async-dispatch:{async_rest_sequence}",
+                    payload={"async_rest_worker": True},
+                )
+                return rest_gateway_last_timing
             rest_gateway_request_count += 1
             rest_gateway_request_wait_ms += start - int(origin)
             rest_gateway_busy_ms += service_ms
@@ -15264,6 +15410,23 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             fields["last_private_fill_visible_ts_ms"] = int(
                 order.get("last_private_fill_visible_ts_ms", 0) or 0
             )
+        if async_rest_gateway:
+            fields["async_new_queued"] = order.get("gateway_request_ts") == async_rest_unset_ms
+            fields["async_cancel_queued"] = order.get("cancel_request_ts") == async_rest_unset_ms
+            for name in (
+                "gateway_request_ts", "activate_ts", "new_ack_ts", "new_rest_return_ts",
+                "cancel_request_ts", "cancel_effective_ts", "cancel_ack_ts",
+                "cancel_rest_return_ts",
+            ):
+                if fields.get(name) == async_rest_unset_ms:
+                    fields[name] = -1
+            fields["new_private_visibility_ts"] = int(order.get("new_private_visibility_ts", -1))
+            fields["cancel_private_visibility_ts"] = int(
+                order.get("cancel_private_visibility_ts", -1)
+            )
+        if order.get("time_in_force") == "IOC":
+            fields["ioc_terminal_visible_ts"] = int(order.get("ioc_terminal_visible_ts", -1))
+            fields["ioc_local_terminal"] = bool(order.get("ioc_local_terminal", False))
         return fields
 
     def _append_order_outcome(order, outcome_ts: int, outcome: str, reason: str,
@@ -16909,6 +17072,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal next_trace_order_id
         nonlocal ema_add_wait_fork_descendant_submit_count
         nonlocal ema_add_wait_fork_target_order_id
+        nonlocal main_loop_waiting_request, main_loop_next_wake_ms
+        nonlocal main_loop_synchronous_request_count
         quote_flags = quote_flags or {}
         quote_context = quote_context or {}
         side_ctx = quote_context.get(side, {}) if isinstance(quote_context, dict) else {}
@@ -17298,8 +17463,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             ),
         )
         if not restored_order:
-            _record_order_lifecycle_submit(order, int(gateway_request_ts))
-            _ranked_guard_order_submitted(order)
+            if async_rest_gateway:
+                rest_gateway_last_timing["order"] = order
+                if side_ctx.get("circuit_breaker_close", False):
+                    if main_loop_waiting_request is not None:
+                        raise RuntimeError("overlapping synchronous GLOBAL FIFO futures")
+                    main_loop_waiting_request = rest_gateway_last_timing
+                    main_loop_synchronous_request_count += 1
+                    main_loop_next_wake_ms = None
+            else:
+                _record_order_lifecycle_submit(order, int(gateway_request_ts))
+                _ranked_guard_order_submitted(order)
         return order
 
     def _safe_add_rearm_sample_latency_ms() -> int:
@@ -20038,6 +20212,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         bid_orders.remove(payload_order)
                     if payload_order in ask_orders:
                         ask_orders.remove(payload_order)
+            # IOC activation reserves the physical fill here, even when the
+            # next market/timer row comes much later. Its scheduled terminal
+            # boundary revisits the same order and publishes local economics.
+            boundary_trade_idx = max(
+                0, int(np.searchsorted(trade_ts, boundary_ms, side="right")) - 1,
+            )
+            _process_circuit_breaker_ioc_orders(
+                bid_orders, "BUY", boundary_ms, boundary_trade_idx, fallback_mid,
+            )
+            _process_circuit_breaker_ioc_orders(
+                ask_orders, "SELL", boundary_ms, boundary_trade_idx, fallback_mid,
+            )
             if private_fill_events:
                 _process_order_transitions(
                     bid_orders,
@@ -20060,6 +20246,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         payload["serial_rest_plan"], int(boundary_ms),
                         payload.get("completed"),
                     )
+                if payload.get("async_rest_worker", False):
+                    _advance_async_rest_worker(int(boundary_ms), payload.get("completed"))
             if exchange_book_scheduler is not None:
                 at_boundary = exchange_book_scheduler.advance_to(
                     boundary_ms * 1_000_000,
@@ -20082,21 +20270,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 state = order.get("state")
                 if state == ORDER_PENDING_NEW:
                     activate_ts = int(order.get("activate_ts", 0) or 0)
-                    if activate_ts > 0:
+                    if 0 < activate_ts < async_rest_unset_ms:
                         local_lifecycle_boundary_scheduler.schedule(
                             ts_ms=activate_ts,
                             phase="exchange_effective",
                             event_id=f"order:{order_id}:activate:{activate_ts}",
                         )
                     new_ack_ts = int(order.get("new_ack_ts", 0) or 0)
-                    if new_ack_ts > 0:
+                    if 0 < new_ack_ts < async_rest_unset_ms:
                         local_lifecycle_boundary_scheduler.schedule(
                             ts_ms=new_ack_ts,
                             phase="new_ack",
                             event_id=f"order:{order_id}:new-ack:{new_ack_ts}",
                         )
                 cancel_effective_ts = _order_cancel_effective_ts(order)
-                if cancel_effective_ts > 0:
+                if 0 < cancel_effective_ts < async_rest_unset_ms:
                     local_lifecycle_boundary_scheduler.schedule(
                         ts_ms=cancel_effective_ts,
                         phase="exchange_effective",
@@ -20106,7 +20294,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         ),
                     )
                 cancel_ack_ts = int(order.get("cancel_ts", 0) or 0)
-                if cancel_ack_ts > 0:
+                if 0 < cancel_ack_ts < async_rest_unset_ms:
                     local_lifecycle_boundary_scheduler.schedule(
                         ts_ms=cancel_ack_ts,
                         phase="cancel_ack",
@@ -20256,14 +20444,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         order["cancel_reason"] = reason
         if order["state"] == ORDER_OPEN:
             order["state"] = ORDER_PENDING_CANCEL
-        _record_order_lifecycle_cancel_request(
-            order,
-            int(request_start_ts),
-            reason=str(reason),
-        )
+        if async_rest_gateway:
+            rest_gateway_last_timing["order"] = order
+            order["cancel_rest_return_ts"] = async_rest_unset_ms
+        else:
+            _record_order_lifecycle_cancel_request(
+                order, int(request_start_ts), reason=str(reason),
+            )
         _ranked_guard_cancel_requested(
             order,
-            visibility_ts_ms=int(request_start_ts),
+            visibility_ts_ms=int(now_ts if async_rest_gateway else request_start_ts),
             reason=str(reason),
         )
 
@@ -22212,6 +22402,68 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         else:
             decision_none_count += 1
 
+    def _request_bulk_cancel(now_ts: int, reason: str) -> None:
+        """Drain accepted FIFO writes before one symbol-level safety request.
+
+        The strategy waits for HTTP completion, while market/private events
+        keep advancing. Bulk HTTP success never supplies per-order terminals.
+        """
+        nonlocal async_bulk_request, async_rest_sequence, bulk_cancel_request_count
+        nonlocal main_loop_waiting_request, main_loop_next_wake_ms
+        nonlocal main_loop_synchronous_request_count
+        # Existing callers visit BUY and SELL separately; one live cancel-all
+        # owns both sides, so the second visit must not create another request.
+        if async_bulk_request is not None:
+            return
+        current = [order for order in (*bid_orders, *ask_orders)
+                   if float(order.get("remaining", 0.0)) >= LOT_SIZE]
+        for order in current:
+            order["replace_terminal_continuation_armed"] = False
+        if not any(order["state"] != ORDER_PENDING_CANCEL for order in current):
+            return
+        if bulk_cancel_samples is None:
+            raise NotImplementedError(
+                "sampled_async_fifo bulk safety cancel requires a cancel-all barrier "
+                "and its own HTTP/visibility samples"
+            )
+        if main_loop_waiting_request is not None:
+            raise NotImplementedError(
+                "bulk safety interruption of an active synchronous close is not modeled"
+            )
+        effective_ms, private_ms, service_ms = (
+            _sample_latency_ms(
+                0, bulk_cancel_samples[:, column], event_ts=int(now_ts),
+                side="BUY", operation=_LATENCY_CANCEL, order_ts=0,
+            ) for column in (0, 1, 2)
+        )
+        async_rest_sequence += 1
+        request = {
+            "origin_ts_ms": int(now_ts), "is_bulk": True, "is_new": False,
+            "effective_ms": effective_ms, "ack_ms": private_ms,
+            "service_ms": service_ms, "sequence": async_rest_sequence,
+            "orders": current, "reason": str(reason),
+        }
+        # This is an admission barrier, not another bounded lane submission.
+        # It follows every accepted write without revoking queued NEWs.
+        async_bulk_request = request
+        async_rest_queue.append(request)
+        main_loop_waiting_request = request
+        main_loop_next_wake_ms = None
+        main_loop_synchronous_request_count += 1
+        bulk_cancel_request_count += 1
+        for order in current:
+            if order["state"] == ORDER_OPEN:
+                order["state"] = ORDER_PENDING_CANCEL
+            if int(order.get("cancel_ts", 0) or 0) <= 0:
+                order["cancel_ts"] = async_rest_unset_ms
+                order["cancel_effective_ts"] = async_rest_unset_ms
+                order["cancel_reason"] = str(reason)
+        local_lifecycle_boundary_scheduler.schedule(
+            ts_ms=max(int(now_ts), rest_gateway_busy_until_ms), phase="rest_return",
+            event_id=f"async-bulk:{request['sequence']}",
+            payload={"async_rest_worker": True},
+        )
+
     def _request_cancel_all(
         orders,
         now_ts: int,
@@ -22221,6 +22473,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         guard_initiated_order_id: str = "",
         request_key_ts: Optional[int] = None,
     ):
+        nonlocal main_loop_waiting_request, main_loop_next_wake_ms
+        nonlocal main_loop_synchronous_request_count
+        if async_rest_gateway and str(reason) in {
+            "planned_maintenance", "stale_book", "message_source_not_ready",
+            "sync_adjust_degrade", "position_timeout", "circuit_breaker",
+            "daily_loss", "position_value", "emergency_drawdown",
+            "consecutive_loss_cooldown",
+        }:
+            _request_bulk_cancel(int(now_ts), str(reason))
+            return
         normalized_target = str(target_order_id).strip()
         normalized_guard_target = str(guard_initiated_order_id).strip()
         replacement_reason = str(reason) in {
@@ -22323,19 +22585,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order["cancel_rest_return_ts"] = int(
                     rest_gateway_last_timing["rest_return_ts_ms"]
                 )
+                if async_rest_gateway:
+                    rest_gateway_last_timing["order"] = order
+                    if str(reason) in {
+                        "circuit_breaker_close_requote", "circuit_breaker_opening_side",
+                    }:
+                        if main_loop_waiting_request is not None:
+                            raise RuntimeError("overlapping synchronous GLOBAL FIFO futures")
+                        rest_gateway_last_timing["synchronous_close_cancel"] = True
+                        main_loop_waiting_request = rest_gateway_last_timing
+                        main_loop_synchronous_request_count += 1
+                        main_loop_next_wake_ms = None
             order["cancel_reason"] = reason
             if replace_terminal_continuation and replacement_reason:
                 order["replace_terminal_continuation_armed"] = True
             if order["state"] == ORDER_OPEN:
                 order["state"] = ORDER_PENDING_CANCEL
-            _record_order_lifecycle_cancel_request(
-                order,
-                int(request_start_ts),
-                reason=str(reason),
-            )
+            if not async_rest_gateway:
+                _record_order_lifecycle_cancel_request(
+                    order,
+                    int(request_start_ts),
+                    reason=str(reason),
+                )
             _ranked_guard_cancel_requested(
                 order,
-                visibility_ts_ms=int(request_start_ts),
+                visibility_ts_ms=int(now_ts if async_rest_gateway else request_start_ts),
                 reason=str(reason),
                 guard_initiated=bool(
                     normalized_guard_target
@@ -22354,6 +22628,152 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     "cancel_request",
                 )
+
+    def _complete_synchronous_rest_request(request: dict[str, Any], now_ts: int) -> None:
+        """Resume a close caller after HTTP and any positive-fill proof.
+
+        Live fetches account trades after a positive IOC RESULT. We do not
+        have that query's timing: waiting for both HTTP and the modeled private
+        fill is a conservative visibility proxy, not measured accountTrades
+        latency. The GLOBAL worker itself is released by HTTP independently.
+        """
+        nonlocal main_loop_waiting_request, main_loop_synchronous_wait_ms
+        if request is not main_loop_waiting_request or not request.get("http_returned", False):
+            return
+        order = request.get("order")
+        if (
+            order is not None and order.get("time_in_force") == "IOC"
+            and not order.get("ioc_local_terminal", False)
+        ):
+            return
+        main_loop_waiting_request = None
+        main_loop_synchronous_wait_ms += int(now_ts) - int(request["origin_ts_ms"])
+        resume_close = request.get("resume_close")
+        if resume_close is not None:
+            resume_close(int(now_ts))
+        _finish_main_loop_tick(int(now_ts))
+
+    def _advance_async_rest_worker(
+        now_ts: int, completed: dict[str, Any] | None = None,
+    ) -> None:
+        """One FIFO worker; HTTP return releases it, never a private callback.
+
+        Only an explicitly validated order RESULT may contribute a local
+        authority timestamp. A bare HTTP response frees the worker but never
+        clears ownership. Neither may recreate an already-terminal order.
+        """
+        nonlocal async_rest_active, async_bulk_request
+        nonlocal rest_gateway_request_count, rest_gateway_request_wait_ms
+        nonlocal rest_gateway_busy_ms, rest_gateway_busy_until_ms
+        if completed is not None:
+            if completed is not async_rest_active:
+                return
+            async_rest_active = None
+            completed["http_returned"] = True
+            if completed is async_bulk_request:
+                async_bulk_request = None
+            _complete_synchronous_rest_request(completed, int(now_ts))
+        if async_rest_active is not None:
+            return
+        while async_rest_queue:
+            request = async_rest_queue[0]
+            if int(request["origin_ts_ms"]) > int(now_ts):
+                local_lifecycle_boundary_scheduler.schedule(
+                    ts_ms=int(request["origin_ts_ms"]), phase="rest_return",
+                    event_id=f"async-ready:{request['sequence']}",
+                    payload={"async_rest_worker": True},
+                )
+                return
+            async_rest_queue.pop(0)
+            is_bulk = bool(request.get("is_bulk", False))
+            order = None if is_bulk else request["order"]
+            side_orders = [] if is_bulk else (
+                bid_orders if order["side"] == "BUY" else ask_orders
+            )
+            # An already-admitted live FIFO write survives later admission
+            # revocation. Safety cancel-all first drains those writes; it
+            # cannot silently delete them. That separate bulk path is not
+            # modeled by the ordinary per-request samples above.
+            start = int(now_ts)
+            rest_gateway_request_count += 1
+            rest_gateway_request_wait_ms += start - int(request["origin_ts_ms"])
+            rest_gateway_busy_ms += int(request["service_ms"])
+            rest_gateway_busy_until_ms = start + int(request["service_ms"])
+            request.update({
+                "request_ts_ms": start,
+                "exchange_effective_ts_ms": start + int(request["effective_ms"]),
+                "local_visibility_ts_ms": start + int(request["ack_ms"]),
+                "rest_return_ts_ms": rest_gateway_busy_until_ms,
+            })
+            operation = "new" if request["is_new"] else "cancel"
+            if (
+                operation in http_result_status_by_operation
+                and not is_bulk
+                and not request.get("synchronous_close_cancel", False)
+                and order.get("time_in_force") != "IOC"
+            ):
+                # This is a schema/order-identity-validated NEW or CANCELED
+                # RESULT assumption, not generic HTTP success. Keep the
+                # separately sampled private callback timestamp in the trace.
+                request["local_visibility_ts_ms"] = min(
+                    request["local_visibility_ts_ms"], rest_gateway_busy_until_ms,
+                )
+            if is_bulk:
+                for target in request["orders"]:
+                    if not any(target is active for active in (*bid_orders, *ask_orders)):
+                        continue
+                    if float(
+                        target.get("exchange_remaining", target.get("remaining", 0.0))
+                    ) < LOT_SIZE:
+                        continue
+                    existing_effective = int(target.get("cancel_effective_ts", 0) or 0)
+                    if 0 < existing_effective <= start:
+                        # Already canceled physically by an earlier individual
+                        # request. This bulk produces no second terminal event
+                        # and cannot accelerate its still-pending callback.
+                        continue
+                    target.update({
+                        "cancel_request_ts": start,
+                        "cancel_effective_ts": request["exchange_effective_ts_ms"],
+                        "cancel_ts": request["local_visibility_ts_ms"],
+                        "cancel_rest_return_ts": rest_gateway_busy_until_ms,
+                        "cancel_private_visibility_ts": request["local_visibility_ts_ms"],
+                        "cancel_reason": request["reason"],
+                    })
+                    if target["state"] == ORDER_OPEN:
+                        target["state"] = ORDER_PENDING_CANCEL
+                    _record_order_lifecycle_cancel_request(
+                        target, start, reason=request["reason"],
+                    )
+            elif request["is_new"]:
+                order.update({
+                    "gateway_request_ts": start,
+                    "activate_ts": request["exchange_effective_ts_ms"],
+                    "new_ack_ts": request["local_visibility_ts_ms"],
+                    "new_rest_return_ts": rest_gateway_busy_until_ms,
+                    "new_private_visibility_ts": start + int(request["ack_ms"]),
+                })
+                _record_order_lifecycle_submit(order, start)
+                _ranked_guard_order_submitted(order)
+            else:
+                order.update({
+                    "cancel_request_ts": start,
+                    "cancel_effective_ts": request["exchange_effective_ts_ms"],
+                    "cancel_ts": request["local_visibility_ts_ms"],
+                    "cancel_rest_return_ts": rest_gateway_busy_until_ms,
+                    "cancel_private_visibility_ts": start + int(request["ack_ms"]),
+                })
+                if order in side_orders:
+                    _record_order_lifecycle_cancel_request(
+                        order, start, reason=str(order.get("cancel_reason", "")),
+                    )
+            async_rest_active = request
+            local_lifecycle_boundary_scheduler.schedule(
+                ts_ms=rest_gateway_busy_until_ms, phase="rest_return",
+                event_id=f"async-return:{request['sequence']}",
+                payload={"async_rest_worker": True, "completed": request},
+            )
+            return
 
     def _serial_rest_coalesce(plan: dict[str, Any], side: str, now_ts: int) -> None:
         nonlocal rest_return_pending_coalesce_count, decision_replace_count
@@ -22389,6 +22809,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         while this thread is occupied.
         """
         nonlocal main_loop_next_wake_ms, main_loop_after_tick_ms, main_loop_work_pre_sum_ms
+        nonlocal main_loop_next_start_ms
+        main_loop_next_start_ms = int(loop_start_ms)
         before_ms = 0
         main_loop_after_tick_ms = 0
         if main_loop_work_enabled:
@@ -22409,13 +22831,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         The same completion rule applies to keep/skip calls with no requests.
         """
         nonlocal main_loop_work_post_sum_ms, main_loop_quote_tail_ms
+        nonlocal main_loop_idle_start_ms
+        if main_loop_waiting_request is not None:
+            return
         main_loop_work_post_sum_ms += main_loop_after_tick_ms
         loop_end_ms = (
-            max(int(completed_ms), main_loop_tick_complete_ms, rest_gateway_busy_until_ms)
+            max(int(completed_ms), main_loop_tick_complete_ms,
+                0 if async_rest_gateway else rest_gateway_busy_until_ms)
             + main_loop_quote_tail_ms + main_loop_after_tick_ms
         )
         main_loop_quote_tail_ms = 0
-        _schedule_main_loop_tick(loop_end_ms + main_loop_sleep_ms)
+        main_loop_idle_start_ms = loop_end_ms
+        continuation_ready = async_rest_gateway and any(
+            due >= 0 for due in replacement_terminal_due_ts.values()
+        )
+        _schedule_main_loop_tick(loop_end_ms + (0 if continuation_ready else main_loop_sleep_ms))
 
     def _continue_serial_rest_decision(
         plan: dict[str, Any], now_ts: int, completed: Optional[dict[str, Any]] = None,
@@ -22444,7 +22874,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if order is not None:
                 _request_cancel_all([order], int(now_ts), "planned_maintenance")
         while plan["next"] < len(plan["steps"]):
-            if int(now_ts) < rest_gateway_busy_until_ms:
+            if not async_rest_gateway and int(now_ts) < rest_gateway_busy_until_ms:
                 serial_rest_sequence += 1
                 local_lifecycle_boundary_scheduler.schedule(
                     ts_ms=rest_gateway_busy_until_ms, phase="rest_return",
@@ -22506,6 +22936,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     side_orders.append(order)
             finally:
                 _clear_rest_gateway_timing()
+            if async_rest_gateway:
+                # Async admission returns pending immediately. In particular
+                # a same-side NEW following CANCEL coalesces above until a
+                # fresh terminal-driven decision, not until HTTP return.
+                continue
             serial_rest_sequence += 1
             local_lifecycle_boundary_scheduler.schedule(
                 ts_ms=rest_gateway_busy_until_ms, phase="rest_return",
@@ -22908,6 +23343,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal circuit_breaker_close_gtx_reject_streak
         nonlocal dynamic_fill_hazard_cpp_activation_count
         nonlocal replacement_terminal_terminal_count
+        nonlocal main_loop_work_pre_sum_ms
         idx = 0
         while idx < len(orders):
             order = orders[idx]
@@ -22938,14 +23374,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order["cancel_reason"] = "fragile_ttl"
                 if order["state"] == ORDER_OPEN:
                     order["state"] = ORDER_PENDING_CANCEL
-                _record_order_lifecycle_cancel_request(
-                    order,
-                    int(request_start_ts),
-                    reason="fragile_ttl",
-                )
+                if async_rest_gateway:
+                    rest_gateway_last_timing["order"] = order
+                    order["cancel_rest_return_ts"] = async_rest_unset_ms
+                else:
+                    _record_order_lifecycle_cancel_request(
+                        order, int(request_start_ts), reason="fragile_ttl",
+                    )
                 _ranked_guard_cancel_requested(
                     order,
-                    visibility_ts_ms=int(request_start_ts),
+                    visibility_ts_ms=int(now_ts if async_rest_gateway else request_start_ts),
                     reason="fragile_ttl",
                 )
                 fragile_ttl_cancel_count += 1
@@ -22977,6 +23415,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if (
                 order["state"] == ORDER_PENDING_NEW
                 and bool(order.get("exchange_accepted", False))
+                and order.get("time_in_force") != "IOC"
                 and not bool(order.get("local_new_ack_published", False))
                 and int(order.get("new_ack_ts", 0) or 0) <= int(now_ts)
             ):
@@ -23043,32 +23482,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order["activate_ts"], fallback_mid,
                 )
                 if order.get("time_in_force") == "IOC":
-                    if (
-                        new_order_latency_split_enabled
-                        and int(order.get("new_ack_ts", 0) or 0)
-                        > int(order["activate_ts"])
-                    ):
-                        raise RuntimeError(
-                            "split new-order ACK does not yet support pre-ACK IOC fills"
-                        )
-                    # IOC is resolved below against the exchange-time book. It
-                    # never receives passive queue-ahead or remains resting.
+                    # Matching and terminal visibility are separate. No NEW
+                    # callback, queue seed, or resting order is fabricated at
+                    # exchange activation while the result is still in flight.
                     order["exchange_accepted"] = True
-                    order["local_new_ack_published"] = True
-                    order["state"] = ORDER_OPEN
+                    order["fill_eligible"] = False
                     order["simulator_queue_source"] = "ioc_not_applicable"
                     order["exact_queue_path_valid"] = False
-                    _record_order_lifecycle_activate(
-                        order,
-                        visibility_ts_ms=int(now_ts),
-                        exchange_ts_ms=int(order["activate_ts"]),
-                        mid=float(mid_at),
-                    )
-                    _ranked_guard_order_activated(
-                        order,
-                        visibility_ts_ms=int(now_ts),
-                        exchange_ts_ms=int(order["activate_ts"]),
-                    )
                     idx += 1
                     continue
                 if _order_would_cross_book_tick(
@@ -23480,6 +23900,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         order.get("cancel_ts", now_ts) or now_ts
                     )
                     replacement_terminal_terminal_count += 1
+                    if (async_rest_gateway and main_loop_next_wake_ms is not None
+                            and int(now_ts) < main_loop_next_start_ms):
+                        # A private terminal wakes a sleeping executor, not
+                        # one already computing or doing measured local work.
+                        main_loop_work_pre_sum_ms -= (
+                            main_loop_next_wake_ms - main_loop_next_start_ms
+                        )
+                        _schedule_main_loop_tick(max(int(now_ts), main_loop_idle_start_ms))
                 orders.pop(idx)
                 continue
 
@@ -24173,11 +24601,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         close_side = "SELL" if q > 0.0 else "BUY"
         close_orders = ask_orders if close_side == "SELL" else bid_orders
         opening_orders = bid_orders if close_side == "SELL" else ask_orders
-        _request_cancel_all(
-            opening_orders,
-            int(now_ts),
-            reason="circuit_breaker_opening_side",
-        )
+        if not async_rest_gateway:
+            _request_cancel_all(
+                opening_orders,
+                int(now_ts),
+                reason="circuit_breaker_opening_side",
+            )
 
         close_qty = math.floor(
             (abs(q) if emergency_market else min(abs(q), order_size)) / LOT_SIZE + 1e-12
@@ -24216,6 +24645,85 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             elif close_side == "BUY" and cur_best_ask > 0.0:
                 close_price = min(close_price, cur_best_ask - TICK)
         close_price = round(close_price / TICK) * TICK
+
+        if async_rest_gateway:
+            # The live close call is synchronous even with an async ordinary
+            # gateway. Keep its already-calculated price/quantity/snapshot
+            # across cancel.result(), while the event stream and FIFO worker
+            # continue. Do not turn the return into a fresh quote decision.
+            close_context = {close_side: {
+                "reduce_only": True, "circuit_breaker_close": True,
+                "order_ttl_ms": 0, "inventory": float(q), "mid": float(close_mid),
+                "best_bid": float(cur_best_bid), "best_ask": float(cur_best_ask),
+            }}
+            if ema_add_wait_fork_assigned:
+                close_context[close_side]["ema_add_wait_fork_id"] = (
+                    f"{ema_add_wait_fork_target_campaign_id}:"
+                    f"{ema_add_wait_fork_target_ts_ms}:{ema_add_wait_fork_action}"
+                )
+            would_cross = _order_would_cross_book_tick(
+                close_side, float(close_price), float(cur_best_bid), float(cur_best_ask), TICK,
+            )
+
+            def submit_prepared_close(ready_ts: int) -> None:
+                nonlocal circuit_breaker_close_place_count, circuit_breaker_close_ioc_place_count
+                nonlocal circuit_breaker_close_gtx_reject_count
+                nonlocal circuit_breaker_close_gtx_reject_streak, gtx_rejects
+                # Sync cancel ignores its HTTP body in live; only a locally
+                # observed terminal clears the side. No inferred terminal.
+                if close_orders:
+                    return
+                if would_cross and not use_ioc:
+                    gtx_rejects += 1
+                    circuit_breaker_close_gtx_reject_count += 1
+                    circuit_breaker_close_gtx_reject_streak += 1
+                    return
+                order = _make_order(
+                    close_side, float(close_price), float(close_qty), int(ready_ts),
+                    float(close_mid), quote_context=close_context, apply_decision_compute=False,
+                )
+                order["time_in_force"] = "IOC" if use_ioc else "GTX"
+                order["emergency_market"] = bool(emergency_market)
+                close_orders.append(order)
+                circuit_breaker_close_place_count += 1
+                circuit_breaker_close_ioc_place_count += int(use_ioc)
+
+            def continue_prepared_close(ready_ts: int) -> None:
+                nonlocal circuit_breaker_close_keep_count
+                if not close_orders and opening_orders:
+                    return
+                if close_orders:
+                    existing = close_orders[0]
+                    if existing.get("state") != ORDER_OPEN:
+                        return
+                    drift_bps = (
+                        abs(close_price - float(existing["price"]))
+                        / max(float(existing["price"]), TICK) * 10_000.0
+                    )
+                    if not use_ioc and drift_bps <= max(
+                        0.0, float(params.get("requote_threshold_bps", 0.0) or 0.0)
+                    ):
+                        circuit_breaker_close_keep_count += 1
+                        return
+                    _request_cancel_all(
+                        close_orders, int(ready_ts), reason="circuit_breaker_close_requote",
+                    )
+                    if main_loop_waiting_request is not None:
+                        main_loop_waiting_request["resume_close"] = submit_prepared_close
+                    return
+                submit_prepared_close(int(ready_ts))
+
+            if not close_orders and opening_orders:
+                if any(order.get("state") != ORDER_OPEN for order in opening_orders):
+                    return
+                _request_cancel_all(
+                    opening_orders, int(now_ts), reason="circuit_breaker_opening_side",
+                )
+                if main_loop_waiting_request is not None:
+                    main_loop_waiting_request["resume_close"] = continue_prepared_close
+                return
+            continue_prepared_close(int(now_ts))
+            return
 
         existing = next(
             (
@@ -24415,7 +24923,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         trade_idx: int,
         fallback_mid: float,
     ) -> bool:
-        """Resolve reduce-only IOC against supplied exchange-time depth or BBO."""
+        """Sweep once on exchange time; publish economics only when locally visible."""
 
         nonlocal q, cash, entry_price, exchange_inventory
         nonlocal nfb, nfa
@@ -24431,6 +24939,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal last_buy_fill_cooldown_ms, last_sell_fill_cooldown_ms
         nonlocal last_buy_fill_cooldown_total_ms
         nonlocal last_sell_fill_cooldown_total_ms
+        nonlocal private_fill_exchange_match_count, private_fill_visible_count
 
         filled = False
         idx = 0
@@ -24438,52 +24947,76 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             order = orders[idx]
             if (
                 order.get("time_in_force") != "IOC"
-                or order.get("state") == ORDER_PENDING_NEW
+                or not order.get("exchange_accepted", False)
                 or int(order.get("activate_ts", now_ts)) > now_ts
             ):
                 idx += 1
                 continue
 
-            (
-                best_bid_at,
-                best_ask_at,
-                bid_qty_at,
-                ask_qty_at,
-                _,
-                _,
-            ) = _book_snapshot_at(
-                int(order.get("activate_ts", now_ts)),
-                fallback_mid,
-            )
-            if side == "BUY":
-                fill_price = float(best_ask_at)
-                top_qty = float(ask_qty_at)
-                reducible = max(
-                    0.0, -exchange_inventory if private_fill_visibility_enabled else -q,
+            exchange_ts = int(order["activate_ts"])
+            if "_ioc_match" not in order:
+                best_bid_at, best_ask_at, bid_qty_at, ask_qty_at, _, _ = _book_snapshot_at(
+                    exchange_ts, fallback_mid,
                 )
-            else:
-                fill_price = float(best_bid_at)
-                top_qty = float(bid_qty_at)
-                reducible = max(
-                    0.0, exchange_inventory if private_fill_visibility_enabled else q,
+                fill_price = float(best_ask_at if side == "BUY" else best_bid_at)
+                top_qty = float(ask_qty_at if side == "BUY" else bid_qty_at)
+                physical_inventory = exchange_inventory if private_fill_visibility_enabled else q
+                reducible = max(0.0, -physical_inventory if side == "BUY" else physical_inventory)
+                depth_pos = (
+                    int(np.searchsorted(l2_ts, exchange_ts, side="right")) - 1
+                    if historical_l2 and l2_ts is not None else -1
                 )
-
-            depth_pos = (
-                int(np.searchsorted(
-                    l2_ts, int(order.get("activate_ts", now_ts)), side="right",
-                )) - 1
-                if historical_l2 and l2_ts is not None else -1
+                if depth_pos >= 0:
+                    prices = l2_ask_px[depth_pos] if side == "BUY" else l2_bid_px[depth_pos]
+                    quantities = l2_ask_qty[depth_pos] if side == "BUY" else l2_bid_qty[depth_pos]
+                else:
+                    prices, quantities = (fill_price,), (top_qty,)
+                fill_qty, fill_price = _match_ioc_order(
+                    side, float(order["price"]),
+                    min(float(order.get("remaining", 0.0)), reducible),
+                    prices, quantities, tick_size=TICK, lot_size=LOT_SIZE,
+                    market=bool(order.get("emergency_market", False)),
+                )
+                order["_ioc_match"] = (float(fill_qty), float(fill_price))
+                # An IOC never rests, including its unfilled remainder.
+                order["exchange_remaining"] = 0.0
+                order["exchange_fill_terminal"] = fill_qty >= float(order["remaining"])
+                order["fill_eligible"] = False
+                if fill_qty >= LOT_SIZE:
+                    visible_ts = _sample_private_fill_visible_ts(
+                        exchange_ts=exchange_ts, side=side,
+                        order_ts=int(order.get("submit_ts", 0)),
+                    )
+                    order["last_exchange_fill_ts_ms"] = exchange_ts
+                    if private_fill_visibility_enabled:
+                        exchange_inventory += fill_qty if side == "BUY" else -fill_qty
+                        private_fill_exchange_match_count += 1
+                else:
+                    visible_ts = max(exchange_ts, int(order.get("new_ack_ts", exchange_ts)))
+                    if async_rest_gateway:
+                        # The synchronous close caller requests a validated
+                        # RESULT. Its explicit zero-filled EXPIRED result can
+                        # establish terminal, never a positive economic fill.
+                        visible_ts = min(visible_ts, int(order["new_rest_return_ts"]))
+                order["ioc_terminal_visible_ts"] = int(visible_ts)
+                if local_lifecycle_boundary_scheduler is not None:
+                    local_lifecycle_boundary_scheduler.schedule(
+                        ts_ms=int(visible_ts), phase="private_fill_visible",
+                        event_id=f"ioc-visible:{order['trace_id']}:{visible_ts}",
+                    )
+            fill_qty, fill_price = order["_ioc_match"]
+            if int(now_ts) < int(order["ioc_terminal_visible_ts"]):
+                idx += 1
+                continue
+            order["local_new_ack_published"] = True
+            order["state"] = ORDER_OPEN
+            order["ioc_local_terminal"] = True
+            _record_order_lifecycle_activate(
+                order, visibility_ts_ms=int(now_ts), exchange_ts_ms=exchange_ts,
+                mid=float(order.get("mid_at_quote", fallback_mid)),
             )
-            if depth_pos >= 0:
-                prices = l2_ask_px[depth_pos] if side == "BUY" else l2_bid_px[depth_pos]
-                quantities = l2_ask_qty[depth_pos] if side == "BUY" else l2_bid_qty[depth_pos]
-            else:
-                prices, quantities = (fill_price,), (top_qty,)
-            fill_qty, fill_price = _match_ioc_order(
-                side, float(order["price"]),
-                min(float(order.get("remaining", 0.0)), reducible),
-                prices, quantities, tick_size=TICK, lot_size=LOT_SIZE,
-                market=bool(order.get("emergency_market", False)),
+            _ranked_guard_order_activated(
+                order, visibility_ts_ms=int(now_ts), exchange_ts_ms=exchange_ts,
             )
             if fill_qty < LOT_SIZE:
                 circuit_breaker_close_ioc_expire_count += 1
@@ -24495,7 +25028,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _record_order_lifecycle_cancel_ack(
                     order,
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
+                    exchange_ts_ms=exchange_ts,
                     reason="ioc_no_top_liquidity",
                 )
                 _ranked_guard_cancel_requested(
@@ -24507,7 +25040,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     reason="expired",
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
+                    exchange_ts_ms=exchange_ts,
                 )
                 _append_order_outcome(
                     order,
@@ -24521,6 +25054,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     reason="ioc_no_top_liquidity",
                 )
                 orders.pop(idx)
+                if (
+                    main_loop_waiting_request is not None
+                    and main_loop_waiting_request.get("order") is order
+                ):
+                    _complete_synchronous_rest_request(main_loop_waiting_request, int(now_ts))
                 continue
 
             q_before_fill = q
@@ -24619,12 +25157,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 last_buy_fill_cooldown_ms = 0.0
                 last_buy_fill_cooldown_total_ms = 0.0
 
-            if private_fill_visibility_enabled:
-                # This IOC fill is synchronous, unlike a reserved maker fill
-                # whose private callback only updates local inventory later.
-                # Apply its physical delta without erasing pending maker fills.
-                exchange_inventory += q - q_before_fill
-
             _loss_cooldown_on_fill(
                 side,
                 float(fill_qty),
@@ -24636,11 +25168,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 float(order.get("remaining", 0.0)), fill_qty, LOT_SIZE,
             )
             if private_fill_visibility_enabled:
-                order["exchange_remaining"] = subtract_lot_quantity(
-                    float(order.get("exchange_remaining", order["remaining"] + fill_qty)),
-                    fill_qty, LOT_SIZE,
-                )
-                order["last_exchange_fill_ts_ms"] = int(now_ts)
+                private_fill_visible_count += 1
                 order["last_private_fill_visible_ts_ms"] = int(now_ts)
             _post_cooldown_budget_on_fill(
                 order,
@@ -24669,6 +25197,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             _record_order_lifecycle_fill(
                 order,
                 int(now_ts),
+                exchange_ts_ms=exchange_ts,
                 fill_qty=float(fill_qty),
                 remaining_before=lifecycle_remaining_before,
                 remaining_after=float(order.get("remaining", 0.0)),
@@ -24690,7 +25219,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     else float(order.get("remaining", 0.0) or 0.0)
                 ),
                 visibility_ts_ms=int(now_ts),
-                exchange_ts_ms=int(now_ts),
+                exchange_ts_ms=exchange_ts,
                 full_fill=bool(ioc_binding_full_fill),
             )
             circuit_breaker_close_fill_count += 1
@@ -24710,7 +25239,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 q_before_fill,
                 order=trace_order,
                 fee_rate=taker_fee,
-                fill_ts_ms=int(now_ts),
+                fill_ts_ms=exchange_ts,
             )
             _append_order_outcome(
                 order,
@@ -24738,7 +25267,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _record_order_lifecycle_cancel_ack(
                     order,
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
+                    exchange_ts_ms=exchange_ts,
                     reason="ioc_unfilled_remainder",
                 )
                 _ranked_guard_cancel_requested(
@@ -24750,7 +25279,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     reason="expired",
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
+                    exchange_ts_ms=exchange_ts,
                 )
             _post_cooldown_budget_release_order(
                 order,
@@ -24760,7 +25289,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             _sync_local_order_lifecycle_repair(int(now_ts))
             if markout_ema_span_fills > 0:
                 mo_pending.append(
-                    (int(now_ts), fill_price, side == "BUY", {
+                    (exchange_ts, fill_price, side == "BUY", {
                         "final_compressed": False,
                     }, fill_qty)
                 )
@@ -24769,6 +25298,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             filled = True
             # IOC cancels every unfilled remainder.
             orders.pop(idx)
+            _apply_visible_fill_inventory_state(
+                q_before_visible=float(q_before_fill), visibility_ts_ms=int(now_ts),
+                filled_buy=side == "BUY", filled_sell=side == "SELL",
+            )
+            if (
+                main_loop_waiting_request is not None
+                and main_loop_waiting_request.get("order") is order
+            ):
+                _complete_synchronous_rest_request(main_loop_waiting_request, int(now_ts))
         return filled
 
     adverse_markout_pause_threshold_eff = adverse_markout_pause_threshold
@@ -25745,7 +26283,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 return
             if serial_rest_decision is not None:
                 raise RuntimeError("main-loop wake overlaps an in-flight quote call")
-            if wake_ms < rest_gateway_busy_until_ms:
+            if not async_rest_gateway and wake_ms < rest_gateway_busy_until_ms:
                 main_loop_next_wake_ms = rest_gateway_busy_until_ms + main_loop_sleep_ms
                 continue
             main_loop_next_wake_ms = None
@@ -27120,6 +27658,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         pair_route_due = bool(bid_route_due and ask_route_due)
         if (
             sampled_serial_gateway
+            and not async_rest_gateway
             and not is_quote_compute_resume
             and (int(t) < rest_gateway_busy_until_ms or serial_rest_decision is not None)
             and (
@@ -27149,6 +27688,36 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             or continuation_force_bid_due
             or continuation_force_ask_due
         ):
+            if runtime_compute_by_path and not is_quote_compute_resume:
+                runtime_cutoff_ms = (
+                    _message_clock_state("prediction", int(t))[1] // 1_000_000
+                    if params["runtime_compute_clock"] == "prediction_delivery"
+                    else (int(t) // 1_000) * 1_000
+                )
+                bucket_end_ms = (
+                    runtime_cutoff_ms // runtime_compute_bucket_ms
+                ) * runtime_compute_bucket_ms
+                if (
+                    not any(runtime_compute_path_counts.values())
+                    and runtime_compute_last_bucket_end_ms > bucket_end_ms
+                ):
+                    raise ValueError("runtime compute initial watermark exceeds causal cutoff")
+                bucket_count = max(
+                    0, (bucket_end_ms - runtime_compute_last_bucket_end_ms)
+                    // runtime_compute_bucket_ms,
+                )
+                compute_path = (
+                    "cached_no_new_bucket" if bucket_count == 0 else
+                    "new_bucket" if bucket_count == 1 else "catch_up"
+                )
+                runtime_compute_last_bucket_end_ms = max(
+                    runtime_compute_last_bucket_end_ms, bucket_end_ms,
+                )
+                runtime_compute_path_counts[compute_path] += 1
+                phases = runtime_compute_by_path[compute_path]
+                pre_snapshot_compute_samples_ms = phases[:, 0]
+                decision_to_gateway_latency_samples_ms = phases[:, 1]
+                requote_tail_work_samples_ms = phases[:, 2]
             if main_loop_enabled and not is_quote_compute_resume:
                 # Live sets its timer at actual _requote() entry, never at a
                 # missed fixed-grid deadline. Compute also occupies keep/skip
@@ -32467,8 +33036,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "requote_tail_work_sample_count": int(requote_tail_work_samples_ms.size),
             "requote_tail_work_count": requote_tail_work_count,
             "requote_tail_work_sum_ms": requote_tail_work_sum_ms,
-            "requote_tail_work_clock": "after_last_rest_return_or_compute_before_loop_sleep",
+            "requote_tail_work_clock": (
+                "after_request_enqueue_or_no_request_compute_before_loop_sleep"
+                if async_rest_gateway else "after_last_rest_return_or_compute_before_loop_sleep"
+            ),
         } if requote_tail_work_enabled else {}),
+        **({
+            "runtime_compute_path_counts": runtime_compute_path_counts,
+            "runtime_compute_last_bucket_end_ms": runtime_compute_last_bucket_end_ms,
+            "runtime_compute_sample_counts": {
+                path: len(rows) for path, rows in runtime_compute_by_path.items()
+            },
+            "runtime_compute_phase_placement": params["_runtime_compute_sample_semantics"],
+            "runtime_compute_clock": params["runtime_compute_clock"],
+        } if runtime_compute_by_path else {}),
         **({
             "main_loop_work_sample_count": int(main_loop_work_samples_ms.shape[0]),
             "main_loop_work_pre_sum_ms": main_loop_work_pre_sum_ms,
@@ -32495,7 +33076,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ),
         **(
             {
-                "rest_gateway_timing_mode": "sampled_serial",
+                "rest_gateway_timing_mode": rest_gateway_timing_mode,
                 "rest_gateway_timing_authority": "diagnostic_only",
                 "rest_gateway_sampling_assumption": (
                     "independent_requests_with_paired_effective_private_response_upper_bound"
@@ -32514,6 +33095,40 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "rest_gateway_decision_deferral_count": rest_gateway_decision_deferral_count,
                 "rest_gateway_return_pending_coalesce_count": rest_return_pending_coalesce_count,
                 "rest_gateway_pending_decision_count": int(serial_rest_decision is not None),
+                **({
+                    "rest_gateway_lane": "GLOBAL_FIFO",
+                    "rest_gateway_max_inflight": min(1, rest_gateway_request_count),
+                    "rest_gateway_queue_capacity": async_lane_capacity,
+                    "rest_gateway_queue_high_watermark": async_rest_queue_high_watermark,
+                    "rest_gateway_pending_request_count": (
+                        len(async_rest_queue) + int(async_rest_active is not None)
+                    ),
+                    "rest_gateway_unmodeled_paths": [
+                        *(
+                            [] if bulk_cancel_samples is not None
+                            else ["bulk_safety_cancel_barrier"]
+                        ),
+                        "bulk_barrier_callback_admission_or_synchronous_close_interruption",
+                        "IOC_account_trades_lookup_latency",
+                        "gateway_failure_and_unknown_response_tape",
+                    ],
+                    "bulk_cancel_request_count": bulk_cancel_request_count,
+                    "bulk_cancel_phase_model": (
+                        "shared_effective_private_http_for_batch" if bulk_cancel_samples is not None
+                        else "not_configured"
+                    ),
+                    "rest_gateway_http_result_status_by_operation": http_result_status_by_operation,
+                    "replay_main_loop_synchronous_request_count": (
+                        main_loop_synchronous_request_count
+                    ),
+                    "replay_main_loop_synchronous_wait_ms": main_loop_synchronous_wait_ms,
+                    "replay_main_loop_synchronous_request_pending": (
+                        main_loop_waiting_request is not None
+                    ),
+                    "ioc_close_completion_assumption": (
+                        "max_http_return_and_private_fill_proof_no_account_trades_timing"
+                    ),
+                } if async_rest_gateway else {}),
                 **({"rest_gateway_response_sample_counts": {
                     slot: int(rows.shape[0]) for slot, rows in rest_return_samples.items()
                 }} if serial_rest_return_enabled else {}),
@@ -32524,7 +33139,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             {
                 "replay_main_loop_sleep_ms": main_loop_sleep_ms,
                 "replay_main_loop_tick_count": main_loop_tick_count,
-                "replay_main_loop_clock": "actual_tick_and_rest_return_then_sleep",
+                "replay_main_loop_clock": (
+                    "actual_tick_then_sleep_or_private_terminal_wake"
+                    if async_rest_gateway else "actual_tick_and_rest_return_then_sleep"
+                ),
                 "replay_main_loop_requote_anchor": "actual_requote_start",
                 "replay_main_loop_dynamic_rq_clock": "delivered_1s_bars_before_due_check",
                 "replay_main_loop_dynamic_rq_bar_index": main_loop_rq_var_idx,
@@ -34893,6 +35511,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
+    if runtime_compute_sample_rows(params):
+        raise ValueError("path-conditioned runtime compute continuation is Python-only")
     if "last_requote_ts_ms" in (params.get("initial_live_state") or {}):
         raise ValueError("C++ replay cannot restore last_requote_ts_ms; use Python replay")
     for key in ("_requote_tail_work_samples_ms", "_main_loop_work_samples_ms"):

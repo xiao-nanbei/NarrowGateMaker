@@ -1521,6 +1521,11 @@ def test_python_cpp_ioc_close_uses_activation_book_without_resetting_quote_clock
         "activate_ts",
         "quote_ts",
         "fill_ts",
+        "age_ms",
+        "markout_1s",
+        "markout_5s",
+        "markout_20s",
+        "markout_30s",
         "price",
         "quote_px",
         "fill_trade_px",
@@ -1535,7 +1540,8 @@ def test_python_cpp_ioc_close_uses_activation_book_without_resetting_quote_clock
         ), field
     assert py["_fill_trace"][0]["quote_ts"] == 70_000
     assert py["_fill_trace"][0]["activate_ts"] == 71_500
-    assert py["_fill_trace"][0]["fill_ts"] == 72_000
+    assert py["_fill_trace"][0]["fill_ts"] == 71_500
+    assert py["_fill_trace"][0]["age_ms"] == 1_500
     assert py["_fill_trace"][0]["quote_px"] == pytest.approx(89.5)
     assert py["_fill_trace"][0]["fill_trade_px"] == pytest.approx(90.0)
     for result in (py, cpp):

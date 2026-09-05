@@ -46,6 +46,7 @@ logger = logging.getLogger("ws_handler")
 
 _USER_STREAM_SHUTDOWN_JOIN_TIMEOUT_S = 5.0
 _USER_STREAM_STARTUP_READY_TIMEOUT_S = 30.0
+_MARKET_STREAM_SHUTDOWN_JOIN_TIMEOUT_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,10 @@ class WSHandler:
         self._user_stream_ready_event = threading.Event()
 
         self._market_session_id = 0
+        self._market_reconnect_lock = threading.Lock()
+        self._market_reconnect_thread: threading.Thread | None = None
+        self._market_reconnect_build_session_id: int | None = None
+        self._market_reconnect_build_closed = False
         self._market_trade_seen: dict[str, float] = {}
         self._market_book_seen: dict[str, float] = {}
         self._market_depth_seen: dict[str, float] = {}
@@ -363,19 +368,37 @@ class WSHandler:
                 market_symbols = self._market_symbols()
                 spot_symbols = self._spot_anchor_symbols()
 
+                with self._market_reconnect_lock:
+                    self._market_session_id += 1
+                    market_session_id = self._market_session_id
                 logger.info("Starting market trade WebSocket...")
                 self._ws_market = UMFuturesWebsocketClient(
                     stream_url=self._market_stream_base_url(),
-                    on_message=self._on_market_message,
-                    on_close=self._on_market_close,
+                    on_message=lambda client, message, session_id=market_session_id: (
+                        self._on_market_message(
+                            client,
+                            message,
+                            session_id=session_id,
+                        )
+                    ),
+                    on_close=lambda client, session_id=market_session_id: (
+                        self._on_market_close(client, session_id=session_id)
+                    ),
                 )
                 logger.info("Starting public data WebSocket...")
                 self._ws_public = UMFuturesWebsocketClient(
                     stream_url=self._public_stream_base_url(),
-                    on_message=self._on_market_message,
-                    on_close=self._on_public_close,
+                    on_message=lambda client, message, session_id=market_session_id: (
+                        self._on_market_message(
+                            client,
+                            message,
+                            session_id=session_id,
+                        )
+                    ),
+                    on_close=lambda client, session_id=market_session_id: (
+                        self._on_public_close(client, session_id=session_id)
+                    ),
                 )
-                self._market_session_id += 1
                 self._reset_stream_watchdog_state(market_symbols, spot_symbols)
 
                 self._subscribe_market_streams(symbol, market_symbols)
@@ -384,7 +407,7 @@ class WSHandler:
                 self._start_spot_stream(spot_symbols)
                 self._start_external_venue_streams()
                 self._arm_stream_silence_watchdog(
-                    market_symbols, spot_symbols, self._market_session_id
+                    market_symbols, spot_symbols, market_session_id
                 )
                 final_private_state = self.user_event_safety_snapshot()
                 if (
@@ -414,18 +437,23 @@ class WSHandler:
                     self._public_market_streams_starting = False
                     self._public_market_streams_started = False
                     self._public_market_startup_closed = False
-                self._market_session_id += 1
+                with self._market_reconnect_lock:
+                    self._market_session_id += 1
                 self._stop_external_venue_streams()
                 self._stop_market_tape()
                 self._stop_deep_book_stream()
-                for attr_name in ("_ws_market", "_ws_public"):
-                    client = getattr(self, attr_name)
-                    if client is not None:
-                        try:
-                            client.stop()
-                        except Exception:
-                            pass
-                        setattr(self, attr_name, None)
+                try:
+                    self._stop_market_clients(self._ws_market, self._ws_public)
+                except BaseException:
+                    # Keep both references reachable for the later process
+                    # shutdown retry when either reader cannot be joined.
+                    logger.critical(
+                        "Public futures WebSocket startup cleanup failed",
+                        exc_info=True,
+                    )
+                else:
+                    self._ws_market = None
+                    self._ws_public = None
                 self._stop_spot_stream()
                 if not self._private_user_stream_started:
                     self._running = False
@@ -1214,8 +1242,15 @@ class WSHandler:
             ordered_market_symbols.append(market_key)
         return ordered_market_symbols
 
-    def _subscribe_market_streams(self, symbol: str, market_symbols: list[str]):
+    def _subscribe_market_streams(
+        self,
+        symbol: str,
+        market_symbols: list[str],
+        *,
+        client=None,
+    ):
         """Subscribe the required USD-M aggTrade streams."""
+        websocket_client = client or self._ws_market
         ordered_market_symbols = self._ordered_market_symbols(symbol, market_symbols)
 
         for index, market_symbol in enumerate(ordered_market_symbols):
@@ -1223,7 +1258,7 @@ class WSHandler:
                 request_id = self._next_market_request_id(
                     f"SUBSCRIBE {market_symbol}@aggTrade"
                 )
-                self._ws_market.agg_trade(symbol=market_symbol, id=request_id)
+                websocket_client.agg_trade(symbol=market_symbol, id=request_id)
                 if market_symbol == symbol:
                     logger.info(
                         f"Subscribe requested id={request_id}: {market_symbol}@aggTrade"
@@ -1244,19 +1279,26 @@ class WSHandler:
 
         try:
             request_id = self._next_market_request_id("LIST_SUBSCRIPTIONS market")
-            self._ws_market.list_subscribe(id=request_id)
+            websocket_client.list_subscribe(id=request_id)
             logger.info(f"Requested market subscription snapshot id={request_id}")
         except Exception as e:
             logger.debug(f"LIST_SUBSCRIPTIONS request failed: {e}")
 
-    def _subscribe_public_streams(self, symbol: str, market_symbols: list[str]):
+    def _subscribe_public_streams(
+        self,
+        symbol: str,
+        market_symbols: list[str],
+        *,
+        client=None,
+    ):
         """Subscribe futures public streams on Binance's /public endpoint."""
+        websocket_client = client or self._ws_public
         ordered_market_symbols = self._ordered_market_symbols(symbol, market_symbols)
 
         request_id = self._next_market_request_id(
             f"SUBSCRIBE {symbol}@depth{self.cfg.websocket.depth_levels}@{self.cfg.websocket.depth_speed}ms"
         )
-        self._ws_public.partial_book_depth(
+        websocket_client.partial_book_depth(
             symbol=symbol,
             level=self.cfg.websocket.depth_levels,
             speed=self.cfg.websocket.depth_speed,
@@ -1271,12 +1313,12 @@ class WSHandler:
             request_id = self._next_market_request_id(
                 f"SUBSCRIBE {market_symbol}@bookTicker"
             )
-            self._ws_public.book_ticker(symbol=market_symbol, id=request_id)
+            websocket_client.book_ticker(symbol=market_symbol, id=request_id)
             logger.info(f"Subscribed: {market_symbol}@bookTicker")
 
         try:
             request_id = self._next_market_request_id("LIST_SUBSCRIPTIONS public")
-            self._ws_public.list_subscribe(id=request_id)
+            websocket_client.list_subscribe(id=request_id)
             logger.info(f"Requested public subscription snapshot id={request_id}")
         except Exception as e:
             logger.debug(f"Public LIST_SUBSCRIPTIONS request failed: {e}")
@@ -1438,27 +1480,7 @@ class WSHandler:
         return [f"{exec_symbol}@executionDepth {age:.0f}s"]
 
     def _restart_market_stream_after_silence(self):
-        if not self._running or not self._public_market_streams_started:
-            return
-        if self._market_reconnect_requested:
-            return
-        self._market_reconnect_requested = True
-        if self._ws_market:
-            try:
-                self._ws_market.stop()
-            except Exception:
-                pass
-            self._ws_market = None
-        if self._ws_public:
-            try:
-                self._ws_public.stop()
-            except Exception:
-                pass
-            self._ws_public = None
-        try:
-            self._reconnect_market()
-        finally:
-            self._market_reconnect_requested = False
+        self._request_market_reconnect("execution_depth_silence")
 
     def _start_user_stream(self, rest_client) -> bool:
         """Create listen key and start user data stream."""
@@ -1696,8 +1718,18 @@ class WSHandler:
 
     # ── message handlers ──
 
-    def _on_market_message(self, _, message):
+    def _on_market_message(
+        self,
+        _,
+        message,
+        *,
+        session_id: int | None = None,
+    ):
         """Route market data messages to appropriate handlers."""
+        if session_id is not None and (
+            not self._running or int(session_id) != self._market_session_id
+        ):
+            return
         receive_ns = time.time_ns()
         try:
             if isinstance(message, (bytes, bytearray)):
@@ -2080,7 +2112,33 @@ class WSHandler:
                 return False
             self._user_stream_ready_event.wait(remaining_s)
 
-    def _on_market_close(self, _):
+    def _market_close_is_current(self, session_id: int | None) -> bool:
+        return session_id is None or int(session_id) == self._market_session_id
+
+    def _note_market_close_during_reconnect(
+        self,
+        session_id: int | None,
+    ) -> bool:
+        """Return true when an in-flight reconnect already owns this close."""
+
+        with self._market_reconnect_lock:
+            if not self._market_reconnect_requested:
+                return False
+            if (
+                session_id is not None
+                and self._market_reconnect_build_session_id == int(session_id)
+            ):
+                self._market_reconnect_build_closed = True
+            return True
+
+    def _on_market_close(self, _, *, session_id: int | None = None):
+        # A replacement socket can close before its session is published.
+        # Record that close first; ordinary stale-generation closes remain
+        # ignored below.
+        if self._note_market_close_during_reconnect(session_id):
+            return
+        if not self._market_close_is_current(session_id):
+            return
         logger.warning("Market trade WebSocket closed")
         with self._public_market_phase_lock:
             if self._public_market_streams_starting:
@@ -2089,20 +2147,14 @@ class WSHandler:
             reconnect = bool(
                 self._running and self._public_market_streams_started
             )
-        if self._market_reconnect_requested:
-            return
         if reconnect:
-            logger.info("Reconnecting futures market/public streams in 2s...")
-            if self._ws_market:
-                try:
-                    self._ws_market.stop()
-                except Exception:
-                    pass
-                self._ws_market = None
-            time.sleep(2)
-            self._reconnect_market()
+            self._request_market_reconnect("market_socket_closed")
 
-    def _on_public_close(self, _):
+    def _on_public_close(self, _, *, session_id: int | None = None):
+        if self._note_market_close_during_reconnect(session_id):
+            return
+        if not self._market_close_is_current(session_id):
+            return
         logger.warning("Public data WebSocket closed")
         with self._public_market_phase_lock:
             if self._public_market_streams_starting:
@@ -2111,18 +2163,8 @@ class WSHandler:
             reconnect = bool(
                 self._running and self._public_market_streams_started
             )
-        if self._market_reconnect_requested:
-            return
         if reconnect:
-            logger.info("Reconnecting futures market/public streams in 2s...")
-            if self._ws_public:
-                try:
-                    self._ws_public.stop()
-                except Exception:
-                    pass
-                self._ws_public = None
-            time.sleep(2)
-            self._reconnect_market()
+            self._request_market_reconnect("public_socket_closed")
 
     def _install_user_stream_app(self, ws) -> Optional[int]:
         with self._user_event_stats_lock:
@@ -2175,37 +2217,290 @@ class WSHandler:
         if self._running and self._user_stream_active:
             logger.info("User data WebSocket reconnect loop will retry in 2s...")
 
-    def _reconnect_market(self):
-        """Reconnect futures market/public data WebSockets (not user stream)."""
-        if not self._running or not self._public_market_streams_started:
-            return
-        from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
+    def _request_market_reconnect(self, reason: str) -> bool:
+        """Schedule one complete futures market/public reconnect off callbacks."""
+
+        with self._public_market_phase_lock:
+            eligible = bool(
+                self._running
+                and self._public_market_streams_started
+                and not self._public_market_streams_starting
+            )
+        if not eligible:
+            return False
+
+        with self._market_reconnect_lock:
+            if self._market_reconnect_requested:
+                return False
+            self._market_reconnect_requested = True
+            self._market_reconnect_build_session_id = None
+            self._market_reconnect_build_closed = False
+            thread = threading.Thread(
+                target=self._reconnect_market_controller,
+                args=(str(reason),),
+                daemon=True,
+                name="futures-market-reconnect",
+            )
+            self._market_reconnect_thread = thread
+        try:
+            thread.start()
+        except BaseException:
+            with self._market_reconnect_lock:
+                if self._market_reconnect_thread is thread:
+                    self._market_reconnect_thread = None
+                    self._market_reconnect_requested = False
+                    self._market_session_id += 1
+            with self._public_market_phase_lock:
+                self._public_market_streams_started = False
+            logger.critical(
+                "Failed to start futures market reconnect controller; "
+                "streams remain unadmitted reason=%s",
+                reason,
+                exc_info=True,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _stop_market_client(client: object) -> None:
+        """Close and bounded-join one connector client from a controller thread."""
+
+        manager = getattr(client, "socket_manager", None)
+        if manager is None:
+            raise TypeError(
+                "futures websocket client must expose its socket_manager"
+            )
+        if manager is threading.current_thread():
+            raise RuntimeError("cannot stop a futures websocket from its reader thread")
+        websocket = getattr(manager, "ws", None)
+        if websocket is None:
+            raise RuntimeError("futures websocket manager has no active socket")
+        # The connector's ``stop()`` sends a CLOSE frame and then performs an
+        # unbounded join.  Public market streams carry no private execution
+        # state, so abort the socket to wake recv immediately and impose our
+        # own finite join budget instead.
+        try:
+            websocket.abort()
+        except BaseException:
+            websocket.shutdown()
+        manager.join(timeout=_MARKET_STREAM_SHUTDOWN_JOIN_TIMEOUT_S)
+        if manager.is_alive():
+            try:
+                websocket.shutdown()
+            except BaseException:
+                pass
+            raise TimeoutError("futures websocket reader did not stop within grace")
+        websocket.shutdown()
+
+    @classmethod
+    def _stop_market_clients(
+        cls,
+        market_client: object | None,
+        public_client: object | None,
+    ) -> None:
+        failures: list[tuple[str, BaseException]] = []
+        for role, client in (
+            ("market", market_client),
+            ("public", public_client),
+        ):
+            if client is None:
+                continue
+            try:
+                cls._stop_market_client(client)
+            except BaseException as exc:
+                failures.append((role, exc))
+        if failures:
+            roles = ",".join(role for role, _ in failures)
+            raise RuntimeError(
+                f"failed to stop and join old futures websocket clients: {roles}"
+            ) from failures[0][1]
+
+    def _reconnect_market(self, *, session_id: int) -> tuple[object, object]:
+        """Build one replacement futures market/public pair after old pair stopped."""
+
+        from binance.websocket.um_futures.websocket_client import (
+            UMFuturesWebsocketClient,
+        )
 
         symbol = self.cfg.symbol.lower()
         market_symbols = self._market_symbols()
-        spot_symbols = self._spot_anchor_symbols()
 
-        self._stop_spot_stream()
+        market_client = None
+        public_client = None
+        try:
+            market_client = UMFuturesWebsocketClient(
+                stream_url=self._market_stream_base_url(),
+                on_message=lambda client, message, generation=session_id: (
+                    self._on_market_message(
+                        client,
+                        message,
+                        session_id=generation,
+                    )
+                ),
+                on_close=lambda client, generation=session_id: (
+                    self._on_market_close(client, session_id=generation)
+                ),
+            )
+            public_client = UMFuturesWebsocketClient(
+                stream_url=self._public_stream_base_url(),
+                on_message=lambda client, message, generation=session_id: (
+                    self._on_market_message(
+                        client,
+                        message,
+                        session_id=generation,
+                    )
+                ),
+                on_close=lambda client, generation=session_id: (
+                    self._on_public_close(client, session_id=generation)
+                ),
+            )
+            self._subscribe_market_streams(
+                symbol,
+                market_symbols,
+                client=market_client,
+            )
+            self._subscribe_public_streams(
+                symbol,
+                market_symbols,
+                client=public_client,
+            )
+            return market_client, public_client
+        except BaseException:
+            try:
+                self._stop_market_clients(market_client, public_client)
+            except BaseException:
+                # Preserve any client that could still own a live reader so
+                # process shutdown can retry; never turn a failed cleanup into
+                # an unreachable background socket.
+                with self._startup_lock:
+                    if self._ws_market is None:
+                        self._ws_market = market_client
+                    if self._ws_public is None:
+                        self._ws_public = public_client
+                logger.critical(
+                    "Replacement futures websocket construction cleanup failed",
+                    exc_info=True,
+                )
+            raise
 
-        self._ws_market = UMFuturesWebsocketClient(
-            stream_url=self._market_stream_base_url(),
-            on_message=self._on_market_message,
-            on_close=self._on_market_close,
-        )
-        self._ws_public = UMFuturesWebsocketClient(
-            stream_url=self._public_stream_base_url(),
-            on_message=self._on_market_message,
-            on_close=self._on_public_close,
-        )
-        self._market_session_id += 1
-        self._reset_stream_watchdog_state(market_symbols, spot_symbols)
-        self._subscribe_market_streams(symbol, market_symbols)
-        self._subscribe_public_streams(symbol, market_symbols)
-        self._start_spot_stream(spot_symbols)
-        self._arm_stream_silence_watchdog(
-            market_symbols, spot_symbols, self._market_session_id
-        )
-        logger.info("Futures market/public WebSockets reconnected")
+    def _reconnect_market_controller(self, reason: str) -> None:
+        """Own one stop/join/build transaction from a non-reader thread."""
+
+        thread = threading.current_thread()
+        finalized = False
+        replacement_market = None
+        replacement_public = None
+        session_id: int | None = None
+        try:
+            with self._startup_lock:
+                if not self._running or not self._public_market_streams_started:
+                    return
+                old_market = self._ws_market
+                old_public = self._ws_public
+                build_cfg = self.cfg
+
+            self._stop_market_clients(old_market, old_public)
+            with self._startup_lock:
+                if not self._running or not self._public_market_streams_started:
+                    return
+                if self._ws_market is not old_market or self._ws_public is not old_public:
+                    raise RuntimeError(
+                        "futures websocket ownership changed during reconnect"
+                    )
+                self._ws_market = None
+                self._ws_public = None
+                with self._market_reconnect_lock:
+                    session_id = self._market_session_id + 1
+                    self._market_reconnect_build_session_id = session_id
+                    self._market_reconnect_build_closed = False
+
+            replacement_market, replacement_public = self._reconnect_market(
+                session_id=session_id
+            )
+            with self._startup_lock:
+                if not self._running or not self._public_market_streams_started:
+                    raise RuntimeError("market reconnect superseded by shutdown")
+                if self.cfg is not build_cfg:
+                    raise RuntimeError("market config changed during reconnect")
+                with self._market_reconnect_lock:
+                    if self._market_reconnect_build_closed:
+                        raise RuntimeError(
+                            "replacement futures websocket closed during reconnect"
+                        )
+                    self._ws_market = replacement_market
+                    self._ws_public = replacement_public
+                    self._market_session_id = session_id
+                    self._reset_stream_watchdog_state(
+                        self._market_symbols(),
+                        self._spot_anchor_symbols(),
+                    )
+                    self._arm_stream_silence_watchdog(
+                        self._market_symbols(),
+                        self._spot_anchor_symbols(),
+                        session_id,
+                    )
+                    if self._market_reconnect_thread is thread:
+                        self._market_reconnect_thread = None
+                    self._market_reconnect_build_session_id = None
+                    self._market_reconnect_build_closed = False
+                    self._market_reconnect_requested = False
+                    finalized = True
+                    replacement_market = None
+                    replacement_public = None
+                logger.info(
+                    "Futures market/public WebSockets reconnected reason=%s",
+                    reason,
+                )
+        except BaseException as exc:
+            cleanup_failed = False
+            if replacement_market is not None or replacement_public is not None:
+                try:
+                    self._stop_market_clients(
+                        replacement_market,
+                        replacement_public,
+                    )
+                except BaseException as cleanup_exc:
+                    cleanup_failed = True
+                    logger.critical(
+                        "Futures reconnect cleanup failed reason=%s error=%s",
+                        reason,
+                        cleanup_exc,
+                        exc_info=True,
+                    )
+            with self._startup_lock:
+                if cleanup_failed:
+                    if self._ws_market is None:
+                        self._ws_market = replacement_market
+                    if self._ws_public is None:
+                        self._ws_public = replacement_public
+                else:
+                    if self._ws_market is replacement_market:
+                        self._ws_market = None
+                    if self._ws_public is replacement_public:
+                        self._ws_public = None
+                with self._market_reconnect_lock:
+                    # Fence both the stopped old session and any replacement
+                    # session whose cleanup could not be proven complete.
+                    self._market_session_id = (
+                        max(self._market_session_id, session_id or 0) + 1
+                    )
+                with self._public_market_phase_lock:
+                    self._public_market_streams_started = False
+            logger.critical(
+                "Futures market/public reconnect failed; streams remain unadmitted "
+                "reason=%s error=%s",
+                reason,
+                exc,
+                exc_info=True,
+            )
+        finally:
+            if not finalized:
+                with self._market_reconnect_lock:
+                    if self._market_reconnect_thread is thread:
+                        self._market_reconnect_thread = None
+                    self._market_reconnect_build_session_id = None
+                    self._market_reconnect_build_closed = False
+                    self._market_reconnect_requested = False
 
     @staticmethod
     def _market_stream_changed(old_cfg, new_cfg) -> bool:
@@ -2288,8 +2583,60 @@ class WSHandler:
             float(getattr(ws_cfg, "deep_book_max_age_s", 2.0)),
         )
 
+    @staticmethod
+    def _spot_stream_signature(cfg) -> tuple:
+        """Return the actual spot socket URL/subscription set for one config."""
+
+        multi = getattr(cfg, "multi_market", None)
+        if not getattr(multi, "enabled", False):
+            return ()
+        stage = str(
+            getattr(multi, "market_stage", "minimal") or "minimal"
+        ).lower()
+        if stage not in {"enhanced", "full"}:
+            return ()
+        specs = build_market_specs(
+            cfg.symbol,
+            stage,
+            getattr(multi, "reference_symbol", None),
+            getattr(multi, "stablecoin_anchor_symbol", "USDCUSDT"),
+        )
+        subscriptions = tuple(
+            sorted(
+                (
+                    spec.symbol.lower(),
+                    spec.role != STABLECOIN_ANCHOR_ROLE,
+                )
+                for spec in specs
+                if spec.market_type == SPOT_MARKET
+            )
+        )
+        if not subscriptions:
+            return ()
+        return (bool(cfg.api.testnet), subscriptions)
+
+    def validate_config_reload(self, old_cfg, new_cfg) -> None:
+        """Reject stream changes that require rebuilding an independent socket."""
+
+        with self._public_market_phase_lock:
+            public_streams_started = self._public_market_streams_started
+        if public_streams_started and (
+            self._spot_stream_signature(old_cfg)
+            != self._spot_stream_signature(new_cfg)
+        ):
+            raise ValueError(
+                "spot market subscriptions are restart-only and cannot be "
+                "hot-reloaded"
+            )
+        if self._running and old_cfg.api.testnet != new_cfg.api.testnet:
+            raise ValueError(
+                "api.testnet is restart-only and cannot be hot-reloaded"
+            )
+
     def on_config_reload(self, old_cfg, new_cfg):
-        """Apply runtime config updates; reconnect market stream when needed."""
+        """Apply runtime config and reconnect the futures pair when needed."""
+
+        self.validate_config_reload(old_cfg, new_cfg)
         external_changed = self._external_stream_signature(old_cfg) != self._external_stream_signature(new_cfg)
         market_tape_changed = self._market_tape_signature(old_cfg) != self._market_tape_signature(new_cfg)
         deep_book_changed = self._deep_book_signature(old_cfg) != self._deep_book_signature(new_cfg)
@@ -2304,13 +2651,6 @@ class WSHandler:
                 "Updated listen-key renew interval: "
                 f"{old_cfg.performance.listen_key_renew}s -> {new_cfg.performance.listen_key_renew}s"
             )
-
-        if old_cfg.api.testnet != new_cfg.api.testnet:
-            logger.warning(
-                "api.testnet changed via reload, but REST client endpoint cannot be hot-swapped. "
-                "Restart process to fully apply endpoint changes."
-            )
-            return
 
         # A private-first startup deliberately leaves every market producer
         # dormant until the caller freezes the prospective epoch.  Config
@@ -2341,19 +2681,7 @@ class WSHandler:
             )
 
         logger.info("Market stream config changed, reconnecting WebSocket...")
-        if self._ws_market:
-            try:
-                self._ws_market.stop()
-            except Exception:
-                pass
-            self._ws_market = None
-        if self._ws_public:
-            try:
-                self._ws_public.stop()
-            except Exception:
-                pass
-            self._ws_public = None
-        self._reconnect_market()
+        self._request_market_reconnect("market_config_changed")
 
     # ── lifecycle ──
 
@@ -2368,22 +2696,34 @@ class WSHandler:
                 self._public_market_startup_closed = False
         shutdown_errors: list[BaseException] = []
 
+        reconnect_thread = self._market_reconnect_thread
+        if (
+            reconnect_thread is not None
+            and reconnect_thread is not threading.current_thread()
+        ):
+            reconnect_thread.join(timeout=5.0)
+            if reconnect_thread.is_alive():
+                shutdown_errors.append(
+                    RuntimeError("futures market reconnect controller did not stop")
+                )
+                logger.critical(
+                    "Futures market reconnect controller exceeded shutdown grace"
+                )
+
         self._stop_external_venue_streams()
         self._stop_market_tape()
         self._stop_deep_book_stream()
 
-        if self._ws_market:
-            try:
-                self._ws_market.stop()
-            except Exception:
-                pass
+        try:
+            self._stop_market_clients(self._ws_market, self._ws_public)
+        except BaseException as exc:
+            shutdown_errors.append(exc)
+            logger.critical(
+                "Futures market/public WebSocket shutdown failed",
+                exc_info=True,
+            )
+        else:
             self._ws_market = None
-
-        if self._ws_public:
-            try:
-                self._ws_public.stop()
-            except Exception:
-                pass
             self._ws_public = None
 
         try:
@@ -2425,5 +2765,5 @@ class WSHandler:
         )
         if shutdown_errors:
             raise RuntimeError(
-                "user-stream shutdown did not reach callback quiescence"
+                "WebSocket shutdown did not reach callback quiescence"
             ) from shutdown_errors[0]

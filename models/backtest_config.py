@@ -30,6 +30,7 @@ except ImportError:
     from symbol_paths import model_dir as symbol_model_dir
 
 from live.config import RegimeConfig, load_config, to_backtest_params
+from models.replay_contract import rest_return_sample_rows
 from strategy.quote_core import finite_positive_quote_coefficient
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
@@ -59,7 +60,7 @@ TICK_DEFAULTS: Mapping[str, Any] = {
     # wall-clock lifecycle state cannot wait for the next execution trade.
     "replay_event_clock": "trade",
     "replay_clock_interval_ms": 100,
-    # Opt-in serial REST-return loop; zero retains the existing replay clock.
+    # Zero retains the legacy clock; current async live mapping selects 100ms.
     "replay_main_loop_sleep_ms": 0,
     "replace_terminal_continuation": False,
     "fill_cooldown_apply_reducing": False,
@@ -121,6 +122,7 @@ def parse_config_snapshot(
     *,
     source_path: Path,
     source_identity: tuple[int, int, int, int],
+    validate_live_storage: bool = True,
 ) -> Any:
     """Parse an already verified live-config snapshot without reopening it."""
     path = _lexical_absolute(source_path)
@@ -135,7 +137,7 @@ def parse_config_snapshot(
         config.api.key = os.environ["BINANCE_API_KEY"]
     if os.environ.get("BINANCE_API_SECRET"):
         config.api.secret = os.environ["BINANCE_API_SECRET"]
-    live_config_module._validate_config(config)
+    live_config_module._validate_config(config, validate_live_storage=validate_live_storage)
     return config
 
 
@@ -1065,8 +1067,80 @@ def _verified_binding_config_params(binding: Mapping[str, Any]) -> dict[str, Any
     return to_backtest_params(config)
 
 
-def load_live_config_as_params(path: str | Path | None = None) -> dict[str, Any]:
+REPLAY_LOCATOR_FIELDS = frozenset({
+    "ml.model_dir",
+    "strategy.boolean_cooldown_policy_path",
+    "strategy.boolean_cooldown_predicate_bundle_path",
+    "strategy.buy_e3_cooldown_artifact_manifest_path",
+    "strategy.buy_e3_cooldown_policy_path",
+    "strategy.buy_e3_cooldown_predicate_bundle_path",
+})
+
+
+def _load_replay_locator_params(config_path: Path, projection_path: Path) -> dict[str, Any]:
+    """Resolve local artifact locations without rewriting the source config."""
+    projection = json.loads(projection_path.read_bytes())
+    if (
+        not isinstance(projection, dict)
+        or set(projection) != {
+            "schema_version", "visibility", "authority", "source_config", "locator_overrides",
+        }
+        or projection["schema_version"] != "narrowgate_local_replay_locator_projection.v1"
+        or projection["visibility"] != "local_only_do_not_publish"
+        or projection["authority"] != "none_locator_only"
+    ):
+        raise ValueError("invalid local replay locator-only projection")
+    source = projection["source_config"]
+    overrides = projection["locator_overrides"]
+    if (
+        not isinstance(source, dict) or set(source) != {"path", "sha256"}
+        or not isinstance(source["path"], str) or not isinstance(source["sha256"], str)
+        or Path(source["path"]).expanduser().resolve() != config_path.resolve()
+    ):
+        raise ValueError("replay locator projection does not name the selected source config")
+    if (
+        not isinstance(overrides, dict) or not overrides
+        or set(overrides) - REPLAY_LOCATOR_FIELDS
+    ):
+        raise ValueError("replay locator overrides may contain only the six model/policy paths")
+    raw, identity = live_config_module._stable_config_bytes(config_path)
+    source_sha = hashlib.sha256(raw).hexdigest()
+    if source_sha != source["sha256"]:
+        raise ValueError("replay locator source config SHA256 mismatch")
+    # Replay never opens the remote live journal. All semantic config checks
+    # still run, and the immutable source bytes/identity remain the original.
+    config = parse_config_snapshot(
+        raw, source_path=config_path, source_identity=identity, validate_live_storage=False,
+    )
+    resolved: dict[str, str] = {}
+    for name, value in overrides.items():
+        if not isinstance(value, str) or not value.strip() or not Path(value).is_absolute():
+            raise ValueError(f"replay locator {name} must be an absolute existing path")
+        candidate = Path(value).expanduser().resolve(strict=True)
+        if not (candidate.is_dir() if name == "ml.model_dir" else candidate.is_file()):
+            raise ValueError(f"replay locator {name} has the wrong filesystem type")
+        section, field = name.split(".")
+        setattr(getattr(config, section), field, str(candidate))
+        resolved[name] = str(candidate)
+    params = to_backtest_params(config)
+    params["_replay_locator_projection"] = {
+        "path": str(projection_path.resolve()), "source_config": dict(source),
+        "locator_overrides": resolved, "authority": "none_locator_only",
+    }
+    params["_config_source_sha256"] = config._source_file_sha256
+    return params
+
+
+def load_live_config_as_params(
+    path: str | Path | None = None, *, locator_projection_path: str | Path | None = None,
+) -> dict[str, Any]:
     """Read live YAML and return the flat replay-compatible parameter map."""
+    if locator_projection_path is not None:
+        if path is None:
+            raise ValueError("replay locator projection requires an explicit config path")
+        return _load_replay_locator_params(
+            Path(path).expanduser().resolve(), Path(locator_projection_path).expanduser().resolve(),
+        )
     if path is None and not str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip():
         binding = load_operational_baseline_binding()
         if binding is not None and bool(binding["config_exists"]):
@@ -1409,6 +1483,7 @@ def build_backtest_base_params(
         raw_value = live_params.get(name)
         if raw_value is not None:
             params[name] = finite_positive_quote_coefficient(name, raw_value)
+    _apply_order_transport(params, live_params)
     # This is a replay execution override, not a live strategy/YAML field.
     if "replay_main_loop_sleep_ms" in live_params:
         params["replay_main_loop_sleep_ms"] = live_params["replay_main_loop_sleep_ms"]
@@ -1418,10 +1493,36 @@ def build_backtest_base_params(
     return params
 
 
+def _apply_order_transport(params: dict[str, Any], live_params: Mapping[str, Any]) -> None:
+    """Project live scheduling once for both raw-config and built-params callers."""
+    if live_params.get("order_transport", "rest") != "rest":
+        raise ValueError("replay currently models REST only, not a WebSocket order gateway")
+    if live_params.get("cross_side_order_lanes_enabled", False):
+        raise ValueError("cross-side concurrent order lanes are not implemented in replay")
+    if not live_params.get("async_order_lanes_enabled", False):
+        return
+    capacity = live_params.get("async_order_lane_capacity", 8)
+    if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
+        raise ValueError("async_order_lane_capacity must be a positive integer")
+    if params.get("rest_gateway_timing_mode", "sampled_async_fifo") != "sampled_async_fifo":
+        raise ValueError("async live configuration requires sampled_async_fifo replay")
+    params.update(
+        order_transport="rest",
+        async_order_lanes_enabled=True,
+        cross_side_order_lanes_enabled=False,
+        async_order_lane_capacity=capacity,
+        rest_gateway_timing_mode="sampled_async_fifo",
+    )
+    params.setdefault("replay_event_clock", "merged")
+    params.setdefault("replay_clock_interval_ms", 100)
+    params.setdefault("replay_main_loop_sleep_ms", 100)
+
+
 def apply_tick_defaults(
     params: dict[str, Any], *, require_historical_bbo: bool | None = None
 ) -> dict[str, Any]:
     """Apply tick-replay defaults that are not explicit in older live configs."""
+    _apply_order_transport(params, params)
     for key, value in TICK_DEFAULTS.items():
         params.setdefault(key, value)
     params.setdefault("dynamic_cap_base_bps", params.get("max_spread_bps", 0.0))
@@ -1738,6 +1839,15 @@ def validate_formal_replay_calibration(
             return False
 
         empirical_latency = has_positive_sample(new_samples) and has_positive_sample(cancel_samples)
+        paired_samples = rest_return_sample_rows(params)
+        if paired_samples is not None:
+            # The async runtime consumes these same-request triples directly.
+            # Do not fabricate old one-dimensional latency arrays to satisfy
+            # an availability check for an obsolete consumer.
+            empirical_latency = all(
+                has_positive_sample(rows[:, 1]) and has_positive_sample(rows[:, 2])
+                for rows in paired_samples.values()
+            )
         static_latency = (
             float(params.get("new_order_latency_ms", 0.0) or 0.0) > 0.0
             and float(params.get("cancel_order_latency_ms", 0.0) or 0.0) > 0.0
@@ -1762,6 +1872,7 @@ def load_tick_base_params(
     *,
     symbol: str | None = None,
     config_path: str | Path | None = None,
+    locator_projection_path: str | Path | None = None,
     configure_symbol: Callable[..., Any] | None = None,
     require_historical_bbo: bool | None = None,
     queue_base: float | None = None,
@@ -1776,6 +1887,8 @@ def load_tick_base_params(
     strict_calibration: bool = False,
 ) -> dict[str, Any]:
     """Load live config and attach common tick-replay calibration artifacts."""
+    if locator_projection_path is not None and config_path is None:
+        raise ValueError("replay locator projection requires an explicit config path")
     env_config_explicit = bool(str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip())
     explicit_selection = config_path is not None or env_config_explicit
     baseline_binding: dict[str, Any] | None = None
@@ -1789,7 +1902,13 @@ def load_tick_base_params(
             params = load_live_config_as_params(resolved_config_path)
     else:
         resolved_config_path = resolve_backtest_config_path(config_path)
-        params = load_live_config_as_params(resolved_config_path)
+        params = (
+            load_live_config_as_params(resolved_config_path)
+            if locator_projection_path is None
+            else load_live_config_as_params(
+                resolved_config_path, locator_projection_path=locator_projection_path,
+            )
+        )
         if resolved_config_path in operational_baseline_config_candidates():
             baseline_binding = load_operational_baseline_binding()
     bound_to_operational_baseline = bool(
@@ -1852,9 +1971,12 @@ def load_tick_base_params(
     params["strict_calibration"] = bool(strict_calibration)
     params["strict_calibration_validated"] = False
     resolved_symbol = (symbol or params.get("symbol") or "").upper()
-    model_dir_override = _resolve_project_path(
-        os.environ.get("MM_MODEL_DIR") or params.get("model_dir")
-    )
+    environment_model = os.environ.get("MM_MODEL_DIR")
+    if locator_projection_path is not None and environment_model and (
+        _resolve_project_path(environment_model) != _resolve_project_path(params.get("model_dir"))
+    ):
+        raise ValueError("MM_MODEL_DIR conflicts with the selected replay locator projection")
+    model_dir_override = _resolve_project_path(environment_model or params.get("model_dir"))
     if model_dir_override is not None:
         params["model_dir"] = str(model_dir_override)
         params["resolved_model_dir"] = str(model_dir_override)

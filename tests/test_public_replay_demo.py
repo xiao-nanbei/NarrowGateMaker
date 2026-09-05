@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from narrowgate.cli import main as narrowgate_main
 from narrowgate import replay_demo as demo
+from narrowgate.cli import main as narrowgate_main
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = demo.FIXTURE_ROOT
@@ -116,6 +116,70 @@ def test_public_replay_demo_has_no_network_or_external_order_surface(tmp_path: P
     assert result.summary["gate"]["live_action_eligible"] is False
 
 
+@pytest.mark.parametrize("input_authority_claims", [False, True])
+def test_demo_authority_is_fixed_by_program_not_contract(tmp_path, input_authority_claims):
+    fixture = tmp_path / "fixture"
+    shutil.copytree(FIXTURE_ROOT, fixture)
+    contract_path = fixture / "contract.json"
+    contract = _read_json(contract_path)
+    assert {"fixture", "permissions", "gate_contract"}.isdisjoint(contract)
+    if input_authority_claims:
+        contract.update({
+            "fixture": {"classification": "live", "economic_authority": "granted"},
+            "permissions": {key: True for key in demo.DEMO_PERMISSIONS},
+            "gate_contract": {
+                **dict.fromkeys(demo.DEMO_AUTHORITY, True),
+                "status_on_pass": "live_economic_evidence",
+            },
+        })
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+
+    result = demo.run_demo(output_dir=tmp_path / "output", contract_path=contract_path)
+    reference = _read_json(FIXTURE_ROOT / "reference" / "summary.json")
+    assert result.summary["classification"] == demo.DEMO_CLASSIFICATION
+    assert result.summary["permissions"] == demo.DEMO_PERMISSIONS
+    assert result.receipt["permissions"] == demo.DEMO_PERMISSIONS
+    for document in (result.summary, result.receipt):
+        assert document["gate"]["status"] == "passed_demo_mechanics_only"
+        assert all(document["gate"][key] is False for key in demo.DEMO_AUTHORITY)
+    assert {row["check"] for row in result.summary["gate"]["checks"]}.isdisjoint({
+        "offline_permissions_locked", "synthetic_non_economic_boundary",
+    })
+    assert result.summary["terminal"] == reference["terminal"]
+    assert result.summary["denominators"] == reference["denominators"]
+    assert result.trace_path.read_bytes() == (
+        FIXTURE_ROOT / "reference" / "trace.jsonl"
+    ).read_bytes()
+
+
+def test_demo_reuses_the_tape_admission_digest(tmp_path, monkeypatch):
+    observed_paths = []
+    original_sha256_file = demo.sha256_file
+
+    def count_digest(path):
+        observed_paths.append(Path(path).resolve())
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(demo, "sha256_file", count_digest)
+    result = demo.run_demo(output_dir=tmp_path / "output")
+    tape_path = (FIXTURE_ROOT / "synthetic_tape.jsonl").resolve()
+    assert observed_paths.count(tape_path) == 1
+    assert result.summary["identity"]["tape"]["sha256"] == original_sha256_file(tape_path)
+
+
+@pytest.mark.parametrize("version_field", ["schema_version", "engine_version"])
+def test_demo_still_rejects_unsupported_contract_schema(tmp_path, version_field):
+    fixture = tmp_path / "fixture"
+    shutil.copytree(FIXTURE_ROOT, fixture)
+    contract_path = fixture / "contract.json"
+    contract = _read_json(contract_path)
+    contract[version_field] = "unsupported"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    with pytest.raises(demo.DemoAdmissionError):
+        demo.run_demo(output_dir=tmp_path / "output", contract_path=contract_path)
+    assert not (tmp_path / "output").exists()
+
+
 def test_public_replay_demo_rejects_tape_tampering_before_output(tmp_path: Path) -> None:
     fixture = tmp_path / "fixture"
     shutil.copytree(FIXTURE_ROOT, fixture)
@@ -150,7 +214,9 @@ def test_public_replay_demo_gate_fails_closed_on_denominator_drift(tmp_path: Pat
     contract_path = fixture / "contract.json"
     contract = _read_json(contract_path)
     contract["expected_denominators"]["orders"]["submitted"] = 4
-    contract_path.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    contract_path.write_text(
+        json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     result = demo.run_demo(output_dir=tmp_path / "failed", contract_path=contract_path)
     assert result.summary["gate"]["status"] == "failed_closed"

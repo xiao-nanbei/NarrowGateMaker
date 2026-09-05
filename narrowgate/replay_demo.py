@@ -46,6 +46,25 @@ NETWORK_ACCESS_ALLOWED = False
 EXTERNAL_ORDER_SUBMISSION_ALLOWED = False
 PRIVATE_EVIDENCE_READ_ALLOWED = False
 RUNTIME_CLOCK_READ_ALLOWED = False
+DEMO_CLASSIFICATION = {
+    "classification": "synthetic_non_economic",
+    "economic_authority": "none",
+    "purpose": "public_mechanics_demonstration_only",
+    "source": "hand_authored_public_fixture",
+}
+DEMO_PERMISSIONS = {
+    "external_order_submission": EXTERNAL_ORDER_SUBMISSION_ALLOWED,
+    "live_runtime_import": False,
+    "network_access": NETWORK_ACCESS_ALLOWED,
+    "private_evidence_read": PRIVATE_EVIDENCE_READ_ALLOWED,
+    "runtime_clock_read": RUNTIME_CLOCK_READ_ALLOWED,
+}
+DEMO_AUTHORITY = {
+    "economic_evidence_eligible": False,
+    "live_action_eligible": False,
+    "promotion_eligible": False,
+}
+DEMO_PASS_STATUS = "passed_demo_mechanics_only"
 
 ZERO = Decimal("0")
 DISPLAY_QUANTUM = Decimal("0.00000001")
@@ -211,33 +230,10 @@ def _read_contract(path: Path) -> dict[str, Any]:
         raise DemoAdmissionError("unsupported replay-demo contract version")
     if payload.get("engine_version") != ENGINE_VERSION:
         raise DemoAdmissionError("contract requires a different replay-demo engine")
-    if payload.get("fixture", {}).get("classification") != "synthetic_non_economic":
-        raise DemoAdmissionError("contract must remain explicitly synthetic and non-economic")
-    required_permissions = {
-        "network_access": NETWORK_ACCESS_ALLOWED,
-        "external_order_submission": EXTERNAL_ORDER_SUBMISSION_ALLOWED,
-        "private_evidence_read": PRIVATE_EVIDENCE_READ_ALLOWED,
-        "live_runtime_import": False,
-        "runtime_clock_read": RUNTIME_CLOCK_READ_ALLOWED,
-    }
-    if payload.get("permissions") != required_permissions:
-        raise DemoAdmissionError("contract permissions must lock network, live, and private access")
-    gate_contract = payload.get("gate_contract", {})
-    if any(
-        gate_contract.get(field) is not False
-        for field in (
-            "economic_evidence_eligible",
-            "live_action_eligible",
-            "promotion_eligible",
-        )
-    ):
-        raise DemoAdmissionError(
-            "demo contract cannot grant economic, action, or promotion authority"
-        )
     return payload
 
 
-def _resolve_tape(contract_path: Path, contract: Mapping[str, Any]) -> Path:
+def _resolve_tape(contract_path: Path, contract: Mapping[str, Any]) -> tuple[Path, str]:
     tape_name = contract.get("tape", {}).get("path")
     if not isinstance(tape_name, str) or not tape_name or Path(tape_name).is_absolute():
         raise DemoAdmissionError("contract tape path must be a non-empty relative path")
@@ -255,7 +251,7 @@ def _resolve_tape(contract_path: Path, contract: Mapping[str, Any]) -> Path:
         raise DemoAdmissionError(
             f"synthetic tape SHA256 mismatch: expected={expected} observed={observed}"
         )
-    return tape_path
+    return tape_path, observed
 
 
 def _read_tape(path: Path, contract: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -311,7 +307,7 @@ def _identity(
     *,
     contract_path: Path,
     contract: Mapping[str, Any],
-    tape_path: Path,
+    tape_sha256: str,
 ) -> dict[str, Any]:
     return {
         "accounting_contract_version": ACCOUNTING_CONTRACT_VERSION,
@@ -325,7 +321,7 @@ def _identity(
         "tape": {
             "artifact_id": contract["tape"]["artifact_id"],
             "schema_version": TAPE_VERSION,
-            "sha256": sha256_file(tape_path),
+            "sha256": tape_sha256,
         },
     }
 
@@ -391,7 +387,7 @@ class ReferenceReplayEngine:
     def _on_metadata(self, event: Mapping[str, Any]) -> None:
         self.trace.append(
             {
-                "classification": event["classification"],
+                "classification": DEMO_CLASSIFICATION["classification"],
                 "event": "metadata",
                 "schema_version": TRACE_VERSION,
                 "seq": event["seq"],
@@ -783,36 +779,15 @@ def _gate(
         observed=len(engine.trace),
         expected=denominators["events"]["tape_records"],
     )
-    required_permissions = {
-        "external_order_submission": False,
-        "live_runtime_import": False,
-        "network_access": False,
-        "private_evidence_read": False,
-        "runtime_clock_read": False,
-    }
-    add(
-        "offline_permissions_locked",
-        contract["permissions"] == required_permissions,
-        observed=contract["permissions"],
-        expected=required_permissions,
-    )
-    add(
-        "synthetic_non_economic_boundary",
-        contract["fixture"]["classification"] == "synthetic_non_economic"
-        and contract["fixture"]["economic_authority"] == "none",
-    )
-
     failures = [row["check"] for row in checks if not row["passed"]]
     passed = not failures
     return {
+        **DEMO_AUTHORITY,
         "checks": checks,
-        "economic_evidence_eligible": False,
         "failures": failures,
-        "live_action_eligible": False,
         "passed": passed,
-        "promotion_eligible": False,
         "schema_version": GATE_VERSION,
-        "status": contract["gate_contract"]["status_on_pass"] if passed else "failed_closed",
+        "status": DEMO_PASS_STATUS if passed else "failed_closed",
     }
 
 
@@ -847,13 +822,13 @@ def _summary(
         },
         "campaign": campaign,
         "campaign_terminal_value_usdc": campaign["terminal_value_usdc"],
-        "classification": contract["fixture"],
+        "classification": dict(DEMO_CLASSIFICATION),
         "denominators": denominators,
         "frozen_generated_at_utc": contract["frozen_generated_at_utc"],
         "gate": gate,
         "identity": identity,
         "orders": engine.orders_payload(),
-        "permissions": contract["permissions"],
+        "permissions": dict(DEMO_PERMISSIONS),
         "schema_version": SUMMARY_VERSION,
         "terminal": terminal,
         "canonical_summary_sha256": "",
@@ -888,10 +863,8 @@ def _receipt(
         "denominators": summary["denominators"],
         "frozen_generated_at_utc": contract["frozen_generated_at_utc"],
         "gate": {
-            "economic_evidence_eligible": False,
-            "live_action_eligible": False,
+            **DEMO_AUTHORITY,
             "passed": summary["gate"]["passed"],
-            "promotion_eligible": False,
             "status": summary["gate"]["status"],
         },
         "identity": summary["identity"],
@@ -927,9 +900,9 @@ def run_demo(
 ) -> DemoRun:
     contract_path = contract_path.resolve()
     contract = _read_contract(contract_path)
-    tape_path = _resolve_tape(contract_path, contract)
+    tape_path, tape_sha256 = _resolve_tape(contract_path, contract)
     events = _read_tape(tape_path, contract)
-    identity = _identity(contract_path=contract_path, contract=contract, tape_path=tape_path)
+    identity = _identity(contract_path=contract_path, contract=contract, tape_sha256=tape_sha256)
 
     engine = ReferenceReplayEngine(contract, events)
     engine.run()

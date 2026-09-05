@@ -789,6 +789,9 @@ class LiveBuyE3CooldownPolicy:
             or _canonical_sha256(manifest_body) != observed_artifact_sha
         ):
             raise ValueError("buy_e3_artifact_sha256_mismatch")
+        # Research verdicts are historical annotations, not loader permissions.
+        # Live authorization is checked against the deployment envelope before
+        # engine construction; this shared loader also serves offline replay.
         if (
             manifest.get("schema_version") != OWNER_MANIFEST_SCHEMA
             or manifest.get("identity") != OWNER_IDENTITY
@@ -797,8 +800,6 @@ class LiveBuyE3CooldownPolicy:
             or manifest.get("predicate_bundle_file_sha256") != str(predicate_bundle_sha256).lower()
             or manifest.get("duration_vocabulary") != list(BUY_ACTIONS)
             or manifest.get("default_action") != CONTROL_ACTION
-            or manifest.get("research_supported") is not False
-            or manifest.get("owner_risk_accepted") is not True
         ):
             raise ValueError("buy_e3_artifact_manifest_identity_drifted")
         if (
@@ -807,8 +808,6 @@ class LiveBuyE3CooldownPolicy:
             or policy.get("side") != "BUY"
             or policy.get("selected_candidate") != SELECTED_CANDIDATE
             or policy.get("selected_profile") != SELECTED_PROFILE
-            or policy.get("evidence_boundary", {}).get("research_supported") is not False
-            or policy.get("evidence_boundary", {}).get("owner_risk_accepted") is not True
         ):
             raise ValueError("buy_e3_policy_identity_drifted")
         if (

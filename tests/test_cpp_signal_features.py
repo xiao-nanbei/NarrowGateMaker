@@ -55,6 +55,41 @@ MODEL_BUNDLE = (
     / "examples"
     / "public_dry_run_model_bundle"
 )
+
+
+def test_signal_loader_accepts_current_native_interface(monkeypatch) -> None:
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_MODULE", None)
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_IMPORT_FAILED", False)
+    monkeypatch.setattr(signal_module, "load_native_module", lambda **_: narrowgate_cpp)
+
+    assert signal_module._load_cpp_signal_module() is narrowgate_cpp
+
+
+def test_signal_loader_rejects_missing_consumed_native_method(monkeypatch) -> None:
+    module = SimpleNamespace(**vars(narrowgate_cpp))
+    module.SignalFeatureEngine = SimpleNamespace(
+        **{
+            name: getattr(narrowgate_cpp.SignalFeatureEngine, name)
+            for name in (
+                "compute_values_at_cutoff", "push_bar", "push_history", "reset",
+            )
+        }
+    )
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "0")
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_MODULE", None)
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_IMPORT_FAILED", False)
+    monkeypatch.setattr(signal_module, "load_native_module", lambda **_: module)
+
+    with pytest.raises(RuntimeError, match="SignalFeatureEngine.compute_bucket_values"):
+        signal_module._load_cpp_signal_module()
+    assert signal_module._CPP_SIGNAL_MODULE is None
+
+
 @pytest.fixture(scope="session")
 def synthetic_model_bundle_173(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Build a public, non-authoritative canonical-width bundle for parity tests."""

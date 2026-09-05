@@ -221,6 +221,29 @@ def test_strict_calibration_accepts_complete_private_inputs(tmp_path):
     assert params["strict_calibration_validated"] is True
 
 
+def test_strict_calibration_accepts_real_paired_gateway_samples_without_legacy_arrays(tmp_path):
+    config = tmp_path / "live.current.yaml"
+    config.write_text("project_name: NarrowGate\n", encoding="utf-8")
+    params = _strict_params(config)
+    params.update(
+        replay_purpose="diagnostic",
+        rest_gateway_timing_mode="sampled_async_fifo",
+        _new_order_latency_samples_ms=[], _cancel_order_latency_samples_ms=[],
+        new_order_latency_ms=0, cancel_order_latency_ms=0,
+        _serial_rest_return_sample_semantics="synthetic paired effective/private/HTTP",
+        _serial_rest_return_samples_by_operation={
+            "new": [[0.0, 4.0, 8.0]], "cancel": [[0.0, 6.0, 3.0]],
+        },
+    )
+    validate_formal_replay_calibration(params)
+    assert params["strict_calibration_validated"]
+    assert params["_new_order_latency_samples_ms"] == []
+    assert params["_cancel_order_latency_samples_ms"] == []
+    params["_serial_rest_return_samples_by_operation"]["new"] = [[1.0, 0.0, 0.0]]
+    with pytest.raises(ValueError, match="REST-return sample triples"):
+        validate_formal_replay_calibration(params)
+
+
 def test_strict_calibration_rejects_queue_parameter_override(tmp_path):
     config = tmp_path / "live.current.yaml"
     config.write_text("project_name: NarrowGate\n", encoding="utf-8")

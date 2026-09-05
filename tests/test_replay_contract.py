@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 
@@ -5,7 +6,11 @@ import numpy as np
 import pytest
 
 from live.config import Config, to_backtest_params
-from models.backtest_config import apply_tick_defaults, build_backtest_base_params
+from models.backtest_config import (
+    apply_tick_defaults,
+    build_backtest_base_params,
+    load_tick_base_params,
+)
 from models.replay_contract import (
     INDIVIDUAL_TRADES_REPAIR_ID,
     INDIVIDUAL_TRADES_REPAIRED_DAYS,
@@ -753,6 +758,234 @@ def test_full_chain_execution_controls_survive_shared_parameter_mapping():
     assert params["max_exec_book_source_lag_s"] == 1.25
 
 
+def test_async_live_transport_selects_global_fifo_replay_without_inventing_samples():
+    config = Config()
+    config.api.async_order_lanes_enabled = True
+    config.api.async_order_lane_capacity = 8
+    config.strategy.replace_terminal_continuation = True
+    live_params = to_backtest_params(config)
+    params = apply_tick_defaults(build_backtest_base_params(live_params))
+    assert params["rest_gateway_timing_mode"] == "sampled_async_fifo"
+    assert params["order_transport"] == "rest"
+    assert params["replay_main_loop_sleep_ms"] == 100
+    assert params["replay_event_clock"] == "merged"
+    assert params["replace_terminal_continuation"] is True
+    assert params["async_order_lane_capacity"] == 8
+    assert "_serial_rest_return_samples_by_operation" not in params
+    assert "_private_fill_visibility_latency_samples_ms" not in params
+
+
+def test_canonical_config_loader_preserves_async_transport(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "api:\n  order_transport: rest\n  async_order_lanes_enabled: true\n"
+        "  cross_side_order_lanes_enabled: false\n  async_order_lane_capacity: 3\n"
+    )
+    params = load_tick_base_params(
+        config_path=config, include_fill_probability=False, include_queue_calibration=False,
+    )
+    assert params["rest_gateway_timing_mode"] == "sampled_async_fifo"
+    assert params["async_order_lane_capacity"] == 3
+    assert params["replay_event_clock"] == "merged"
+    assert params["replay_main_loop_sleep_ms"] == 100
+    params["replay_main_loop_sleep_ms"] = 200
+    apply_tick_defaults(params)
+    assert params["replay_main_loop_sleep_ms"] == 200
+    params["rest_gateway_timing_mode"] = "disabled"
+    with pytest.raises(ValueError, match="async live configuration requires"):
+        apply_tick_defaults(params)
+
+
+@pytest.mark.parametrize("transport,cross_side", [("websocket_api_ab", False), ("rest", True)])
+@pytest.mark.parametrize("async_enabled", [True, False])
+def test_async_live_transport_does_not_silently_change_protocol_or_concurrency(
+    transport, cross_side, async_enabled,
+):
+    config = Config()
+    config.api.async_order_lanes_enabled = async_enabled
+    config.api.order_transport = transport
+    config.api.cross_side_order_lanes_enabled = cross_side
+    with pytest.raises(ValueError, match="REST only|cross-side"):
+        build_backtest_base_params(to_backtest_params(config))
+
+
+def test_async_fifo_contract_separates_worker_and_decision_clocks(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_async_fifo",
+        replay_main_loop_sleep_ms=100,
+        replace_terminal_continuation=True,
+        _serial_rest_return_sample_semantics="synthetic_paired_effective_private_http",
+        _serial_rest_return_samples_by_operation={
+            "new": [[2.0, 4.0, 8.0]], "cancel": [[2.0, 3.0, 10.0]],
+        },
+        _decision_to_gateway_latency_samples_ms=[2.0],
+        _pre_snapshot_compute_latency_samples_ms=[1.0],
+        _requote_tail_work_samples_ms=[1.0],
+        _main_loop_work_samples_ms=[[0.0, 1.0]],
+    )
+    contract = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    gateway = contract["latency"]["serial_rest_gateway"]
+    assert gateway["decision_thread"] == "not_blocked_by_http_return"
+    assert gateway["decision_thread_scope"] == "ordinary_new_cancel_only"
+    close = gateway["synchronous_ioc_close"]
+    assert close["backend"] == "python_only"
+    assert close["evidence_scope"] == "diagnostic_only"
+    assert close["exchange_match"] == "single_sweep_at_exchange_effective_time"
+    assert close["liquidity_scope"] == "supplied_l2_depth_or_top_of_book_bound"
+    assert close["physical_state"] == "reserve_fill_and_expire_remainder_at_exchange_match"
+    assert close["local_economics"] == "private_fill_visibility_not_http_result"
+    assert close["zero_fill_terminal"] == (
+        "first_private_terminal_or_validated_zero_filled_expired_result"
+    )
+    assert close["worker_release"] == "http_return_independent_of_fill_visibility"
+    assert close["caller_completion"] == (
+        "max_http_return_and_private_fill_proof_no_account_trades_timing"
+    )
+    assert close["unmodeled"] == ["account_trades_lookup_latency_and_proof_recovery"]
+    assert gateway["request_start"] == "max_request_ready_previous_global_http_return"
+    assert gateway["worker_count"] == 1
+    assert gateway["queue_order"] == "global_fifo"
+    assert gateway["queue_capacity"] == 8
+    assert gateway["max_admitted_including_active"] == 9
+    assert gateway["queue_wait"] == "endogenous_per_arm_not_replayed_from_baseline"
+    assert contract["path_dependent_controls"]["replace_terminal_continuation"][
+        "decision_clock"
+    ] == "terminal_visible_interrupts_main_loop_sleep"
+    loop = contract["causal_event_semantics"]["main_loop"]
+    assert loop["wake_clock"] == (
+        "decision_completion_then_interruptible_sleep_independent_of_global_worker"
+    )
+    assert loop["local_work"]["requote_tail"]["clock"] == (
+        "after_request_enqueue_or_no_request_compute"
+    )
+    assert contract["promotion_eligible"] is False
+    validate_frozen_replay_contract(params)
+    with pytest.raises(ValueError, match="preserves complete paired timing rows"):
+        configure_fixed_latency_distribution(
+            params, scenario="baseline", profile_id="test", environment="synthetic",
+            baseline_clip_quantile=0.9,
+        )
+
+
+@pytest.mark.parametrize("overrides,reason", [
+    ({"_serial_rest_return_samples_by_operation": None}, "paired effective/ACK/HTTP"),
+    ({"replay_event_clock": "trade"}, "merged main-loop"),
+    ({"replay_main_loop_sleep_ms": 0}, "merged main-loop"),
+    ({"order_transport": "websocket"}, "one GLOBAL worker"),
+    ({"cross_side_order_lanes_enabled": True}, "one GLOBAL worker"),
+    ({"async_order_lane_capacity": 0}, "positive integer"),
+])
+def test_async_fifo_contract_requires_explicit_execution_inputs(tmp_path, overrides, reason):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_async_fifo",
+        replay_main_loop_sleep_ms=100,
+        _serial_rest_return_sample_semantics="synthetic",
+        _serial_rest_return_samples_by_operation={
+            "new": [[2.0, 4.0, 8.0]], "cancel": [[2.0, 3.0, 10.0]],
+        },
+    )
+    params.update(overrides)
+    with pytest.raises(ValueError, match=reason):
+        build_replay_contract(params, root=tmp_path)
+
+
+@pytest.mark.parametrize("statuses", [
+    {"new": "NEW"}, {"cancel": "CANCELED"}, {"new": "NEW", "cancel": "CANCELED"},
+])
+def test_async_http_result_authority_is_explicit_and_changes_contract(tmp_path, statuses):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_async_fifo",
+        replay_main_loop_sleep_ms=100,
+        _serial_rest_return_sample_semantics="synthetic",
+        _serial_rest_return_samples_by_operation={
+            "new": [[1.0, 8.0, 4.0]], "cancel": [[1.0, 9.0, 5.0]],
+        },
+    )
+    original = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    params["_serial_rest_http_result_status_by_operation"] = statuses
+    with pytest.raises(RuntimeError, match="identity differs"):
+        validate_frozen_replay_contract(params)
+    updated = build_replay_contract(params, root=tmp_path)
+    gateway = updated["latency"]["serial_rest_gateway"]
+    assert gateway["http_result_status_by_operation"] == statuses
+    assert gateway["local_authority_clock"] == (
+        "first_private_callback_or_validated_http_result_per_operation"
+    )
+    assert original["latency"]["serial_rest_gateway"]["http_result_status_by_operation"] == {}
+
+
+@pytest.mark.parametrize("statuses", [None, {"new": "FILLED"}, {"cancel": "200"}, {"x": "NEW"}])
+def test_http_200_or_fill_bearing_response_is_not_a_terminal_timing_sample(tmp_path, statuses):
+    params = _contract_params(tmp_path)
+    params["_serial_rest_http_result_status_by_operation"] = statuses
+    with pytest.raises(ValueError, match="HTTP RESULT"):
+        build_replay_contract(params, root=tmp_path)
+
+
+def test_runtime_compute_contract_binds_paths_watermark_and_placement(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_async_fifo", replay_main_loop_sleep_ms=100,
+        _serial_rest_return_sample_semantics="synthetic",
+        _serial_rest_return_samples_by_operation={
+            "new": [[1.0, 4.0, 8.0]], "cancel": [[1.0, 6.0, 9.0]],
+        },
+        _runtime_compute_samples_by_path={
+            "cached_no_new_bucket": [[1.0, 2.0, 3.0]],
+            "new_bucket": [[4.0, 5.0, 6.0]],
+            "catch_up": [[7.0, 8.0, 9.0]],
+        },
+        runtime_compute_bucket_ms=10_000, runtime_compute_initial_bucket_end_ms=0,
+        runtime_compute_clock="source_time_assumption",
+        _runtime_compute_sample_semantics="synthetic post-enqueue residual approximation",
+    )
+    contract = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    compute = contract["latency"]["runtime_compute"]
+    assert compute["selection"] == "bucket_progress_not_observed_path_frequencies"
+    assert compute["clock"] == "source_time_assumption"
+    assert compute["columns"] == ["pre_snapshot_ms", "total_to_enqueue_ms", "post_enqueue_ms"]
+    assert compute["paths"]["new_bucket"]["count"] == 3
+    for override, message in (
+        ({"runtime_compute_clock": None}, "clock must be explicit"),
+        ({"runtime_compute_clock": "prediction_delivery"}, "prediction message schedule"),
+        ({"runtime_compute_initial_bucket_end_ms": 1}, "bucket grid"),
+        ({"runtime_compute_initial_bucket_end_ms": 20_000,
+          "replay_event_clock_start_ts_ms": 10_000}, "in the future"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            build_replay_contract({**params, **override}, root=tmp_path, purpose="diagnostic")
+    params["runtime_compute_initial_bucket_end_ms"] = -10_000
+    with pytest.raises(RuntimeError, match="identity differs"):
+        validate_frozen_replay_contract(params)
+    params["_decision_to_gateway_latency_samples_ms"] = [0.0]
+    with pytest.raises(ValueError, match="pooled compute"):
+        build_replay_contract(params, root=tmp_path, purpose="diagnostic")
+
+
+def test_async_bulk_contract_distinguishes_bulk_http_from_order_terminal(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_async_fifo", replay_main_loop_sleep_ms=100,
+        _serial_rest_return_sample_semantics="synthetic",
+        _serial_rest_return_samples_by_operation={
+            "new": [[1.0, 4.0, 8.0]], "cancel": [[1.0, 6.0, 9.0]],
+        },
+        _bulk_cancel_timing_samples_ms=[[2.0, 40.0, 6.0]],
+        _bulk_cancel_timing_sample_semantics="synthetic shared batch phases",
+    )
+    contract = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    bulk = contract["latency"]["serial_rest_gateway"]["bulk_cancel"]
+    assert bulk["clock"] == "drain_admitted_fifo_then_one_exclusive_request"
+    assert bulk["terminal_authority"] == "per_order_private_visibility_not_bulk_http"
+    assert bulk["within_batch_phase_model"] == "shared_sampled_phases_for_surviving_orders"
+    params["_bulk_cancel_timing_samples_ms"] = [[2.0, 80.0, 6.0]]
+    with pytest.raises(RuntimeError, match="identity differs"):
+        validate_frozen_replay_contract(params)
+
+
 def test_main_loop_timing_is_bound_without_changing_disabled_b0(tmp_path):
     params = _contract_params(tmp_path)
     b0 = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
@@ -1065,6 +1298,70 @@ def test_message_schedule_reuses_existing_execution_recipe_identity(tmp_path, fi
         validate_frozen_replay_contract(params)
 
 
+@pytest.mark.parametrize("scenario", ["baseline", "stress"])
+@pytest.mark.parametrize("clip_quantile", [None, 0.99, 0.9])
+def test_latency_distribution_preserves_observed_tail_unless_explicitly_trimmed(
+    scenario, clip_quantile
+):
+    samples = np.array([0.0, 1.0, 5.0, 1000.0], dtype=np.float64)
+    keys = (
+        "_decision_to_gateway_latency_samples_ms",
+        "_new_order_latency_samples_ms",
+        "_new_order_exchange_effective_latency_samples_ms",
+        "_cancel_order_latency_samples_ms",
+        "_cancel_exchange_effective_latency_samples_ms",
+        "_cancel_ack_visibility_latency_samples_ms",
+        "_private_fill_visibility_latency_samples_ms",
+        "_exec_book_visibility_delay_samples_ms",
+    )
+    params = {key: samples.copy() for key in keys}
+    original = params.copy()
+    kwargs = {} if clip_quantile is None else {"baseline_clip_quantile": clip_quantile}
+
+    configure_fixed_latency_distribution(
+        params,
+        scenario=scenario,
+        profile_id="synthetic_tail_test",
+        environment="test",
+        **kwargs,
+    )
+
+    quantile = 1.0 if clip_quantile is None else clip_quantile
+    expected = np.minimum(samples, np.quantile(samples, quantile))
+    for key in keys:
+        np.testing.assert_array_equal(params[key], expected)
+        np.testing.assert_array_equal(original[key], samples)
+    assert params["latency_baseline_clip_quantile"] == quantile
+    assert params["latency_stress_enabled"] is (scenario == "stress")
+    assert params["latency_rare_spike_policy"] == "stress_only"
+
+
+def test_latency_contract_default_matches_untrimmed_distribution(tmp_path):
+    params = _contract_params(tmp_path)
+    params["_new_order_latency_samples_ms"] = np.array([1.0, 2.0, 1000.0])
+    params.pop("latency_baseline_clip_quantile")
+    implicit = build_replay_contract(params, root=tmp_path)
+    explicit = build_replay_contract(
+        {**params, "latency_baseline_clip_quantile": 1.0}, root=tmp_path
+    )
+
+    assert implicit == explicit
+    assert implicit["latency"]["baseline_clip_quantile"] == 1.0
+    assert implicit["latency"]["new_order_samples"]["max_ms"] == 1000.0
+    trimmed = params.copy()
+    configure_fixed_latency_distribution(
+        trimmed,
+        scenario="baseline",
+        profile_id=params["latency_profile_id"],
+        environment=params["latency_environment"],
+        baseline_clip_quantile=0.99,
+    )
+    historical = build_replay_contract(trimmed, root=tmp_path)
+    assert historical != implicit
+    assert historical["latency"]["baseline_clip_quantile"] == 0.99
+    assert historical["latency"]["new_order_samples"]["max_ms"] < 1000.0
+
+
 def test_latency_stress_is_reproducible_but_not_promotion_evidence(tmp_path):
     params = _contract_params(tmp_path)
     configure_fixed_latency_distribution(
@@ -1093,6 +1390,28 @@ def test_diagnostic_queue_artifact_is_not_promotion_evidence(tmp_path):
     assert contract["promotion_eligible"] is False
     assert contract["queue"]["diagnostic_only"] is True
     assert contract["queue"]["diagnostic_parent_sha256"] == "parent"
+
+
+@pytest.mark.parametrize("clip_args,expected", [([], 1.0), (["0.99"], 0.99), (["0.9"], 0.9)])
+def test_replay_cli_preserves_tail_by_default_and_accepts_explicit_trimming(
+    monkeypatch, clip_args, expected
+):
+    original_parse_args = argparse.ArgumentParser.parse_args
+    parsed = []
+
+    def parse_only(parser, *args, **kwargs):
+        parsed.append(original_parse_args(parser, *args, **kwargs))
+        raise SystemExit(0)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", parse_only)
+    argv = ["--days", "2026-07-01"]
+    if clip_args:
+        argv += ["--latency-baseline-clip-quantile", *clip_args]
+    with pytest.raises(SystemExit) as exit_info:
+        replay_audit_main(argv)
+
+    assert exit_info.value.code == 0
+    assert parsed[0].latency_baseline_clip_quantile == expected
 
 
 def test_formal_cli_requires_strict_calibration():

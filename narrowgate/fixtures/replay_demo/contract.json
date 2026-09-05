@@ -40,31 +40,12 @@
     "mark_price_usdc_per_btc": "100.25000000",
     "terminal_pnl_usdc": "0.00200000"
   },
-  "fixture": {
-    "classification": "synthetic_non_economic",
-    "economic_authority": "none",
-    "purpose": "public_mechanics_demonstration_only",
-    "source": "hand_authored_public_fixture"
-  },
   "frozen_generated_at_utc": "2026-08-23T00:00:00Z",
-  "gate_contract": {
-    "economic_evidence_eligible": false,
-    "live_action_eligible": false,
-    "promotion_eligible": false,
-    "status_on_pass": "passed_demo_mechanics_only"
-  },
   "market": {
     "lot_size_btc": "0.001",
     "maker_fee_rate": "0",
     "symbol": "SYNTHETIC-BTCUSDC",
     "tick_size": "0.10"
-  },
-  "permissions": {
-    "external_order_submission": false,
-    "live_runtime_import": false,
-    "network_access": false,
-    "private_evidence_read": false,
-    "runtime_clock_read": false
   },
   "schema_version": "narrowgate_replay_demo_contract.v1",
   "tape": {

@@ -918,9 +918,9 @@ def load_tick_window(
     elif str(os.environ.get("MM_FEATURE_DIR", "")).strip():
         resolved_feature_dir = Path(os.environ["MM_FEATURE_DIR"]).expanduser().resolve()
     elif load_ml and resolved_run_ml_inference:
-        # The selected model bundle, not the generic symbol directory, owns
-        # the feature-manifest identity.  This keeps direct/current replay on
-        # the same feature panel as the configured live model.
+        # Use the model's recorded panel as a default locator, not as an
+        # equality constraint on new-date inference.  load_ml_predictions
+        # validates the actual panel's feature and causal-clock interface.
         resolved_feature_dir = bt.resolve_ml_feature_dir()
     else:
         resolved_feature_dir = Path(bt.FEATURES_DIR).expanduser().resolve()
@@ -947,6 +947,11 @@ def load_tick_window(
         if cache_path.exists() and not refresh_cache:
             cached = _load_cached_window(cache_path)
             if cached is not None:
+                if load_ml and resolved_run_ml_inference and cached.ml_data is not None:
+                    bt._load_ml_inference_metadata(
+                        resolved_feature_dir,
+                        toxicity_horizon_s=int(params.get("toxicity_horizon_s", 10)),
+                    )
                 return cached
 
         market_context_v2_identity_payload, market_context_v2_references = (
@@ -1168,6 +1173,10 @@ def load_tick_window(
         if model_overlay is not None:
             if model_overlay.toxicity_horizon_s != toxicity_horizon_s:
                 raise RuntimeError("model overlay toxicity horizon mismatch")
+            if resolved_run_ml_inference and model_overlay.ml_data is not None:
+                bt._load_ml_inference_metadata(
+                    resolved_feature_dir, toxicity_horizon_s=toxicity_horizon_s,
+                )
             ml_data = model_overlay.ml_data
         else:
             ml_data = bt.load_ml_predictions(

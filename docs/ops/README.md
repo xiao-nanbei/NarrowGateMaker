@@ -66,8 +66,7 @@ The safe sequence is:
 3. materialize the complete private runtime and artifact closure;
 4. install and verify a commit-bound environment without network dependency
    resolution on the target;
-5. build one deployment envelope from the admitted runtime/config/model/policy
-   closure;
+5. build one deployment envelope from the admitted runtime/config/model/policy closure, recording only policies explicitly approved by the operator;
 6. while live is stopped, create a fresh exchange reconciliation;
 7. start through the single process owner and observe runtime health;
 8. build the activation receipt and atomically publish the compact current
@@ -89,6 +88,10 @@ python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
 python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 ```
+
+Policy permission is part of the existing deployment envelope, not an environment switch or a research verdict. For an explicitly approved action, repeat `build-envelope --approve-policy <policy>` using `q90_action`, `f05_boolean_cooldown`, or `f05_buy_e3` as appropriate. Never generate these arguments automatically from enabled config fields. The envelope binds this approval list to the exact config and artifact bundles; startup compares enabled policies with the verified list once, before constructing the engine, and passes the admitted result to runtime identity/logging. No additional receipt or hash chain is introduced.
+
+Config validation and ordinary `preflight_live_deploy.py` check configuration/artifact compatibility; ordinary preflight reports policy admission as not evaluated and cannot authorize startup. The existing `candidate-verify` transaction additionally calls the same admission function with `--check-policy-approval`, so a missing approval fails before the old service is stopped. That pre-stop diagnostic is not a startup credential: the new process admits its own verified release once and never trusts a previous preflight output. BUY E3 loaders do not interpret `research_supported`, `owner_risk_accepted`, or historical `evidence_route` descriptions as permission. Research conclusions remain in their research records. Legacy `NARROWGATE_ALLOW_*_PRIVATE_DEPLOY` flags have no admission effect. An older envelope without `policy_approvals` grants no optional policy: disabled-policy releases remain valid, while enabling one requires a newly approved envelope, not mutation of an existing immutable release. Preparing this refactor does not itself authorize deploying or restarting live.
 
 Once the release, private environment, active config, locked runtime, and
 deployment envelope already exist on the host, `activate-prepared-release`
@@ -155,10 +158,7 @@ The attempt-scoped stopped-reconciliation and activation-receipt outputs must
 be new and absent. Do not point either of them at the three previous files; the
 existing current pointer is replaced only at the final commit step.
 
-The private systemd `EnvironmentFile` must contain standalone `NAME=value`
-records. Keep a final newline before appending deployment grants; otherwise the
-first appended grant becomes part of the preceding secret value. Never print
-that file during validation.
+The private systemd `EnvironmentFile` must contain standalone `NAME=value` records. Keep a final newline before appending runtime selectors; otherwise the first appended selector becomes part of the preceding secret value. Policy approval belongs in the deployment envelope, not this file. Never print the file during validation.
 
 Health admission requires `reconciliationPending=false` and a finite
 `lastTickAge` between zero and one second. This bound follows the existing
