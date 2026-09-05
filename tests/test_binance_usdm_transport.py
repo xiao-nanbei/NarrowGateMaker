@@ -394,6 +394,155 @@ def test_rest_and_websocket_requests_share_one_async_receipt_schema(tmp_path):
     assert int(rows[1]["response_ts_ns"]) > 0
 
 
+@pytest.mark.parametrize("transport", ["rest", "websocket"])
+@pytest.mark.parametrize("outcome", ["success", "reject", "unknown"])
+def test_receipt_failure_preserves_network_result_and_safety_cancel(
+    tmp_path, transport, outcome,
+):
+    class Reject(RuntimeError):
+        status_code = 400
+
+    network_error = Reject("exchange rejected") if outcome == "reject" else ConnectionError(
+        "network disconnected"
+    )
+
+    class Client:
+        cancel_all_calls = 0
+
+        def new_order(self, **_params):
+            if outcome != "success":
+                raise network_error
+            return {"status": "NEW"}
+
+        def cancel_open_orders(self, **_params):
+            self.cancel_all_calls += 1
+            return {"code": 200, "msg": "all canceled"}
+
+    class FailedWriter:
+        def __init__(self):
+            self.rows = []
+
+        def enqueue_csv(self, _path, row):
+            self.rows.append(dict(row))
+            raise RuntimeError("receipt writer unavailable")
+
+    def respond(request):
+        if outcome == "unknown":
+            return network_error
+        if outcome == "reject":
+            return {"id": request["id"], "status": 400, "error": {"code": -2010}}
+        return {"id": request["id"], "status": 200, "result": {"status": "NEW"}}
+
+    connection = _FakeConnection(respond)
+    websocket = (
+        create_binance_usdm_websocket_order_gateway(
+            key="key", secret="secret", config=_enabled_config(),
+            connection_factory=_ConnectionFactory([connection]),
+        )
+        if transport == "websocket" else None
+    )
+    client, writer = Client(), FailedWriter()
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=client, websocket_order_gateway=websocket,
+        async_order_lanes_enabled=True,
+    )
+    gateway.set_runtime_evidence_writer(writer, str(tmp_path / "receipts.csv"))
+    try:
+        future = gateway.new_order_async(side="BUY", newClientOrderId="first")
+        if outcome == "success":
+            assert future.result(timeout=2) == {"status": "NEW"}
+        else:
+            expected = (
+                BinanceUsdMWebSocketApiError if outcome == "reject"
+                else BinanceUsdMWebSocketOrderUnknown
+            ) if websocket is not None else type(network_error)
+            with pytest.raises(expected) as caught:
+                future.result(timeout=2)
+            if websocket is None:
+                assert caught.value is network_error
+        assert writer.rows[0]["execution_status"] == {
+            "success": "authoritative_success",
+            "reject": "authoritative_reject",
+            "unknown": "unknown",
+        }[outcome]
+        with pytest.raises(RuntimeError, match="receipt collection failed"):
+            gateway.raise_if_evidence_failed()
+        with pytest.raises(BinanceUsdMOrderAdmissionRejected, match="revoked"):
+            gateway.new_order_async(side="SELL", newClientOrderId="blocked")
+        assert gateway.cancel_open_orders(symbol="BTCUSDC") == {
+            "code": 200, "msg": "all canceled",
+        }
+        assert client.cancel_all_calls == 1
+        assert writer.rows[-1]["execution_status"] == "authoritative_success"
+        health = gateway.health_snapshot()
+        assert health["receipt_failure_count"] == 2
+        assert health["new_order_admission_revoked"] is True
+        assert list(health["async_order_lanes"]) == ["GLOBAL"]
+        assert health["cross_side_order_lanes_enabled"] is False
+        if websocket is not None:
+            assert len(connection.sent) == 1
+    finally:
+        gateway.close()
+
+
+def test_receipt_failure_blocks_already_queued_new_without_deadlocking_cancel_all(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    class Client:
+        calls = []
+
+        def new_order(self, **params):
+            self.calls.append(params["newClientOrderId"])
+            entered.set()
+            assert release.wait(timeout=2)
+            return {"status": "NEW"}
+
+        def cancel_open_orders(self, **_params):
+            self.calls.append("cancel_all")
+            return {"code": 200}
+
+    class FailedWriter:
+        def enqueue_csv(self, _path, _row):
+            raise RuntimeError("writer failed")
+
+    client = Client()
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=client, async_order_lanes_enabled=True,
+    )
+    gateway.set_runtime_evidence_writer(FailedWriter(), str(tmp_path / "receipts.csv"))
+    first = gateway.new_order_async(side="BUY", newClientOrderId="first")
+    assert entered.wait(timeout=1)
+    queued = gateway.new_order_async(side="SELL", newClientOrderId="queued")
+    cancel_result, cancel_errors = [], []
+
+    def cancel_all():
+        try:
+            cancel_result.append(gateway.cancel_open_orders(symbol="BTCUSDC"))
+        except BaseException as exc:
+            cancel_errors.append(exc)
+
+    thread = threading.Thread(target=cancel_all)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 1
+        while not gateway._write_admission_barrier_active and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert gateway._write_admission_barrier_active
+        release.set()
+        assert first.result(timeout=2) == {"status": "NEW"}
+        with pytest.raises(BinanceUsdMOrderAdmissionRejected, match="revoked"):
+            queued.result(timeout=2)
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+        assert cancel_errors == []
+        assert cancel_result == [{"code": 200}]
+        assert client.calls == ["first", "cancel_all"]
+    finally:
+        release.set()
+        thread.join(timeout=2)
+        gateway.close()
+
+
 def test_private_new_visibility_is_recorded_before_response_and_joined_by_request_id(
     tmp_path,
 ):

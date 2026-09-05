@@ -2148,6 +2148,56 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert "activation failed phase=%s line=%s rc=%s" in shell
 
 
+@pytest.mark.parametrize(
+    "metadata_case",
+    ("regular", "missing", "symlink", "file_alias", "parent_alias", "sudo_denied"),
+)
+def test_prepared_activation_checks_root_private_environment_metadata(
+    metadata_case: str,
+) -> None:
+    rendered = shlex.split(
+        source_deploy.render_prepared_release_activation_shell(**_prepared_activation_args())
+    )[-1]
+    helper = rendered.split("canonical_environment_input() {", 1)[1].split("\n}", 1)[0]
+    assert rendered.count('canonical_environment_input "$env_file"') == 2
+    assert 'canonical_input "$env_file"' not in rendered
+    assert 'test -f "$env_file"' not in rendered
+    # This virtual root-private path cannot be stat'ed by the operator. Only
+    # the narrow sudo metadata calls may supply its identity; no content read.
+    script = r'''
+set -e
+metadata_case="$1"
+env_file=/unavailable-root-private/live.env
+sudo() {
+  test "$1" = -n || return 91
+  shift
+  test "$metadata_case" != sudo_denied || return 1
+  case "$1:$2" in
+    test:-f) test "$metadata_case" != missing ;;
+    test:!) test "$3" = -L && test "$metadata_case" != symlink ;;
+    readlink:-f)
+      test "$3" = -- || return 92
+      if test "$metadata_case" = file_alias && test "$4" = "$env_file"; then
+        printf '%s\n' /aliased/live.env
+      elif test "$metadata_case" = parent_alias && test "$4" != "$env_file"; then
+        printf '%s\n' /aliased
+      else
+        printf '%s\n' "$4"
+      fi ;;
+    *) return 93 ;;
+  esac
+}
+canonical_environment_input() {
+''' + helper + '\n}\ncanonical_environment_input "$env_file"\n'
+    result = subprocess.run(
+        ("bash", "-c", script, "environment-metadata-test", metadata_case),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is (metadata_case == "regular"), result.stderr
+
+
 def test_prepared_activation_can_resume_only_from_proven_stopped_previous() -> None:
     shell = source_deploy.render_prepared_release_activation_shell(
         **_prepared_activation_args(),
@@ -2368,7 +2418,18 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
         capture_output=True,
         text=True,
     )
-    assert duplicate.returncode != 0
+    # CRITICAL logs also use the synchronous stderr fallback: two copies of
+    # the same process/invocation/reason are not two different failures.
+    assert duplicate.returncode == 0
+    assert duplicate.stdout.strip() == invocation
+    conflict = {**fatal_record, "_SYSTEMD_INVOCATION_ID": "b" * 32}
+    conflicting = subprocess.run(
+        (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+         str(pid), str(main_path), config_token, str(health_path), health_sha256),
+        input=json.dumps(fatal_record) + "\n" + json.dumps(conflict) + "\n",
+        check=False, capture_output=True, text=True,
+    )
+    assert conflicting.returncode != 0
 
     stale_fatal_record = {
         **fatal_record,
@@ -2452,7 +2513,7 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
     )
     assert rejected_forgery.returncode != 0
 
-    _write_private_json(health_path, {**health, "fatalRuntimeLatched": False})
+    _write_private_json(health_path, {**health, "pid": pid + 1})
     rejected_health = subprocess.run(
         (
             sys.executable,
@@ -2472,6 +2533,51 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
         text=True,
     )
     assert rejected_health.returncode != 0
+
+    # A failed health writer leaves the last periodic (healthy) snapshot.
+    # Recovery still needs the exact process's publication-failure and exit-78
+    # journal proof; a stale snapshot or unrelated journal row cannot admit it.
+    _write_private_json(health_path, {
+        **health, "fatalRuntimeLatched": False, "reconciliationRequired": False,
+        "quoteLoopRunning": True, "fatalReason": "",
+    })
+    health_sha256 = hashlib.sha256(health_path.read_bytes()).hexdigest()
+    publication_failure = {
+        **fatal_record,
+        "MESSAGE": "CRITICAL Final runtime health publication failed: writer failed",
+        "__REALTIME_TIMESTAMP": "1788444996800000",
+    }
+    for failure, expected in (
+        (None, False),
+        (publication_failure, True),
+        ({**publication_failure, "_PID": str(pid + 1)}, False),
+        ({**publication_failure, "_SYSTEMD_INVOCATION_ID": "a" * 32}, False),
+        ({**publication_failure, "__REALTIME_TIMESTAMP": "1788444996900000"}, False),
+    ):
+        rows = [fatal_record] if failure is None else [failure, fatal_record]
+        result = subprocess.run(
+            (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+             str(pid), str(main_path), config_token, str(health_path), health_sha256),
+            input="".join(json.dumps(row) + "\n" for row in rows),
+            check=False, capture_output=True, text=True,
+        )
+        assert (result.returncode == 0) is expected, result.stderr
+        if expected:
+            assert result.stdout.strip() == invocation
+
+    delayed_duplicate = {
+        **publication_failure, "__REALTIME_TIMESTAMP": "1788444996900000",
+    }
+    result = subprocess.run(
+        (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+         str(pid), str(main_path), config_token, str(health_path), health_sha256),
+        input="".join(json.dumps(row) + "\n" for row in (
+            publication_failure, fatal_record, delayed_duplicate,
+        )),
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == invocation
 
 
 def test_runtime_fatal_recovery_evidence_is_mode_scoped_and_never_reused() -> None:

@@ -263,8 +263,7 @@ If the selected live process later exits 78 because execution state is
 uncertain, use the separate `--recover-runtime-fatal` mode. Supply the selected
 release's deployment envelope, activation receipt, and stopped reconciliation
 as lineage evidence. The transaction also verifies the activation-bound
-runtime identity, final fail-closed runtime-health PID, and the same systemd
-journal invocation's operator-gated message and `EXIT_STATUS=78`. It accepts
+runtime identity, matching runtime-health PID, and the same systemd journal invocation's operator-gated message and `EXIT_STATUS=78`. Normally health must record the final fail-closed state. If the health writer failed, that exact process and invocation must additionally record the final-health publication failure before the fatal message; a stale healthy snapshot alone cannot admit recovery. It accepts
 only an inactive or absent unit with no maker or supervisor process. New candidate
 reconciliation and activation paths must be unique and absent; old files are
 never treated as fresh. A missing or rotated journal proof leaves the host
@@ -309,8 +308,7 @@ Safe normal activation order:
 9. publish the current pointer last.
 
 Runtime-fatal recovery does not perform steps 1–3 against an already dead
-service. It first verifies the selected release lineage, its final fail-closed
-health, the authentic systemd exit-78 invocation, and global process
+service. It first verifies the selected release lineage, its final fail-closed health or the authenticated publication-failure path above, the authentic systemd exit-78 invocation, and global process
 quiescence. It then joins the same transaction at step 4 with a new
 reconciliation output; steps 4–9 remain unchanged.
 

@@ -32,6 +32,7 @@ from live.main import (
     EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
     _AsyncLoggingRuntime,
     _cleanup_failed_live_startup,
+    _close_runtime_evidence_writer_with_final_health,
     _create_live_runtime_components,
     _DrainingQueueListener,
     _note_startup_cleanup_errors,
@@ -1278,6 +1279,89 @@ def test_runtime_health_factory_collects_on_writer_worker(
         "userStreamGeneration"
     ] == 9
     assert closed["json_snapshots_committed"] == 1
+
+
+def test_poisoned_evidence_writer_publishes_truthful_final_health_directly(
+    tmp_path: Path,
+) -> None:
+    cfg = Config()
+    cfg.logging.file = str(tmp_path / "maker.log")
+    health_path = tmp_path / "runtime_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "narrowgate.live_runtime_health.v1",
+                "fatalRuntimeLatched": False,
+                "runtimeEvidenceWriterValid": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    def poison_worker() -> None:
+        raise RuntimeError("simulated lifecycle rejection")
+
+    writer.enqueue_task("poison", poison_worker)
+    deadline = time.monotonic() + 1.0
+    while not writer.health_snapshot()["fatal_error"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    engine = SimpleNamespace(
+        runtime_safety_snapshot=lambda **_kwargs: {
+            "quote_loop_running": False,
+            "ownership_conflict_latched": False,
+            "fatal_runtime_latched": True,
+            "reconciliation_required": False,
+            "reconciliation_pending": False,
+            "fatal_runtime_reason": "UNCAUGHT_LIVE_FATAL",
+            "last_tick_age_s": 0.0,
+            "replace_terminal_continuation": {},
+        },
+        runtime_evidence_writer_health_snapshot=lambda: {
+            "enabled": True,
+            **writer.health_snapshot(),
+        },
+    )
+    ws = SimpleNamespace(
+        user_event_safety_snapshot=lambda **_kwargs: {
+            "last_user_event_age_s": 0.0,
+            "user_event_count": 1,
+            "user_stream_connected": False,
+            "user_stream_generation": 1,
+        }
+    )
+    gateway = SimpleNamespace(
+        health_snapshot=lambda: {
+            "active_transport": "websocket_api",
+            "shutdown_complete": True,
+            "websocket_api": {"enabled": True},
+        }
+    )
+    cleanup_errors: list[BaseException] = []
+
+    result = _close_runtime_evidence_writer_with_final_health(
+        cfg=cfg,
+        runtime_evidence_writer=writer,
+        engine=engine,
+        ws=ws,
+        order_gateway=gateway,
+        gc_pause_monitor=None,
+        logging_runtime=None,
+        cleanup_errors=cleanup_errors,
+    )
+
+    payload = json.loads(health_path.read_text(encoding="utf-8"))
+    assert result is None
+    assert cleanup_errors
+    assert payload["fatalRuntimeLatched"] is True
+    assert payload["fatalReason"] == "UNCAUGHT_LIVE_FATAL"
+    assert payload["runtimeEvidenceWriterValid"] is False
+    assert "simulated lifecycle rejection" in payload[
+        "runtimeEvidenceWriterFatalError"
+    ]
+    assert stat.S_IMODE(health_path.stat().st_mode) == 0o600
 
 
 def test_maker_engine_ordinary_evidence_uses_single_async_writer(

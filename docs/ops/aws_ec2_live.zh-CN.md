@@ -241,8 +241,7 @@ reconciliation。
 若已选中的 live 进程后来因 execution state uncertain 以 78 退出，应使用独立的
 `--recover-runtime-fatal`。调用方要提供该 selected release 的 deployment envelope、
 activation receipt 和 stopped reconciliation 作为 lineage evidence；事务还会核验 activation
-绑定的 runtime identity、最终 fail-closed runtime-health 中的同一 PID，以及 systemd journal
-同一 invocation 的 operator-gated message 与 `EXIT_STATUS=78`。它只接受 inactive 或不存在的 unit 和
+绑定的 runtime identity、runtime-health 中的同一 PID，以及 systemd journal 同一 invocation 的 operator-gated message 与 `EXIT_STATUS=78`。正常情况下 health 必须记录最终 fail-closed 状态；如果 health writer 失败，同一真实进程与 invocation 还必须在 fatal message 之前记录最终 health 发布失败，仅有过期健康快照不能恢复。它只接受 inactive 或不存在的 unit 和
 完全不存在的 maker/supervisor 进程。新 candidate 的 reconciliation/activation 路径必须唯一
 且尚不存在，旧文件绝不当作 fresh evidence；journal 证明缺失或已轮转时，主机继续保持
 stopped。该模式不会放宽 `--resume-stopped`。
@@ -278,7 +277,7 @@ private callback 屏障内做精确对账、发布 prospective epoch 并挂载�
 9. 最后发布 current pointer。
 
 Runtime-fatal recovery 不会对已经死亡的服务执行第 1–3 步。它先验证 selected release
-lineage、最终 fail-closed health、可信 systemd exit-78 invocation 与全局进程静默，再用新的
+lineage、最终 fail-closed health 或上述真实发布失败路径、可信 systemd exit-78 invocation 与全局进程静默，再用新的
 reconciliation output 从第 4 步汇入同一事务；第 4–9 步保持不变。
 
 Reconciliation 应通过 bounded transient systemd unit 运行，这样它能读取同一个

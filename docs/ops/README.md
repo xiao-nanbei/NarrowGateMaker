@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-03
+Last materially modified: 2026-09-05
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-05
 
 This directory contains reusable public operations contracts. It must not contain
 current hosts, credentials, account/order/position state, active release
@@ -125,9 +125,7 @@ An already selected service that later exits with code 78 is a different case.
 Use `--recover-runtime-fatal`, never `--resume-stopped`. This narrowly scoped
 mode requires the compact current pointer, its activation receipt, deployment
 envelope, stopped reconciliation, and activation-bound runtime identity to form
-one valid lineage. The final runtime-health snapshot must show the same PID in
-the fail-closed reconciliation-required state, and the matching systemd journal
-invocation must record both the operator-gated exit and `EXIT_STATUS=78`. The
+one valid lineage. The runtime-health snapshot must belong to that PID. Normally it records the final fail-closed reconciliation-required state. If its writer failed before publishing final health, recovery instead requires the same authenticated process and journal invocation to record the final-health publication failure followed by the operator-gated exit. Both paths require the matching systemd `EXIT_STATUS=78`; stale healthy state alone is never sufficient. The
 unit must be inactive or absent, and every maker/supervisor process absent. The candidate
 must use new, previously absent stopped-reconciliation and activation-receipt
 paths; no artifact from the failed release is reused as fresh evidence. After

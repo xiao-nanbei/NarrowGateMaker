@@ -816,6 +816,132 @@ def test_async_submit_result_transitions_pending_new_to_open() -> None:
     assert engine._ask_cid == cid
 
 
+@pytest.mark.parametrize("route", ("limit", "async", "close", "emergency"))
+@pytest.mark.parametrize("status", ("NEW", "EXPIRED"))
+def test_submit_result_local_evidence_failure_preserves_exchange_state(
+    route: str, status: str,
+) -> None:
+    rest = _RestClient(response={"orderId": 123, "status": status})
+    engine = _engine(rest)
+
+    def fail_outcome(*_args, **_kwargs):
+        raise RuntimeError("local outcome writer failed")
+
+    engine._log_order_outcome = fail_outcome
+    if route == "async":
+        gateway = _ControllableAsyncGateway()
+        gateway.cancel_open_orders = rest.cancel_open_orders
+        engine.order_gateway = gateway
+        engine.cfg.api.async_order_lanes_enabled = True
+        cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+        gateway.new_future.set_result(_result_for(gateway.new_calls[0], status=status))
+    elif route == "limit":
+        cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    elif route == "close":
+        engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001, use_ioc=True)
+        cid = rest.calls[0]["newClientOrderId"]
+    else:
+        engine.inventory = SimpleNamespace(net_position=0.001)
+        engine._emergency_close(100.0)
+        cid = rest.calls[0]["newClientOrderId"]
+
+    order = engine.orders.get_order(cid)
+    assert order.order_id == 123
+    assert order.state is (OrderState.OPEN if status == "NEW" else OrderState.EXPIRED)
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    # Async terminal results do not need a second outcome row after the
+    # authoritative terminal callback and therefore never hit fail_outcome.
+    if route == "async" and status == "EXPIRED":
+        assert engine._execution_state_uncertain() is False
+    else:
+        assert engine._running is False
+        assert engine._order_submit_fail_closed is True
+        assert engine._runtime_fatal_reason == "SUBMIT_RESULT_PROCESSING_FAILED"
+        assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
+@pytest.mark.parametrize("terminal", (False, True))
+def test_sync_submit_late_timeout_cannot_erase_private_exchange_evidence(
+    terminal: bool,
+) -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def accepted_then_timeout(**params):
+        rest.calls.append(params)
+        cid = params["newClientOrderId"]
+        engine.orders.confirm_new(cid, 123)
+        if terminal:
+            engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+        raise TimeoutError("late response lost after private acceptance")
+
+    rest.new_order = accepted_then_timeout
+    returned_cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    cid = rest.calls[0]["newClientOrderId"]
+    order = engine.orders.get_order(cid)
+    assert order.state is (OrderState.CANCELED if terminal else OrderState.OPEN)
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    assert returned_cid == (None if terminal else cid)
+    assert engine._execution_state_uncertain() is False
+
+
+def test_unknown_ack_race_with_private_new_keeps_authoritative_acceptance() -> None:
+    engine = _engine(_RestClient())
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine._reserve_side_order_ownership(side=Side.BUY, cid=cid)
+    mark_unknown = engine.orders.mark_submit_ack_unknown
+
+    def private_new_before_mark(order_cid, reason):
+        engine.orders.confirm_new(order_cid, 123)
+        return mark_unknown(order_cid, reason)
+
+    engine.orders.mark_submit_ack_unknown = private_new_before_mark
+    assert engine._hold_submit_with_unknown_ack(
+        cid=cid, side=Side.BUY, error=TimeoutError("late response"),
+    ) is False
+    assert engine.orders.get_order(cid).state is OrderState.OPEN
+    assert engine.orders.get_order(cid).lifecycle.submit_ack_unknown_observed is False
+
+
+def test_runtime_fatal_cancels_before_failed_continuation_evidence() -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def fail_continuation_cleanup(**_kwargs):
+        assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+        raise RuntimeError("continuation evidence writer failed")
+
+    engine._clear_all_replace_terminal_continuations = fail_continuation_cleanup
+    engine.latch_runtime_fatal(
+        reason="LOCAL_EVIDENCE_FAILURE",
+        error=RuntimeError("writer poisoned"),
+        reconciliation_required=True,
+        defer_reconciliation=True,
+    )
+    assert engine._running is False
+    assert engine._execution_state_uncertain() is True
+    assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
+def test_gateway_evidence_failure_is_checked_outside_submit_classification() -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def fail_evidence_check():
+        raise RuntimeError("order gateway receipt collection failed")
+
+    rest.raise_if_evidence_failed = fail_evidence_check
+    engine.order_gateway = rest
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    with pytest.raises(RuntimeError, match="ORDER_GATEWAY_EVIDENCE_FAILED"):
+        engine.raise_if_runtime_fatal()
+    order = engine.orders.get_order(cid)
+    assert order.state is OrderState.OPEN
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    assert engine._running is False
+    assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
 def test_async_submit_late_result_does_not_resurrect_private_terminal() -> None:
     engine = _engine(_RestClient())
     gateway = _ControllableAsyncGateway()
