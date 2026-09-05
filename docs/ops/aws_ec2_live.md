@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-05
+Last materially synchronized: 2026-09-06
 
-Last materially modified: 2026-09-05
+Last materially modified: 2026-09-06
 
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
@@ -253,8 +253,13 @@ The normal prepared transaction admits a running transient
 previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
 the previous release's `live/main.py` command line before stop. A persistent
 unit or ambiguous process fails before stop and is not modified. Use
-`--resume-stopped` only after the same transaction has already stopped the
-verified previous release but failed before reconciliation. That mode requires
+`--resume-stopped` after an operator-verified graceful stop (including an
+intentional bounded-run expiry), or after this transaction stopped the verified
+previous release but failed before reconciliation. Verify the selected process's
+actual shutdown log and successful systemd invocation first; an absent unit or
+an old healthy snapshot does not establish a graceful stop. This is an explicit
+operator action, never an automatic restart. Unexplained or runtime-fatal exits
+must be diagnosed first; exit 78 uses the recovery mode below. This mode requires
 an inactive/absent unit, exact process quiescence, the unchanged previous
 current pointer, and absent reconciliation/activation outputs; it re-verifies
 the candidate before producing a fresh reconciliation.

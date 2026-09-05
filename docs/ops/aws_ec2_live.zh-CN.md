@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-05
+Last materially synchronized: 2026-09-06
 
-Last materially modified: 2026-09-05
+Last materially modified: 2026-09-06
 
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
@@ -232,8 +232,12 @@ admission 通过后发布 current pointer。批准的控制路径需要 SOCKS5 �
 正常 prepared transaction 接受正在运行的 transient `narrowgate.service`。Stop 前会
 证明 `active/running`、`Transient=yes`、精确 previous working directory、正数
 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的 `live/main.py` command
-line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。只有同一事务已经停止
-经过验证的 previous release、但在 reconciliation 前失败时，才使用 `--resume-stopped`。
+line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。若同一事务已经停止
+经过验证的 previous release、但在 reconciliation 前失败时，或者操作者已确认
+previous release 正常优雅停止（包括有意设置的限时运行到期）时，使用
+`--resume-stopped`。先核实所选进程的实际 shutdown 日志与成功结束的 systemd
+invocation；unit 不存在或旧的健康快照不能证明正常退出。这是显式操作，绝非自动重启。
+不明原因退出须先诊断，exit 78 使用下面的专用恢复模式。
 该模式要求 unit inactive 或不存在、进程严格 quiescent、current pointer 仍指向 previous，且
 reconciliation/activation output 均不存在；随后重新验证 candidate 并生成 fresh
 reconciliation。

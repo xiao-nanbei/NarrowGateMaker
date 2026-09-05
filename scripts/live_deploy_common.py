@@ -1677,7 +1677,15 @@ def _build_parser() -> argparse.ArgumentParser:
     activation.add_argument("--command-timeout-s", type=int, default=900)
     activation.add_argument("--socks5-proxy")
     stopped_mode = activation.add_mutually_exclusive_group()
-    stopped_mode.add_argument("--resume-stopped", action="store_true")
+    stopped_mode.add_argument(
+        "--resume-stopped", action="store_true",
+        help=(
+            "Resume from an operator-verified graceful stop or an interrupted "
+            "pre-reconciliation transaction; still requires process quiescence, "
+            "the unchanged current selector, and fresh exchange reconciliation. "
+            "Do not use for unexplained or runtime-fatal exits."
+        ),
+    )
     stopped_mode.add_argument("--recover-runtime-fatal", action="store_true")
     activation.add_argument("--previous-deployment-envelope")
     activation.add_argument("--previous-activation-receipt")
