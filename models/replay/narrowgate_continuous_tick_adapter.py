@@ -915,10 +915,12 @@ class NarrowGateContinuousTickReplayAdapter:
             raise NarrowGateContinuousAdapterError("authoritative fill journal was truncated")
         timeline: list[tuple[int, int, Any]] = []
         for row in fills:
-            timeline.append((int(row["fill_ts"]), 0, row))
+            # UTC days are half-open: close the old day before a midnight fill
+            # changes cash or inventory for the new day.
+            timeline.append((int(row["fill_ts"]), 1, row))
         for boundary in epoch.utc_boundaries_ts_ms:
             if boundary <= epoch.end_ts_ms:
-                timeline.append((int(boundary), 1, None))
+                timeline.append((int(boundary), 0, None))
         trade_ts = window.trades["transact_time"].to_numpy(dtype=np.int64, copy=False)
         trade_px = window.trades["price"].to_numpy(dtype=np.float64, copy=False)
 
@@ -930,7 +932,7 @@ class NarrowGateContinuousTickReplayAdapter:
 
         campaign_ordinal = len(ledger.closed_campaigns)
         for ts_ms, kind, row in sorted(timeline, key=lambda value: (value[0], value[1])):
-            if kind == 0:
+            if kind == 1:
                 assert row is not None
                 before = ledger.state.position_btc
                 side = str(row["side"]).upper()
