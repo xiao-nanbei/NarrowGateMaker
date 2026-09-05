@@ -2418,7 +2418,18 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
         capture_output=True,
         text=True,
     )
-    assert duplicate.returncode != 0
+    # CRITICAL logs also use the synchronous stderr fallback: two copies of
+    # the same process/invocation/reason are not two different failures.
+    assert duplicate.returncode == 0
+    assert duplicate.stdout.strip() == invocation
+    conflict = {**fatal_record, "_SYSTEMD_INVOCATION_ID": "b" * 32}
+    conflicting = subprocess.run(
+        (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+         str(pid), str(main_path), config_token, str(health_path), health_sha256),
+        input=json.dumps(fatal_record) + "\n" + json.dumps(conflict) + "\n",
+        check=False, capture_output=True, text=True,
+    )
+    assert conflicting.returncode != 0
 
     stale_fatal_record = {
         **fatal_record,
@@ -2502,7 +2513,7 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
     )
     assert rejected_forgery.returncode != 0
 
-    _write_private_json(health_path, {**health, "fatalRuntimeLatched": False})
+    _write_private_json(health_path, {**health, "pid": pid + 1})
     rejected_health = subprocess.run(
         (
             sys.executable,
@@ -2522,6 +2533,51 @@ def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
         text=True,
     )
     assert rejected_health.returncode != 0
+
+    # A failed health writer leaves the last periodic (healthy) snapshot.
+    # Recovery still needs the exact process's publication-failure and exit-78
+    # journal proof; a stale snapshot or unrelated journal row cannot admit it.
+    _write_private_json(health_path, {
+        **health, "fatalRuntimeLatched": False, "reconciliationRequired": False,
+        "quoteLoopRunning": True, "fatalReason": "",
+    })
+    health_sha256 = hashlib.sha256(health_path.read_bytes()).hexdigest()
+    publication_failure = {
+        **fatal_record,
+        "MESSAGE": "CRITICAL Final runtime health publication failed: writer failed",
+        "__REALTIME_TIMESTAMP": "1788444996800000",
+    }
+    for failure, expected in (
+        (None, False),
+        (publication_failure, True),
+        ({**publication_failure, "_PID": str(pid + 1)}, False),
+        ({**publication_failure, "_SYSTEMD_INVOCATION_ID": "a" * 32}, False),
+        ({**publication_failure, "__REALTIME_TIMESTAMP": "1788444996900000"}, False),
+    ):
+        rows = [fatal_record] if failure is None else [failure, fatal_record]
+        result = subprocess.run(
+            (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+             str(pid), str(main_path), config_token, str(health_path), health_sha256),
+            input="".join(json.dumps(row) + "\n" for row in rows),
+            check=False, capture_output=True, text=True,
+        )
+        assert (result.returncode == 0) is expected, result.stderr
+        if expected:
+            assert result.stdout.strip() == invocation
+
+    delayed_duplicate = {
+        **publication_failure, "__REALTIME_TIMESTAMP": "1788444996900000",
+    }
+    result = subprocess.run(
+        (sys.executable, "-c", source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,
+         str(pid), str(main_path), config_token, str(health_path), health_sha256),
+        input="".join(json.dumps(row) + "\n" for row in (
+            publication_failure, fatal_record, delayed_duplicate,
+        )),
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == invocation
 
 
 def test_runtime_fatal_recovery_evidence_is_mode_scoped_and_never_reused() -> None:

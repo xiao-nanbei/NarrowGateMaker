@@ -241,8 +241,7 @@ reconciliation。
 若已选中的 live 进程后来因 execution state uncertain 以 78 退出，应使用独立的
 `--recover-runtime-fatal`。调用方要提供该 selected release 的 deployment envelope、
 activation receipt 和 stopped reconciliation 作为 lineage evidence；事务还会核验 activation
-绑定的 runtime identity、最终 fail-closed runtime-health 中的同一 PID，以及 systemd journal
-同一 invocation 的 operator-gated message 与 `EXIT_STATUS=78`。它只接受 inactive 或不存在的 unit 和
+绑定的 runtime identity、runtime-health 中的同一 PID，以及 systemd journal 同一 invocation 的 operator-gated message 与 `EXIT_STATUS=78`。正常情况下 health 必须记录最终 fail-closed 状态；如果 health writer 失败，同一真实进程与 invocation 还必须在 fatal message 之前记录最终 health 发布失败，仅有过期健康快照不能恢复。它只接受 inactive 或不存在的 unit 和
 完全不存在的 maker/supervisor 进程。新 candidate 的 reconciliation/activation 路径必须唯一
 且尚不存在，旧文件绝不当作 fresh evidence；journal 证明缺失或已轮转时，主机继续保持
 stopped。该模式不会放宽 `--resume-stopped`。
@@ -278,7 +277,7 @@ private callback 屏障内做精确对账、发布 prospective epoch 并挂载�
 9. 最后发布 current pointer。
 
 Runtime-fatal recovery 不会对已经死亡的服务执行第 1–3 步。它先验证 selected release
-lineage、最终 fail-closed health、可信 systemd exit-78 invocation 与全局进程静默，再用新的
+lineage、最终 fail-closed health 或上述真实发布失败路径、可信 systemd exit-78 invocation 与全局进程静默，再用新的
 reconciliation output 从第 4 步汇入同一事务；第 4–9 步保持不变。
 
 Reconciliation 应通过 bounded transient systemd unit 运行，这样它能读取同一个
@@ -392,8 +391,19 @@ write，必须停止新增 authority 并 reconcile。
 Activation 前必须设置 hard `max_runtime_s`，并预先调度 verified REST rollback，使其留出
 足够余量在 hard bound **之前**完成。Hard timer 只是停止 candidate 的 fail-safe，不是
 rollback mechanism。Active rollback 无法完成时，应让 host 保持 stopped 并 reconcile，
-不能延长实验。REST 与 WebSocket 必须按同一 request/client-order identity，比较 decision
-→ private visibility 延迟，并同时比较 authoritative outcome 与 `UNKNOWN` rate。内部
+不能延长实验。
+
+不要把 renderer 生成的多行 Bash 命令直接作为
+`systemd-run ... /bin/bash -c` 参数传入。当前 systemd 的命令行展开会把 `$$` 折叠成
+`$`；字面量 probe 到达 Bash 后会成为 `/proc/$/fd/9`，使事务的文件描述符 identity
+检查失效。应把既有 renderer 输出写入仅 owner 可访问的脚本文件，先用 `bash -n` 校验，
+再由 system-level one-shot timer 以 `User=ec2-user` 运行该脚本。事务本身不得以 root
+运行，不新增 manifest 或 SHA 层，也不得自动选择 runtime-fatal recovery。若 WebSocket
+进程在普通 rollback 开始前已 fatal exit，应保持 host stopped，等待显式 reconciliation
+与 recovery。
+
+REST 与 WebSocket 必须按同一 request/client-order identity，比较 decision → private
+visibility 延迟，并同时比较 authoritative outcome 与 `UNKNOWN` rate。内部
 decision → wire 时间不能作为跨 transport 主指标：当前 REST SDK 没有暴露可与 WebSocket
 同口径直接观测的 wire time。ACK/error latency 与 reconnect 只作为辅助诊断，不能只看
 ACK p99 更低就授权 transport。

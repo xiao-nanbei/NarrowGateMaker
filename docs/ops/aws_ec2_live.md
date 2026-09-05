@@ -263,8 +263,7 @@ If the selected live process later exits 78 because execution state is
 uncertain, use the separate `--recover-runtime-fatal` mode. Supply the selected
 release's deployment envelope, activation receipt, and stopped reconciliation
 as lineage evidence. The transaction also verifies the activation-bound
-runtime identity, final fail-closed runtime-health PID, and the same systemd
-journal invocation's operator-gated message and `EXIT_STATUS=78`. It accepts
+runtime identity, matching runtime-health PID, and the same systemd journal invocation's operator-gated message and `EXIT_STATUS=78`. Normally health must record the final fail-closed state. If the health writer failed, that exact process and invocation must additionally record the final-health publication failure before the fatal message; a stale healthy snapshot alone cannot admit recovery. It accepts
 only an inactive or absent unit with no maker or supervisor process. New candidate
 reconciliation and activation paths must be unique and absent; old files are
 never treated as fresh. A missing or rotated journal proof leaves the host
@@ -309,8 +308,7 @@ Safe normal activation order:
 9. publish the current pointer last.
 
 Runtime-fatal recovery does not perform steps 1–3 against an already dead
-service. It first verifies the selected release lineage, its final fail-closed
-health, the authentic systemd exit-78 invocation, and global process
+service. It first verifies the selected release lineage, its final fail-closed health or the authenticated publication-failure path above, the authentic systemd exit-78 invocation, and global process
 quiescence. It then joins the same transaction at step 4 with a new
 reconciliation output; steps 4–9 remain unchanged.
 
@@ -446,8 +444,21 @@ Before activation, set a hard `max_runtime_s` and schedule the verified REST
 rollback to begin with enough margin to finish **before** that bound. The hard
 timer is only a fail-safe that stops the candidate; it is not a rollback
 mechanism. If the active rollback cannot complete, leave the host stopped and
-reconcile rather than extending the experiment. Compare REST and WebSocket on
-the same request/client-order identity using decision-to-private-visibility
+reconcile rather than extending the experiment.
+
+Do not pass the renderer's multiline Bash command directly as a
+`systemd-run ... /bin/bash -c` argument. The current systemd command-line
+expansion collapses `$$` to `$`; a literal probe then reaches Bash as
+`/proc/$/fd/9`, invalidating the transaction's file-descriptor identity check.
+Write the existing renderer output to an owner-only script, validate it with
+`bash -n`, and have a system-level one-shot timer run that script as
+`User=ec2-user`. The transaction itself must not run as root, gain a new
+manifest or SHA layer, or automatically select runtime-fatal recovery. If the
+WebSocket process exits fatally before the ordinary rollback starts, leave the
+host stopped for explicit reconciliation and recovery.
+
+Compare REST and WebSocket on the same request/client-order identity using
+decision-to-private-visibility
 latency plus authoritative outcome and `UNKNOWN` rates. Do not use an internal
 decision-to-wire timestamp as the primary cross-transport metric: the current
 REST SDK does not expose wire time at a directly comparable observation point.

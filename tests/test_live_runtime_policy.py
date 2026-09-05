@@ -32,6 +32,7 @@ from live.main import (
     EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
     _AsyncLoggingRuntime,
     _cleanup_failed_live_startup,
+    _close_runtime_evidence_writer_with_final_health,
     _create_live_runtime_components,
     _DrainingQueueListener,
     _note_startup_cleanup_errors,
@@ -1278,6 +1279,89 @@ def test_runtime_health_factory_collects_on_writer_worker(
         "userStreamGeneration"
     ] == 9
     assert closed["json_snapshots_committed"] == 1
+
+
+def test_poisoned_evidence_writer_publishes_truthful_final_health_directly(
+    tmp_path: Path,
+) -> None:
+    cfg = Config()
+    cfg.logging.file = str(tmp_path / "maker.log")
+    health_path = tmp_path / "runtime_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "narrowgate.live_runtime_health.v1",
+                "fatalRuntimeLatched": False,
+                "runtimeEvidenceWriterValid": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    def poison_worker() -> None:
+        raise RuntimeError("simulated lifecycle rejection")
+
+    writer.enqueue_task("poison", poison_worker)
+    deadline = time.monotonic() + 1.0
+    while not writer.health_snapshot()["fatal_error"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    engine = SimpleNamespace(
+        runtime_safety_snapshot=lambda **_kwargs: {
+            "quote_loop_running": False,
+            "ownership_conflict_latched": False,
+            "fatal_runtime_latched": True,
+            "reconciliation_required": False,
+            "reconciliation_pending": False,
+            "fatal_runtime_reason": "UNCAUGHT_LIVE_FATAL",
+            "last_tick_age_s": 0.0,
+            "replace_terminal_continuation": {},
+        },
+        runtime_evidence_writer_health_snapshot=lambda: {
+            "enabled": True,
+            **writer.health_snapshot(),
+        },
+    )
+    ws = SimpleNamespace(
+        user_event_safety_snapshot=lambda **_kwargs: {
+            "last_user_event_age_s": 0.0,
+            "user_event_count": 1,
+            "user_stream_connected": False,
+            "user_stream_generation": 1,
+        }
+    )
+    gateway = SimpleNamespace(
+        health_snapshot=lambda: {
+            "active_transport": "websocket_api",
+            "shutdown_complete": True,
+            "websocket_api": {"enabled": True},
+        }
+    )
+    cleanup_errors: list[BaseException] = []
+
+    result = _close_runtime_evidence_writer_with_final_health(
+        cfg=cfg,
+        runtime_evidence_writer=writer,
+        engine=engine,
+        ws=ws,
+        order_gateway=gateway,
+        gc_pause_monitor=None,
+        logging_runtime=None,
+        cleanup_errors=cleanup_errors,
+    )
+
+    payload = json.loads(health_path.read_text(encoding="utf-8"))
+    assert result is None
+    assert cleanup_errors
+    assert payload["fatalRuntimeLatched"] is True
+    assert payload["fatalReason"] == "UNCAUGHT_LIVE_FATAL"
+    assert payload["runtimeEvidenceWriterValid"] is False
+    assert "simulated lifecycle rejection" in payload[
+        "runtimeEvidenceWriterFatalError"
+    ]
+    assert stat.S_IMODE(health_path.stat().st_mode) == 0o600
 
 
 def test_maker_engine_ordinary_evidence_uses_single_async_writer(
@@ -3154,6 +3238,7 @@ def test_fatal_cancel_bypasses_latched_ledger_and_stop_preserves_ownership() -> 
             }
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3180,6 +3265,7 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine.orders = SimpleNamespace(
         fatal_status=Mock(return_value={"latched": False, "reconciliation_required": False}),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3187,14 +3273,30 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine.sync_position = Mock(return_value=True)
     engine._running = True
     engine._order_submit_fail_closed = False
+    engine._shutdown_new_order_admission_revoked = False
+    engine._order_ref_lock = threading.RLock()
+    engine.order_gateway = SimpleNamespace(revoke_new_order_admission=Mock())
     engine._order_lifecycle_live_writer_v2 = None
     engine._exact_opportunity_tape_runtime = None
 
-    engine.stop()
+    cleanup_errors: list[BaseException] = []
+    assert _quiesce_callbacks_then_stop_engine(
+        ws=SimpleNamespace(stop=Mock()),
+        engine=engine,
+        cleanup_errors=cleanup_errors,
+    ) is True
 
+    assert cleanup_errors == []
+    engine.order_gateway.revoke_new_order_admission.assert_called_once_with()
+    assert engine._shutdown_new_order_admission_revoked is True
     engine._cancel_all_orders.assert_called_once_with()
     engine.sync_position.assert_called_once_with(required=True)
     engine.orders.cancel_all_local.assert_not_called()
+    assert engine._execution_state_uncertain() is False
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is False
+    assert resolve_live_shutdown_exit(
+        engine=engine, fatal_error=None, fatal_traceback=None, cleanup_errors=[]
+    ) == 0
 
 
 def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> None:
@@ -3206,6 +3308,7 @@ def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> N
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3243,6 +3346,7 @@ def test_normal_stop_accepts_valid_bounded_remote_lifecycle_spool() -> None:
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3304,6 +3408,7 @@ def test_specialized_close_failure_still_closes_every_writer_and_checkpoint() ->
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()

@@ -133,11 +133,8 @@ health=json.loads(health_raw)
 pid=runtime.get('pid')
 assert type(pid) is int and pid>0 and health.get('pid')==pid
 assert health.get('schemaVersion')=='narrowgate.live_runtime_health.v1'
-assert health.get('fatalRuntimeLatched') is True
-assert health.get('reconciliationRequired') is True
-assert health.get('quoteLoopRunning') is False
-reason=health.get('fatalReason')
-assert isinstance(reason,str) and reason
+# Health can be the last pre-failure snapshot when its writer failed.  The
+# following journal check must prove either final health or that exact failure.
 started_text=runtime.get('recorded_at_utc')
 assert isinstance(started_text,str) and started_text
 started=datetime.fromisoformat(started_text.replace('Z','+00:00'))
@@ -154,7 +151,7 @@ print(
 )
 """
 
-_RUNTIME_FATAL_MESSAGE_CHECK: Final = """import base64,hashlib,json,re,sys
+_RUNTIME_FATAL_MESSAGE_CHECK: Final = r"""import base64,hashlib,json,re,sys
 from pathlib import Path
 
 pid,expected_main,config_token,health_path,expected_health_sha256=sys.argv[1:]
@@ -162,14 +159,18 @@ expected_config=base64.urlsafe_b64decode(config_token.encode('ascii')).decode('u
 health_raw=Path(health_path).read_bytes()
 assert hashlib.sha256(health_raw).hexdigest()==expected_health_sha256
 health=json.loads(health_raw)
-reason=health['fatalReason']
-pending=int(bool(health.get('reconciliationPending')))
-expected_message=(
-    'Execution state is uncertain at shutdown; exiting 78 for '
-    f'operator-gated reconciliation (reason={reason} pending={pending})'
+final_health=(health.get('fatalRuntimeLatched') is True
+    and health.get('reconciliationRequired') is True
+    and health.get('quoteLoopRunning') is False
+    and isinstance(health.get('fatalReason'),str) and bool(health['fatalReason']))
+fatal_pattern=re.compile(
+    r'Execution state is uncertain at shutdown; exiting 78 for '
+    r'operator-gated reconciliation \(reason=([^\s()]+) pending=([01])\)$'
 )
 invocation=''
-matches=0
+matches=set()
+publication_failures={}
+fatal_timestamp=0
 for line in sys.stdin:
     try:
         record=json.loads(line)
@@ -183,15 +184,32 @@ for line in sys.stdin:
         and record.get('_SYSTEMD_UNIT')=='narrowgate.service'
         and expected_main in command
         and expected_config in command
-        and str(record.get('MESSAGE','')).endswith(expected_message)
         and int(record.get('__REALTIME_TIMESTAMP',0))*1000
             >=int(health['recordedAtNs'])
     ):
         candidate=str(record.get('_SYSTEMD_INVOCATION_ID',''))
         assert re.fullmatch('[0-9a-f]{32}',candidate)
+        message=str(record.get('MESSAGE',''))
+        timestamp=int(record['__REALTIME_TIMESTAMP'])*1000
+        if 'Final runtime health publication failed:' in message:
+            publication_failures[candidate]=min(
+                publication_failures.get(candidate,timestamp),timestamp
+            )
+        fatal=fatal_pattern.search(message)
+        if fatal is None:
+            continue
+        if final_health:
+            if (fatal.group(1)!=health['fatalReason']
+                or fatal.group(2)!=str(int(bool(health.get('reconciliationPending'))))):
+                continue
         invocation=candidate
-        matches+=1
-assert matches==1
+        fatal_timestamp=max(fatal_timestamp,timestamp)
+        matches.add((candidate,fatal.group(1),fatal.group(2)))
+assert len(matches)==1
+if not final_health:
+    # A stale healthy snapshot alone never authorizes recovery.  Require the
+    # authenticated same-process publication failure before its fatal exit.
+    assert 0<publication_failures.get(invocation,0)<=fatal_timestamp
 print(invocation)
 """
 

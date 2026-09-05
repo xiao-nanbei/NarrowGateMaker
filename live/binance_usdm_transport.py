@@ -608,6 +608,8 @@ class BinanceUsdMWebSocketOrderGateway:
         self._reader_thread: threading.Thread | None = None
         self._runtime_evidence_writer = None
         self._receipt_path = ""
+        self._receipt_failure = ""
+        self._receipt_failure_sink: Callable[[Exception], None] | None = None
         self._request_correlation_sink: Callable[..., None] | None = None
 
     def set_request_correlation_sink(self, sink: Callable[..., None]) -> None:
@@ -624,13 +626,19 @@ class BinanceUsdMWebSocketOrderGateway:
                 )
             self._request_correlation_sink = sink
 
-    def set_runtime_evidence_writer(self, writer: Any, receipt_path: str) -> None:
+    def set_runtime_evidence_writer(
+        self,
+        writer: Any,
+        receipt_path: str,
+        *,
+        failure_sink: Callable[[Exception], None] | None = None,
+    ) -> None:
         """Route immutable per-request rows through the process-wide FIFO.
 
-        The gateway does not own or close the writer. Queue exhaustion and
-        worker failure intentionally propagate through the order call, so a
-        request whose evidence cannot be admitted is reconciled fail-closed
-        instead of silently disappearing from the A/B latency sample.
+        The gateway does not own or close the writer. A failed receipt revokes
+        new-order admission, but must not turn a known exchange response into
+        an unknown submit. The shared gateway surfaces the local failure
+        separately from the network result.
         """
 
         normalized_path = str(receipt_path).strip()
@@ -646,6 +654,7 @@ class BinanceUsdMWebSocketOrderGateway:
                 raise RuntimeError("receipt writer must be attached before the first request")
             self._runtime_evidence_writer = writer
             self._receipt_path = normalized_path
+            self._receipt_failure_sink = failure_sink
 
     def __enter__(self) -> BinanceUsdMWebSocketOrderGateway:
         self.start()
@@ -910,7 +919,16 @@ class BinanceUsdMWebSocketOrderGateway:
             writer = self._runtime_evidence_writer
             receipt_path = self._receipt_path
         if writer is not None:
-            writer.enqueue_csv(receipt_path, receipt)
+            try:
+                writer.enqueue_csv(receipt_path, receipt)
+            except Exception as exc:
+                with self._health_lock:
+                    self._counters["receipt_failures"] += 1
+                    if not self._receipt_failure:
+                        self._receipt_failure = f"{type(exc).__name__}: {exc}"
+                    failure_sink = self._receipt_failure_sink
+                if failure_sink is not None:
+                    failure_sink(exc)
 
     def _request(
         self,
@@ -931,6 +949,12 @@ class BinanceUsdMWebSocketOrderGateway:
             or ""
         )
         with self._io_lock:
+            with self._health_lock:
+                receipt_failed = bool(self._receipt_failure)
+            if method == "order.place" and receipt_failed:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "order receipt collection failed; new order rejected before dispatch"
+                )
             try:
                 connection = self._ensure_connection_locked()
             except Exception as exc:
@@ -1247,6 +1271,7 @@ class BinanceUsdMWebSocketOrderGateway:
             latencies = list(self._latency_ms)
             last_receipt = dict(self._last_receipt or {})
             last_error = self._last_error
+            receipt_failure = self._receipt_failure
         connection = self._connection
         started_ns = self._experiment_started_ns
         elapsed_s = (
@@ -1276,6 +1301,7 @@ class BinanceUsdMWebSocketOrderGateway:
             },
             "last_receipt": last_receipt,
             "last_error": last_error,
+            "receipt_failure": receipt_failure,
         }
 
 
@@ -1675,6 +1701,8 @@ class BinanceUsdMOrderGateway:
         self._write_admission_epoch = 0
         self._write_admission_barrier_active = False
         self._new_order_admission_revoked = False
+        self._receipt_failure = ""
+        self._receipt_failure_count = 0
         self._write_barrier = _ExclusiveWriteBarrier()
         self._async_order_lane_drain_timeout_s = float(
             async_order_lane_drain_timeout_s
@@ -1890,6 +1918,42 @@ class BinanceUsdMOrderGateway:
                 # Invalidate new-order attempts that captured an earlier epoch
                 # but have not yet crossed the admission critical section.
                 self._write_admission_epoch += 1
+
+    def _latch_receipt_failure(self, exc: Exception) -> None:
+        # This may run on a network worker while cancel-all owns the admission
+        # lock and waits for that worker. Only take the short state lock: the
+        # response and safety barrier must still be able to finish.
+        with self._write_admission_state_lock:
+            self._receipt_failure_count += 1
+            if not self._receipt_failure:
+                self._receipt_failure = f"{type(exc).__name__}: {exc}"
+            self._new_order_admission_revoked = True
+
+    def raise_if_evidence_failed(self) -> None:
+        """Surface local receipt failure independently of exchange authority."""
+
+        with self._write_admission_state_lock:
+            failure = self._receipt_failure
+        if failure:
+            raise RuntimeError(f"order gateway receipt collection failed: {failure}")
+
+    def _reject_receipt_failed_new_order_before_dispatch(self) -> None:
+        # An earlier request can poison the writer after this request was
+        # admitted to the GLOBAL FIFO. Cancel-all still drains the same FIFO;
+        # its epoch is intentionally not rechecked here.
+        with self._write_admission_state_lock:
+            if self._receipt_failure:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "new-order admission was revoked; write rejected before dispatch"
+                )
+
+    def _enqueue_receipt(self, receipt: Mapping[str, Any]) -> None:
+        writer = self._runtime_evidence_writer
+        if writer is not None:
+            try:
+                writer.enqueue_csv(self._receipt_path, receipt)
+            except Exception as exc:
+                self._latch_receipt_failure(exc)
 
     @staticmethod
     def _normalized_order_side(side: Any) -> str:
@@ -2108,7 +2172,9 @@ class BinanceUsdMOrderGateway:
         self._receipt_path = normalized_path
         websocket_gateway = self.websocket_order_gateway
         if websocket_gateway is not None:
-            websocket_gateway.set_runtime_evidence_writer(writer, normalized_path)
+            websocket_gateway.set_runtime_evidence_writer(
+                writer, normalized_path, failure_sink=self._latch_receipt_failure
+            )
 
     def _register_request_correlation(
         self,
@@ -2220,7 +2286,11 @@ class BinanceUsdMOrderGateway:
             private_exchange_ts_ns=exchange_ts_ns,
             correlation_found=found,
         )
-        writer.enqueue_csv(self._receipt_path, row)
+        try:
+            writer.enqueue_csv(self._receipt_path, row)
+        except Exception as exc:
+            self._latch_receipt_failure(exc)
+            raise
         with self._correlation_lock:
             self._private_visibility_counts["admitted"] += 1
         return found
@@ -2295,9 +2365,7 @@ class BinanceUsdMOrderGateway:
                 exchange_order_status="",
                 error=f"{type(exc).__name__}: {exc}",
             )
-            writer = self._runtime_evidence_writer
-            if writer is not None:
-                writer.enqueue_csv(self._receipt_path, receipt)
+            self._enqueue_receipt(receipt)
             raise
 
         completed_ts_ns = int(self._wall_time_ns())
@@ -2327,9 +2395,7 @@ class BinanceUsdMOrderGateway:
                 exchange_order_status="",
                 error=f"{type(protocol_error).__name__}: {protocol_error}",
             )
-            writer = self._runtime_evidence_writer
-            if writer is not None:
-                writer.enqueue_csv(self._receipt_path, receipt)
+            self._enqueue_receipt(receipt)
             raise protocol_error
         receipt = _order_gateway_receipt_payload(
             transport="rest",
@@ -2349,9 +2415,7 @@ class BinanceUsdMOrderGateway:
             exchange_order_status=str(result.get("status", "")),
             error="",
         )
-        writer = self._runtime_evidence_writer
-        if writer is not None:
-            writer.enqueue_csv(self._receipt_path, receipt)
+        self._enqueue_receipt(receipt)
         return response
 
     def new_order(
@@ -2374,6 +2438,7 @@ class BinanceUsdMOrderGateway:
         self._remember_client_order_side(client_order_id, side)
 
         def operation() -> Any:
+            self._reject_receipt_failed_new_order_before_dispatch()
             websocket_gateway = self.websocket_order_gateway
             if websocket_gateway is not None:
                 return websocket_gateway.new_order(
@@ -2423,6 +2488,7 @@ class BinanceUsdMOrderGateway:
         self._remember_client_order_side(client_order_id, side)
 
         def operation() -> Any:
+            self._reject_receipt_failed_new_order_before_dispatch()
             websocket_gateway = self.websocket_order_gateway
             if websocket_gateway is not None:
                 return websocket_gateway.new_order(
@@ -2618,6 +2684,9 @@ class BinanceUsdMOrderGateway:
             correlation_count = len(self._request_correlations)
             side_identity_count = len(self._client_order_sides)
             private_visibility_counts = dict(self._private_visibility_counts)
+        with self._write_admission_state_lock:
+            receipt_failure = self._receipt_failure
+            receipt_failure_count = self._receipt_failure_count
         return {
             "schema_version": "narrowgate.binance_usdm_order_gateway.v1",
             "active_transport": self.active_transport,
@@ -2625,6 +2694,8 @@ class BinanceUsdMOrderGateway:
             "request_correlation_count": correlation_count,
             "client_order_side_identity_count": side_identity_count,
             "private_visibility_counts": private_visibility_counts,
+            "receipt_failure": receipt_failure,
+            "receipt_failure_count": receipt_failure_count,
             "async_order_lanes_enabled": self.async_order_lanes_enabled,
             "shutdown_complete": self.shutdown_complete,
             "new_order_admission_revoked": bool(

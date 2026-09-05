@@ -3331,6 +3331,141 @@ def runtime_safety_health_payload_factory(
     return collect
 
 
+def _close_runtime_evidence_writer_with_final_health(
+    *,
+    cfg,
+    runtime_evidence_writer: RuntimeEvidenceWriter,
+    engine,
+    ws,
+    order_gateway,
+    gc_pause_monitor: GcPauseMonitor | None,
+    logging_runtime: _AsyncLoggingRuntime | None,
+    cleanup_errors: list[BaseException],
+) -> dict[str, object] | None:
+    """Close evidence and preserve truthful final health after worker failure.
+
+    The ordinary final snapshot stays in the single FIFO while that writer is
+    healthy. If its worker has already failed, no new item can be admitted and
+    the last periodic health file would otherwise continue to look healthy.
+    Once ``close`` proves the worker is no longer alive, publish one atomic
+    snapshot directly from the live safety sources. This fallback does not
+    repair or validate the failed evidence collection; the payload exposes the
+    writer's actual invalid/fatal state.
+    """
+
+    logger = logging.getLogger("main")
+    fallback_required = False
+    initial_health = runtime_evidence_writer.health_snapshot()
+    if (
+        bool(initial_health.get("valid", False))
+        and bool(initial_health.get("accepting", False))
+        and bool(initial_health.get("worker_alive", False))
+    ):
+        try:
+            runtime_evidence_writer.enqueue_json_snapshot_factory(
+                runtime_health_state_path(cfg),
+                runtime_safety_health_payload_factory(
+                    engine=engine,
+                    ws=ws,
+                    order_gateway=order_gateway,
+                    gc_pause_monitor=gc_pause_monitor,
+                    logging_runtime=logging_runtime,
+                ),
+            )
+        except BaseException as exc:
+            fallback_required = True
+            cleanup_errors.append(exc)
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
+                "Final runtime health publication failed: %s",
+                exc,
+                exc_info=True,
+            )
+    else:
+        fallback_required = True
+        unavailable_error = RuntimeError(
+            "runtime evidence FIFO was unavailable before final health: "
+            f"{initial_health.get('fatal_error') or 'writer_not_accepting'}"
+        )
+        cleanup_errors.append(unavailable_error)
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "Final runtime health publication failed: evidence FIFO invalid: %s",
+            unavailable_error,
+        )
+
+    evidence_health: dict[str, object] | None = None
+    try:
+        evidence_health = runtime_evidence_writer.close(
+            drain_timeout_s=10.0,
+        )
+        _safe_runtime_log(
+            logger,
+            logging.INFO,
+            "RUNTIME_EVIDENCE_WRITER_CLOSED rows=%d health=%d "
+            "tasks=%d hwm=%d queueFull=%d errors=%d",
+            int(evidence_health["csv_rows_committed"]),
+            int(evidence_health["json_snapshots_committed"]),
+            int(evidence_health["tasks_committed"]),
+            int(evidence_health["queue_high_watermark"]),
+            int(evidence_health["queue_full_count"]),
+            int(evidence_health["error_count"]),
+        )
+    except BaseException as exc:
+        fallback_required = True
+        cleanup_errors.append(exc)
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "Runtime evidence writer shutdown failed: %s",
+            exc,
+            exc_info=True,
+        )
+
+    if not fallback_required:
+        return evidence_health
+
+    final_writer_health = runtime_evidence_writer.health_snapshot()
+    if bool(final_writer_health.get("worker_alive", False)):
+        error = RuntimeError(
+            "cannot publish direct final runtime health while the evidence "
+            "writer worker remains alive"
+        )
+        cleanup_errors.append(error)
+        _safe_runtime_log(logger, logging.CRITICAL, "%s", error)
+        return evidence_health
+
+    try:
+        payload = collect_runtime_safety_health(
+            engine=engine,
+            ws=ws,
+            order_gateway=order_gateway,
+            gc_pause_monitor=gc_pause_monitor,
+            logging_runtime=logging_runtime,
+        )
+        write_runtime_safety_health(cfg, payload)
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "FINAL_RUNTIME_HEALTH_DIRECT_FALLBACK "
+            "writerValid=%d fatalRuntimeLatched=%d",
+            int(bool(payload["runtimeEvidenceWriterValid"])),
+            int(bool(payload["fatalRuntimeLatched"])),
+        )
+    except BaseException as exc:
+        cleanup_errors.append(exc)
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "Final runtime health publication failed: direct fallback: %s",
+            exc,
+            exc_info=True,
+        )
+    return evidence_health
+
+
 def _runtime_age_text(value: object) -> str:
     return "unknown" if value is None else f"{float(value):.1f}s"
 
@@ -4519,51 +4654,16 @@ def main():
                         exc,
                         exc_info=True,
                     )
-            try:
-                runtime_evidence_writer.enqueue_json_snapshot_factory(
-                    runtime_health_state_path(cfg),
-                    runtime_safety_health_payload_factory(
-                        engine=engine,
-                        ws=ws,
-                        order_gateway=order_gateway,
-                        gc_pause_monitor=gc_pause_monitor,
-                        logging_runtime=logging_runtime,
-                    ),
-                )
-            except BaseException as exc:
-                cleanup_errors.append(exc)
-                _safe_runtime_log(
-                    logger,
-                    logging.CRITICAL,
-                    "Final runtime health publication failed: %s",
-                    exc,
-                    exc_info=True,
-                )
-            try:
-                evidence_health = runtime_evidence_writer.close(
-                    drain_timeout_s=10.0,
-                )
-                _safe_runtime_log(
-                    logger,
-                    logging.INFO,
-                    "RUNTIME_EVIDENCE_WRITER_CLOSED rows=%d health=%d "
-                    "tasks=%d hwm=%d queueFull=%d errors=%d",
-                    int(evidence_health["csv_rows_committed"]),
-                    int(evidence_health["json_snapshots_committed"]),
-                    int(evidence_health["tasks_committed"]),
-                    int(evidence_health["queue_high_watermark"]),
-                    int(evidence_health["queue_full_count"]),
-                    int(evidence_health["error_count"]),
-                )
-            except BaseException as exc:
-                cleanup_errors.append(exc)
-                _safe_runtime_log(
-                    logger,
-                    logging.CRITICAL,
-                    "Runtime evidence writer shutdown failed: %s",
-                    exc,
-                    exc_info=True,
-                )
+            _close_runtime_evidence_writer_with_final_health(
+                cfg=cfg,
+                runtime_evidence_writer=runtime_evidence_writer,
+                engine=engine,
+                ws=ws,
+                order_gateway=order_gateway,
+                gc_pause_monitor=gc_pause_monitor,
+                logging_runtime=logging_runtime,
+                cleanup_errors=cleanup_errors,
+            )
         else:
             _safe_runtime_log(
                 logger,

@@ -40,6 +40,7 @@ def _engine() -> MakerEngine:
     engine.set_event_source(SimpleNamespace(user_event_safety_snapshot=lambda: {
         "user_stream_connected": True, "user_stream_generation": 1,
     }))
+    engine._order_ref_lock = threading.RLock()
     engine._replace_throttle_counts = {"BUY": 0, "SELL": 0}
     engine._last_replace_throttle_log = {"BUY": 0.0, "SELL": 0.0}
     engine._replace_pending_coalesce_counts = {"BUY": 0, "SELL": 0}
@@ -66,6 +67,7 @@ def _native_continuation_engine() -> MakerEngine:
 
 def _routable_update_orders_engine() -> MakerEngine:
     engine = _engine()
+    engine.inventory = SimpleNamespace(net_position=0.0)
     engine.cfg.strategy.replace_min_price_change_ticks = 0.0
     engine.cfg.strategy.replace_min_price_change_ticks_reducing = 0.0
     engine.cfg.strategy.replace_min_interval_ms = 0.0
@@ -462,6 +464,142 @@ def _configure_terminal_callback(engine: MakerEngine, cid: str) -> None:
     engine._on_dynamic_fill_hazard_order_terminal = lambda *args, **kwargs: None
 
 
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+@pytest.mark.parametrize("cancel_first", [False, True])
+@pytest.mark.parametrize(
+    "terminal_state", ["FILLED", "CANCELED", "PARTIAL_CANCELED", "PREPLAN_PARTIAL_CANCELED"]
+)
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("continuation", [False, True])
+def test_update_orders_keeps_captured_cancel_identity_across_terminal_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    side: Side,
+    cancel_first: bool,
+    terminal_state: str,
+    native: bool,
+    continuation: bool,
+) -> None:
+    engine = _routable_update_orders_engine()
+    engine.cfg.strategy.replace_terminal_continuation = continuation
+    engine.cfg.strategy.replace_cancel_first_exposure_increasing = cancel_first
+    engine.cfg.strategy.order_size = 0.001
+    engine.cfg.strategy.requote_threshold_bps = 0.0
+    engine.cfg.risk.max_position_value = 3_000.0
+    engine.cfg.min_notional = 5.0
+    q = 0.005 if side == Side.BUY else -0.005
+    engine.inventory.net_position = q
+    engine._native_order_action_planner = None
+    monkeypatch.setattr(maker_engine_module, "_get_live_routing_cpp", lambda: None)
+    monkeypatch.setenv("NARROWGATE_CPP_ORDER_ACTION_PLAN", "0")
+    monkeypatch.setenv("NARROWGATE_CPP_FINAL_ORDER_PLAN", "1" if native else "0")
+    if native:
+        cpp = pytest.importorskip("narrowgate_cpp")
+        monkeypatch.setattr(maker_engine_module, "_live_order_action_plan_cpp", cpp)
+        engine._freeze_native_order_action_planner()
+        engine._replace_terminal_continuation_native_module = cpp
+        engine._replace_terminal_continuation_native_state = (
+            cpp.NativeReplaceContinuationState(continuation)
+        )
+    engine.orders = OrderManager(on_terminal=engine._on_order_terminal)
+    price = 98_000.0 if side == Side.BUY else 102_000.0
+    cid = engine.orders.create_order("BTCUSDC", side, price=price, quantity=0.002)
+    engine.orders.confirm_new(cid, 123)
+    _configure_terminal_callback(engine, cid)
+    engine._bid_cid = cid if side == Side.BUY else None
+    engine._ask_cid = cid if side == Side.SELL else None
+    engine._record_exact_order_event = lambda *args, **kwargs: None
+    engine._record_perf_rest_latency = lambda *args, **kwargs: None
+    placements = []
+
+    def place_order(*args, **kwargs):
+        placements.append((args, kwargs))
+        return "replacement"
+
+    engine._place_order = place_order
+    engine._stop_for_unknown_order_ownership = lambda **kwargs: pytest.fail(
+        f"known terminal order was misclassified: {kwargs}"
+    )
+
+    original_arm = engine._arm_replace_terminal_continuation
+    original_cancel = engine._cancel_order
+    canceled_cids: list[str] = []
+
+    def arm_then_deliver_terminal(**kwargs) -> int:
+        assert kwargs["cid"] == cid
+        generation = original_arm(**kwargs)
+        # Deterministic callback interleaving: planning already observed OPEN,
+        # but the private stream clears the side reference before cancel starts.
+        update = _cancel_update(cid, visible_ts_ns=time.time_ns() + 1_000)
+        update.update({"S": side.value, "p": str(price), "q": "0.002", "X": terminal_state})
+        if terminal_state == "PREPLAN_PARTIAL_CANCELED":
+            update.update({"X": "CANCELED", "z": "0.001"})
+        if terminal_state in {"FILLED", "PARTIAL_CANCELED"}:
+            quantity = "0.002" if terminal_state == "FILLED" else "0.001"
+            update.update({
+                "X": "FILLED" if terminal_state == "FILLED" else "PARTIALLY_FILLED",
+                "x": "TRADE", "z": quantity, "l": quantity, "L": str(price),
+                "ap": str(price), "t": 1, "n": "0", "N": "USDC",
+            })
+            engine.inventory.net_position += float(quantity) * (
+                1 if side == Side.BUY else -1
+            )
+        engine.orders.on_order_update(update)
+        if terminal_state == "PARTIAL_CANCELED":
+            update.update({
+                "X": "CANCELED", "x": "CANCELED", "l": "0", "L": "0", "t": 0,
+            })
+            engine.orders.on_order_update(update)
+        assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) is None
+        return generation
+
+    def cancel_captured_order(target_cid: str, **kwargs) -> bool:
+        canceled_cids.append(target_cid)
+        return original_cancel(target_cid, **kwargs)
+
+    engine._arm_replace_terminal_continuation = arm_then_deliver_terminal
+    engine._cancel_order = cancel_captured_order
+    if terminal_state == "PREPLAN_PARTIAL_CANCELED":
+        # q/side policy belongs to the earlier decision, but the fill already
+        # changed inventory before _update_orders captures cumulative fill.
+        update = _cancel_update(cid, visible_ts_ns=time.time_ns())
+        update.update({
+            "S": side.value, "p": str(price), "X": "PARTIALLY_FILLED", "x": "TRADE",
+            "q": "0.002", "z": "0.001", "l": "0.001", "L": str(price), "ap": str(price),
+            "t": 1, "n": "0", "N": "USDC",
+        })
+        engine.orders.on_order_update(update)
+        engine.inventory.net_position += 0.001 * (1 if side == Side.BUY else -1)
+    engine._update_orders(
+        mid=100_000.0,
+        bid_price=99_000.0,
+        ask_price=101_000.0,
+        q=q,
+        pred=SimpleNamespace(),
+        quote_snapshot=SimpleNamespace(),
+        post_only_guard=SimpleNamespace(
+            best_bid=99_000.0, best_ask=101_000.0, source="test"
+        ),
+        route_sides=frozenset({side}),
+    )
+    assert canceled_cids == [cid]
+    assert not engine._order_submit_fail_closed
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status.name == "TERMINAL"
+    assert ownership.terminal_identity["terminal_state"] == (
+        "FILLED" if terminal_state == "FILLED" else "CANCELED"
+    )
+    # Preserve ordinary no-fill synchronous replacement, but a racing fill
+    # requires a new decision using fresh inventory and cooldown state.
+    assert len(placements) == int(
+        not continuation and not cancel_first and terminal_state == "CANCELED"
+    )
+    ready = engine._take_ready_replace_terminal_continuations()
+    assert set(ready) == (
+        {side} if continuation and terminal_state != "FILLED" else set()
+    )
+    assert engine.replace_terminal_continuation_telemetry_snapshot()["pending_count"] == 0
+
+
 def test_replace_throttle_keeps_small_exposure_increasing_price_move() -> None:
     engine = _engine()
     order = _order(Side.BUY, price=100.0, age_ms=2000.0)
@@ -640,6 +778,9 @@ def test_update_orders_perf_attributes_cancel_and_new_rest_by_side(
         engine._perf_rest_cancel_sum_us += (
             110.0 if order.side == Side.BUY else 220.0
         )
+        update = _cancel_update(cid, visible_ts_ns=time.time_ns())
+        update.update({"i": order.order_id, "S": order.side.value, "p": str(order.price)})
+        engine.orders.on_order_update(update)
         return True
 
     def place_order(symbol: str, side: Side, *args, **kwargs) -> str:

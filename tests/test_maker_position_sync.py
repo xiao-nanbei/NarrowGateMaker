@@ -293,6 +293,7 @@ def test_engine_stop_cancels_exchange_before_waiting_for_cold_worker() -> None:
         return _flat_seed_payload(2_000)
 
     engine = _periodic_engine(fetch)
+    engine.orders.get_active_orders = lambda: []
     engine._running = True
     engine._clear_all_replace_terminal_continuations = lambda **_kwargs: None
     engine._persist_fill_cooldown_checkpoint = lambda: None
@@ -1361,6 +1362,7 @@ def test_stop_waits_for_order_callbacks_before_sync_and_evidence_close() -> None
 
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine.orders = SimpleNamespace(get_active_orders=lambda: [])
     engine.order_gateway = _OrderGateway()
     engine.signal = SimpleNamespace(stop=lambda: None)
     engine._running = True

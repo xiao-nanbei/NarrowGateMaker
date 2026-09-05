@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from live.binance_usdm_transport import BinanceUsdMOrderGateway
 from live.config import Config
+from live.main import resolve_live_shutdown_exit
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import OrderManager, OrderOwnershipStatus, OrderState, Side
@@ -211,11 +213,146 @@ def _engine(rest: _RestClient) -> MakerEngine:
     }
     engine._running = True
     engine._order_submit_fail_closed = False
+    engine._shutdown_new_order_admission_revoked = False
     engine._record_exact_order_event = lambda *args, **kwargs: None
     engine._record_perf_rest_latency = lambda *args, **kwargs: None
     engine._log_order_outcome = lambda *args, **kwargs: None
     engine._pop_order_context = lambda *args, **kwargs: None
     return engine
+
+
+@pytest.mark.parametrize("route", ["limit", "async", "close", "emergency"])
+@pytest.mark.parametrize("after_reservation", [False, True])
+def test_shutdown_admission_blocks_all_new_order_routes(route, after_reservation):
+    rest = _RestClient()
+    rest.revoke_new_order_admission = lambda: None
+    engine = _engine(rest)
+    engine.inventory = SimpleNamespace(net_position=0.001)
+    if route == "async":
+        gateway = _ControllableAsyncGateway()
+        gateway.revoke_new_order_admission = lambda: None
+        engine.order_gateway = gateway
+        engine.cfg.api.async_order_lanes_enabled = True
+    if after_reservation:
+        engine._record_exact_order_event = (
+            lambda *_args, **_kwargs: engine.revoke_new_order_authority_for_shutdown()
+        )
+    else:
+        engine.revoke_new_order_authority_for_shutdown()
+
+    if route in {"limit", "async"}:
+        engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    elif route == "close":
+        engine._place_close_order("BTCUSDC", Side.SELL, 100.1, 0.001, use_ioc=True)
+    else:
+        engine._emergency_close(100.0)
+
+    assert rest.calls == []
+    if route == "async":
+        assert gateway.new_calls == []
+    assert engine._shutdown_new_order_admission_revoked is True
+    assert engine._execution_state_uncertain() is False
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is False
+    assert engine.orders.get_active_orders() == []
+
+
+@pytest.mark.parametrize("completion", ["NEW", "EXPIRED", "unknown"])
+def test_shutdown_preserves_late_async_response_and_unknown_ownership(completion):
+    gateway = _ControllableAsyncGateway()
+    gateway.revoke_new_order_admission = lambda: None
+    engine = _engine(_RestClient())
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.revoke_new_order_authority_for_shutdown()
+
+    if completion == "unknown":
+        gateway.new_future.set_exception(TimeoutError("submit response lost"))
+    else:
+        gateway.new_future.set_result(_result_for(gateway.new_calls[0], status=completion))
+    order = engine.orders.get_order(cid)
+    if completion == "unknown":
+        assert order.state is OrderState.PENDING_NEW
+        assert order.lifecycle.submit_ack_unknown_observed is True
+        assert engine._bid_cid == cid
+    else:
+        assert order.state is (
+            OrderState.OPEN if completion == "NEW" else OrderState.EXPIRED
+        )
+        assert order.lifecycle.submit_ack_unknown_observed is False
+    assert engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001) is None
+    assert len(gateway.new_calls) == 1
+
+
+@pytest.mark.parametrize("conflict_before_shutdown", [False, True])
+def test_shutdown_does_not_hide_real_ownership_conflict(conflict_before_shutdown):
+    rest = _RestClient()
+    rest.revoke_new_order_admission = lambda: None
+    engine = _engine(rest)
+    first = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert engine._reserve_side_order_ownership(side=Side.BUY, cid=first)
+    if not conflict_before_shutdown:
+        engine.revoke_new_order_authority_for_shutdown()
+    second = engine.orders.create_order("BTCUSDC", Side.BUY, 99.8, 0.001)
+    assert not engine._reserve_side_order_ownership(side=Side.BUY, cid=second)
+    if conflict_before_shutdown:
+        engine.revoke_new_order_authority_for_shutdown()
+    assert engine._execution_state_uncertain() is True
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is True
+
+
+@pytest.mark.parametrize("completion", ["unknown", "NEW", "PENDING_CANCEL", "CANCELED"])
+def test_shutdown_exit_rejects_only_current_unresolved_submit_ack(completion):
+    rest = _RestClient()
+    gateway = _ControllableAsyncGateway()
+    gateway.revoke_new_order_admission = lambda: None
+    gateway.cancel_open_orders = rest.cancel_open_orders
+    engine = _engine(rest)
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    engine.signal = SimpleNamespace(stop=lambda: None)
+    engine._persist_fill_cooldown_checkpoint = lambda: None
+    engine.close_fill_cooldown_checkpoint_store = lambda: None
+    sync_calls = []
+    engine.sync_position = lambda **kwargs: sync_calls.append(kwargs) or True
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.revoke_new_order_authority_for_shutdown()
+
+    def drain():
+        # Represents callback completion after the user stream has stopped.
+        gateway.new_future.set_exception(TimeoutError("submit response lost"))
+        assert engine.orders.get_order(cid).lifecycle.submit_ack_unknown_observed
+        if completion != "unknown":
+            engine.orders.confirm_new(cid, 123)
+        if completion == "PENDING_CANCEL":
+            engine.orders.mark_pending_cancel(cid)
+        if completion == "CANCELED":
+            engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+
+    engine._drain_order_completion_callbacks = drain
+    cleanup_errors = []
+    try:
+        engine.stop()
+    except RuntimeError as exc:
+        cleanup_errors.append(exc)
+
+    assert sync_calls and sync_calls[0] == {"required": True}
+    safety = engine.runtime_safety_snapshot()
+    assert safety["ownership_conflict_latched"] is False
+    assert rest.cancel_calls
+    exit_code = resolve_live_shutdown_exit(
+        engine=engine, fatal_error=None, fatal_traceback=None,
+        cleanup_errors=cleanup_errors,
+    )
+    if completion == "unknown":
+        assert engine.orders.get_order(cid).state is OrderState.PENDING_NEW
+        assert engine._bid_cid == cid
+        assert safety["reconciliation_required"] is True
+        assert exit_code == 78
+    else:
+        assert safety["reconciliation_required"] is False
+        assert cleanup_errors == []
+        assert exit_code == 0
 
 
 def _install_exact_result_trade_sync(
@@ -832,6 +969,241 @@ def test_async_submit_result_transitions_pending_new_to_open() -> None:
     assert engine._ask_cid == cid
 
 
+@pytest.mark.parametrize("route", ("limit", "async", "close", "emergency"))
+@pytest.mark.parametrize("status", ("NEW", "EXPIRED"))
+def test_submit_result_local_evidence_failure_preserves_exchange_state(
+    route: str, status: str,
+) -> None:
+    rest = _RestClient(response={"orderId": 123, "status": status})
+    engine = _engine(rest)
+
+    def fail_outcome(*_args, **_kwargs):
+        raise RuntimeError("local outcome writer failed")
+
+    engine._log_order_outcome = fail_outcome
+    if route == "async":
+        gateway = _ControllableAsyncGateway()
+        gateway.cancel_open_orders = rest.cancel_open_orders
+        engine.order_gateway = gateway
+        engine.cfg.api.async_order_lanes_enabled = True
+        cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+        gateway.new_future.set_result(_result_for(gateway.new_calls[0], status=status))
+    elif route == "limit":
+        cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    elif route == "close":
+        engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001, use_ioc=True)
+        cid = rest.calls[0]["newClientOrderId"]
+    else:
+        engine.inventory = SimpleNamespace(net_position=0.001)
+        engine._emergency_close(100.0)
+        cid = rest.calls[0]["newClientOrderId"]
+
+    order = engine.orders.get_order(cid)
+    assert order.order_id == 123
+    assert order.state is (OrderState.OPEN if status == "NEW" else OrderState.EXPIRED)
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    # Async terminal results do not need a second outcome row after the
+    # authoritative terminal callback and therefore never hit fail_outcome.
+    if route == "async" and status == "EXPIRED":
+        assert engine._execution_state_uncertain() is False
+    else:
+        assert engine._running is False
+        assert engine._order_submit_fail_closed is True
+        assert engine._runtime_fatal_reason == "SUBMIT_RESULT_PROCESSING_FAILED"
+        assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
+@pytest.mark.parametrize("terminal", (False, True))
+def test_sync_submit_late_timeout_cannot_erase_private_exchange_evidence(
+    terminal: bool,
+) -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def accepted_then_timeout(**params):
+        rest.calls.append(params)
+        cid = params["newClientOrderId"]
+        engine.orders.confirm_new(cid, 123)
+        if terminal:
+            engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+        raise TimeoutError("late response lost after private acceptance")
+
+    rest.new_order = accepted_then_timeout
+    returned_cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    cid = rest.calls[0]["newClientOrderId"]
+    order = engine.orders.get_order(cid)
+    assert order.state is (OrderState.CANCELED if terminal else OrderState.OPEN)
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    assert returned_cid == (None if terminal else cid)
+    assert engine._execution_state_uncertain() is False
+
+
+def test_unknown_ack_race_with_private_new_keeps_authoritative_acceptance() -> None:
+    engine = _engine(_RestClient())
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine._reserve_side_order_ownership(side=Side.BUY, cid=cid)
+    mark_unknown = engine.orders.mark_submit_ack_unknown
+
+    def private_new_before_mark(order_cid, reason):
+        engine.orders.confirm_new(order_cid, 123)
+        return mark_unknown(order_cid, reason)
+
+    engine.orders.mark_submit_ack_unknown = private_new_before_mark
+    assert engine._hold_submit_with_unknown_ack(
+        cid=cid, side=Side.BUY, error=TimeoutError("late response"),
+    ) is False
+    assert engine.orders.get_order(cid).state is OrderState.OPEN
+    assert engine.orders.get_order(cid).lifecycle.submit_ack_unknown_observed is False
+
+
+def test_engine_async_rest_uses_global_fifo_and_consumes_private_terminal_first():
+    new_started = threading.Event()
+    release_new = threading.Event()
+    cancel_started = threading.Event()
+    release_cancel = threading.Event()
+    network_lock = threading.Lock()
+    calls = []
+    inflight = 0
+    max_inflight = 0
+
+    def request(method, params, *, started=None, release=None):
+        nonlocal inflight, max_inflight
+        cid = params.get("newClientOrderId") or params["origClientOrderId"]
+        with network_lock:
+            calls.append((method, cid))
+            inflight += 1
+            max_inflight = max(max_inflight, inflight)
+        try:
+            if started is not None:
+                started.set()
+            if release is not None:
+                assert release.wait(2.0), "test HTTP response was not released"
+            return _result_for(
+                params,
+                status="CANCELED" if method == "cancel" else "NEW",
+                order_id=124 if params.get("side") == "SELL" else 123,
+            )
+        finally:
+            with network_lock:
+                inflight -= 1
+
+    class HeldRest:
+        def new_order(self, **params):
+            return request(
+                "new", params,
+                started=new_started if params["side"] == "BUY" else None,
+                release=release_new if params["side"] == "BUY" else None,
+            )
+
+        def cancel_order(self, **params):
+            return request(
+                "cancel", {**params, "side": "BUY"},
+                started=cancel_started, release=release_cancel,
+            )
+
+    rest = HeldRest()
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=rest,
+        async_order_lanes_enabled=True,
+        cross_side_order_lanes_enabled=False,
+    )
+    engine = _engine(rest)
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    engine._dynamic_fill_hazard_shadow_runtime = None
+    engine._dynamic_fill_hazard_action_lock = threading.RLock()
+    engine._dynamic_fill_hazard_action_hold = None
+    engine.orders = OrderManager(
+        on_cancel=engine._on_cancel,
+        on_terminal=engine._on_order_terminal,
+    )
+    try:
+        buy_cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+        assert buy_cid is not None
+        assert new_started.wait(1.0)
+        assert engine.orders.get_order(buy_cid).state is OrderState.PENDING_NEW
+        assert inflight == 1
+        private_new = _private_cancel(buy_cid, side=Side.BUY)
+        private_new["X"] = "NEW"
+        engine.orders.on_order_update(private_new)
+        assert engine.orders.get_order(buy_cid).state is OrderState.OPEN
+
+        assert not engine._cancel_order(buy_cid)
+        assert engine.orders.get_order(buy_cid).state is OrderState.PENDING_CANCEL
+        assert calls == [("new", buy_cid)]
+        assert not cancel_started.is_set()
+        release_new.set()
+        assert cancel_started.wait(1.0)
+        assert inflight == 1
+
+        engine.orders.on_order_update(_private_cancel(buy_cid, side=Side.BUY))
+        assert engine.orders.get_order(buy_cid).state is OrderState.CANCELED
+        assert engine._bid_cid is None
+        assert not release_cancel.is_set()
+        sell_cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+        assert sell_cid is not None
+        assert engine.orders.get_order(sell_cid).state is OrderState.PENDING_NEW
+        assert calls == [("new", buy_cid), ("cancel", buy_cid)]
+
+        release_cancel.set()
+        gateway.drain_async_order_completions(timeout_s=2.0)
+        assert calls == [("new", buy_cid), ("cancel", buy_cid), ("new", sell_cid)]
+        assert max_inflight == 1
+        assert inflight == 0
+        assert engine.orders.get_order(buy_cid).state is OrderState.CANCELED
+        assert engine.orders.get_order(sell_cid).state is OrderState.OPEN
+        assert engine._bid_cid is None
+        assert engine._ask_cid == sell_cid
+        health = gateway.health_snapshot()
+        assert health["active_transport"] == "rest"
+        assert list(health["async_order_lanes"]) == ["GLOBAL"]
+        assert health["async_order_lanes"]["GLOBAL"]["future_results_delivered"] == 3
+        assert engine.is_running is True
+    finally:
+        release_new.set()
+        release_cancel.set()
+        gateway.close()
+
+
+def test_runtime_fatal_cancels_before_failed_continuation_evidence() -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def fail_continuation_cleanup(**_kwargs):
+        assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+        raise RuntimeError("continuation evidence writer failed")
+
+    engine._clear_all_replace_terminal_continuations = fail_continuation_cleanup
+    engine.latch_runtime_fatal(
+        reason="LOCAL_EVIDENCE_FAILURE",
+        error=RuntimeError("writer poisoned"),
+        reconciliation_required=True,
+        defer_reconciliation=True,
+    )
+    assert engine._running is False
+    assert engine._execution_state_uncertain() is True
+    assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
+def test_gateway_evidence_failure_is_checked_outside_submit_classification() -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+
+    def fail_evidence_check():
+        raise RuntimeError("order gateway receipt collection failed")
+
+    rest.raise_if_evidence_failed = fail_evidence_check
+    engine.order_gateway = rest
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    with pytest.raises(RuntimeError, match="ORDER_GATEWAY_EVIDENCE_FAILED"):
+        engine.raise_if_runtime_fatal()
+    order = engine.orders.get_order(cid)
+    assert order.state is OrderState.OPEN
+    assert order.lifecycle.submit_ack_unknown_observed is False
+    assert engine._running is False
+    assert rest.cancel_calls == [{"symbol": "BTCUSDC"}]
+
+
 def test_async_submit_late_result_does_not_resurrect_private_terminal() -> None:
     engine = _engine(_RestClient())
     gateway = _ControllableAsyncGateway()
@@ -1021,6 +1393,80 @@ def test_async_cancel_transport_unknown_retains_pending_cancel() -> None:
     assert order is not None
     assert order.state is OrderState.PENDING_CANCEL
     assert engine._bid_cid == cid
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["before_apply", "after_apply", "after_private_terminal", "after_active_result"],
+)
+def test_async_cancel_local_processing_failure_preserves_exchange_state(
+    failure_stage, caplog,
+) -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+    gateway = _ControllableAsyncGateway()
+    gateway.cancel_open_orders = rest.cancel_open_orders
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    assert not engine._cancel_order(cid)
+    if failure_stage == "after_private_terminal":
+        engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+
+    apply_response = engine._apply_rest_reconciled_order_status
+    response_error_calls = []
+    engine._complete_cancel_order_error = lambda **kwargs: response_error_calls.append(kwargs)
+
+    def fail_processing(**kwargs):
+        if failure_stage != "before_apply":
+            apply_response(**kwargs)
+        raise RuntimeError("local cancel result processing failed")
+
+    engine._apply_rest_reconciled_order_status = fail_processing
+    status = "NEW" if failure_stage == "after_active_result" else "CANCELED"
+    gateway.cancel_future.set_result(_result_for(gateway.cancel_calls[0], status=status))
+
+    assert response_error_calls == []
+    assert "CANCEL_ACK_UNKNOWN" not in caplog.text
+    expected_state = {
+        "before_apply": OrderState.PENDING_CANCEL,
+        "after_active_result": OrderState.OPEN,
+    }.get(failure_stage, OrderState.CANCELED)
+    assert engine.orders.get_order(cid).state is expected_state
+    assert engine._order_submit_fail_closed is True
+    assert engine.is_running is False
+    safety = engine.runtime_safety_snapshot()
+    assert safety["fatal_runtime_reason"] == "ASYNC_ORDER_CANCEL_COMPLETION_FAILED"
+    assert safety["reconciliation_required"] is True
+    assert engine._runtime_reconciliation_quiescence_blocked is True
+    assert len(rest.cancel_calls) == 1
+    assert engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001) is None
+    assert gateway.new_calls == []
+
+
+@pytest.mark.parametrize("response_kind", ["missing_field", "unrecognized_status"])
+def test_async_cancel_unvalidated_response_still_retains_unknown_ownership(response_kind):
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    assert not engine._cancel_order(cid)
+    response = _result_for(gateway.cancel_calls[0], status="CANCELED")
+    if response_kind == "missing_field":
+        del response["executedQty"]
+    else:
+        response["status"] = "UNRECOGNIZED"
+    gateway.cancel_future.set_result(response)
+
+    assert engine.orders.get_order(cid).state is OrderState.PENDING_CANCEL
+    assert engine._bid_cid == cid
+    assert engine.is_running is True
+    assert engine._order_submit_fail_closed is False
 
 
 def test_async_submit_pre_dispatch_failure_releases_ownership() -> None:

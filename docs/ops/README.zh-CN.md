@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-03
+Last materially modified: 2026-09-05
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-05
 
 本目录保存可复用的公共运维合同，不得包含当前主机、credential、账户/订单/持仓状态、
 active release identity、private artifact location、策略参数或 live economics。
@@ -106,9 +106,7 @@ candidate verification 并生成 fresh reconciliation。它不是绕过正常停
 已经成功选中的服务后来以 78 退出，属于另一种情况：只能使用独立的
 `--recover-runtime-fatal`，不能使用 `--resume-stopped`。该模式要求 compact current
 pointer、对应 activation receipt、deployment envelope、旧 stopped reconciliation 与
-activation 绑定的 runtime identity 构成完整一致链；最终 runtime-health 必须表明同一 PID
-处于 fail-closed 且需要 reconciliation，systemd journal 的同一 invocation 还必须同时记录
-operator-gated exit 与 `EXIT_STATUS=78`。Unit 必须 inactive 或不存在，maker/supervisor 进程必须完全
+activation 绑定的 runtime identity 构成完整一致链；runtime-health 必须属于同一 PID，正常情况下应记录最终 fail-closed 且需要 reconciliation 的状态。如果 writer 在发布最终 health 前失败，则必须由同一真实进程与 journal invocation 记录最终 health 发布失败及随后的 operator-gated exit。两种路径都必须有匹配的 systemd `EXIT_STATUS=78`；仅有过期健康快照不能恢复。Unit 必须 inactive 或不存在，maker/supervisor 进程必须完全
 不存在。新 candidate 必须使用从未存在的新 stopped-reconciliation 和 activation-receipt
 路径，旧 release 的文件不能冒充 fresh evidence。随后仍必须执行 fresh signed
 reconciliation、start、health admission、新 activation receipt 和 pointer-last publication。

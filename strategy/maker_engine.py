@@ -1705,6 +1705,7 @@ class MakerEngine:
         # State
         self._running = False
         self._order_submit_fail_closed = False
+        self._shutdown_new_order_admission_revoked = False
         self._runtime_fatal_reason = ""
         self._runtime_fatal_error: Optional[BaseException] = None
         self._runtime_reconciliation_required = False
@@ -8396,11 +8397,17 @@ class MakerEngine:
         now_ts = time.time()
         update_orders_prepare_policy_end_ns = time.perf_counter_ns()
 
+        # A terminal callback can clear a side reference while this decision
+        # runs. Capture each identity once; never retarget an in-flight plan.
+        with self._order_ref_lock:
+            bid_cid = self._bid_cid
+            ask_cid = self._ask_cid
         # Check existing bid order
-        bid_order = self.orders.get_order(self._bid_cid) if self._bid_cid else None
+        bid_order = self.orders.get_order(bid_cid) if bid_cid else None
+        bid_observed_fill_qty = float(bid_order.filled_qty) if bid_order else 0.0
         bid_pending_lifecycle = self._order_lifecycle_pending(bid_order)
         bid_alive = bid_order and bid_order.is_active
-        if self._bid_cid and not bid_alive and not bid_pending_lifecycle:
+        if bid_cid and not bid_alive and not bid_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.BUY)
         bid_needs_update = True
         bid_force_update = False
@@ -8415,12 +8422,15 @@ class MakerEngine:
                 bid_policy.reason_text = self._policy_reason_text(bid_policy.reason_mask)
 
         # Check existing ask order
-        ask_order = self.orders.get_order(self._ask_cid) if self._ask_cid else None
+        ask_order = self.orders.get_order(ask_cid) if ask_cid else None
+        ask_observed_fill_qty = float(ask_order.filled_qty) if ask_order else 0.0
         ask_pending_lifecycle = self._order_lifecycle_pending(ask_order)
         ask_alive = ask_order and ask_order.is_active
-        if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
+        if ask_cid and not ask_alive and not ask_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.SELL)
-        if self._order_submit_fail_closed:
+        if self._order_submit_fail_closed or getattr(
+            self, "_shutdown_new_order_admission_revoked", False
+        ):
             prepare_end_ns = time.perf_counter_ns()
             prepare_policy_us = (
                 update_orders_prepare_policy_end_ns - update_orders_start_ns
@@ -9206,12 +9216,12 @@ class MakerEngine:
         if bid_cancel_first and bid_alive:
             bid_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.BUY,
-                cid=str(self._bid_cid),
+                cid=bid_replaced_cid,
                 can_post=bool(can_bid),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
-                self._bid_cid,
+                bid_replaced_cid,
                 trigger_decision_id=bid_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
@@ -9225,12 +9235,12 @@ class MakerEngine:
         elif bid_needs_update and bid_alive:
             bid_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.BUY,
-                cid=str(self._bid_cid),
+                cid=bid_replaced_cid,
                 can_post=bool(can_bid),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
-                self._bid_cid,
+                bid_replaced_cid,
                 trigger_decision_id=bid_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
@@ -9246,6 +9256,17 @@ class MakerEngine:
                 bid_needs_update = False
                 bid_pending_coalesce = True
             elif bid_cancel_requested:
+                terminal = self.orders.ownership_snapshot(bid_replaced_cid).terminal_identity
+                # Terminal does not necessarily mean canceled without a fill.
+                # A racing fill invalidates this decision's inventory/cooldown.
+                if not (
+                    terminal is not None
+                    and terminal["terminal_state"] == OrderState.CANCELED.name
+                    and terminal["cumulative_fill"] == bid_observed_fill_qty
+                    and abs(self.inventory.net_position - q) <= max(lot * 1e-9, 1e-12)
+                ):
+                    bid_needs_update = False
+                    bid_pending_coalesce = True
                 self._prune_terminal_side_order_reference(Side.BUY)
             else:
                 bid_needs_update = False
@@ -9253,12 +9274,12 @@ class MakerEngine:
         if ask_cancel_first and ask_alive:
             ask_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.SELL,
-                cid=str(self._ask_cid),
+                cid=ask_replaced_cid,
                 can_post=bool(can_ask),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
-                self._ask_cid,
+                ask_replaced_cid,
                 trigger_decision_id=ask_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
@@ -9272,12 +9293,12 @@ class MakerEngine:
         elif ask_needs_update and ask_alive:
             ask_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.SELL,
-                cid=str(self._ask_cid),
+                cid=ask_replaced_cid,
                 can_post=bool(can_ask),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
-                self._ask_cid,
+                ask_replaced_cid,
                 trigger_decision_id=ask_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
@@ -9292,6 +9313,15 @@ class MakerEngine:
                 ask_needs_update = False
                 ask_pending_coalesce = True
             elif ask_cancel_requested:
+                terminal = self.orders.ownership_snapshot(ask_replaced_cid).terminal_identity
+                if not (
+                    terminal is not None
+                    and terminal["terminal_state"] == OrderState.CANCELED.name
+                    and terminal["cumulative_fill"] == ask_observed_fill_qty
+                    and abs(self.inventory.net_position - q) <= max(lot * 1e-9, 1e-12)
+                ):
+                    ask_needs_update = False
+                    ask_pending_coalesce = True
                 self._prune_terminal_side_order_reference(Side.SELL)
             else:
                 ask_needs_update = False
@@ -11156,10 +11186,39 @@ class MakerEngine:
         cid: str,
         side: Side,
         error: BaseException,
-    ) -> None:
+    ) -> bool:
         if not self.orders.mark_submit_ack_unknown(cid, str(error)):
-            raise RuntimeError("submit ACK became unknown outside PENDING_NEW")
+            # A private acceptance/terminal can race a late transport error.
+            # The manager refuses to regress it under its lock; retain that
+            # stronger evidence rather than manufacturing an unknown ACK.
+            ownership = self.orders.ownership_snapshot(cid)
+            if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                raise RuntimeError("submit error lost authoritative order ownership")
+            self._verify_side_order_ownership(
+                side=side, cid=cid, phase="submit_error_after_exchange_evidence"
+            )
+            return False
         self._verify_side_order_ownership(side=side, cid=cid, phase="submit_ack_unknown")
+        return True
+
+    def _fail_submit_response_processing(
+        self, *, cid: str, error: BaseException,
+    ) -> None:
+        """Stop on local processing failure without erasing exchange evidence."""
+
+        self._order_submit_fail_closed = True
+        self.latch_runtime_fatal(
+            reason="SUBMIT_RESULT_PROCESSING_FAILED",
+            error=error,
+            reconciliation_required=True,
+            defer_reconciliation=True,
+        )
+        _critical_log_without_raising(
+            "SUBMIT_RESULT_PROCESSING_FAILED cid=%s; exchange identity/state "
+            "retained, new submissions stopped",
+            cid,
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
     @staticmethod
     def _submit_may_have_been_dispatched(error: BaseException, request_started: bool) -> bool:
@@ -11364,27 +11423,40 @@ class MakerEngine:
                 self._set_side_order_reference(side, None)
 
     def _abort_reserved_submit_if_fail_closed(self, *, side: Side, cid: str) -> bool:
-        """Reject a locally reserved order if a conflict latched before REST."""
+        """Reject a reserved order if admission closed before transport dispatch."""
 
         with self._order_ref_lock:
-            blocked = bool(getattr(self, "_order_submit_fail_closed", False))
-        if not blocked:
+            conflict = bool(getattr(self, "_order_submit_fail_closed", False))
+            shutdown = bool(
+                getattr(self, "_shutdown_new_order_admission_revoked", False)
+            )
+        if not (conflict or shutdown):
             return False
         self.orders.confirm_rejected(
             cid,
-            "local submit blocked by latched order-ownership conflict",
+            (
+                "local submit blocked by latched order-ownership conflict"
+                if conflict
+                else "local submit blocked by shutdown admission revocation"
+            ),
         )
         order = self.orders.get_order(cid)
         if order is not None:
-            self._log_order_outcome("reject_ownership_fail_closed", order)
+            self._log_order_outcome(
+                "reject_ownership_fail_closed" if conflict else "reject_local_error",
+                order,
+            )
         self._pop_order_context(cid)
         self._release_side_order_ownership(side=side, cid=cid)
-        logger.critical(
-            "ORDER_SUBMIT_ABORTED_BEFORE_REST side=%s cid=%s; "
-            "operator reconciliation required",
-            side.value,
-            cid,
-        )
+        if conflict:
+            logger.critical(
+                "ORDER_SUBMIT_ABORTED_BEFORE_REST side=%s cid=%s; "
+                "operator reconciliation required",
+                side.value,
+                cid,
+            )
+        else:
+            logger.info("ORDER_SUBMIT_ABORTED_FOR_SHUTDOWN side=%s cid=%s", side.value, cid)
         return True
 
     def _async_order_writes_enabled(self, transport: Any) -> bool:
@@ -11409,23 +11481,16 @@ class MakerEngine:
     def _complete_limit_order_submit_response(
         self,
         *,
-        response: Any,
+        response: tuple[dict[str, Any], int, str],
         cid: str,
         symbol: str,
         side: Side,
         quantity: float,
         asynchronous_completion: bool = False,
     ) -> Optional[str]:
-        """Commit one normal LIMIT RESULT without duplicating private events."""
+        """Commit an already validated RESULT, separate from transport errors."""
 
-        resp, oid, status = self._validated_submit_response(
-            response,
-            route="limit-order submit",
-            cid=cid,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-        )
+        resp, oid, status = response
         if not asynchronous_completion:
             # Keep the switch-off path byte-for-byte equivalent in lifecycle
             # semantics to B0.  Late-response arbitration below is only for
@@ -11598,72 +11663,9 @@ class MakerEngine:
     ) -> Optional[str]:
         """Classify one normal submit error using current monotonic ownership."""
 
-        if not asynchronous_completion:
-            if self._execution_state_uncertain():
-                logger.critical(
-                    "Order submit stopped after exact-fill reconciliation fatal; "
-                    "ownership retained cid=%s",
-                    cid,
-                )
-                return cid
-            error_code = self._exchange_error_code(error)
-            may_have_been_dispatched = self._submit_may_have_been_dispatched(
-                error,
-                request_started,
-            )
-            if not may_have_been_dispatched or error_code == -5022:
-                self.orders.confirm_rejected(cid, str(error))
-                order = self.orders.get_order(cid)
-                if order is not None:
-                    self._log_order_outcome(
-                        (
-                            "reject_gtx"
-                            if error_code == -5022
-                            else "reject_local_error"
-                        ),
-                        order,
-                    )
-                self._pop_order_context(cid)
-                self._release_side_order_ownership(side=side, cid=cid)
-            else:
-                self._hold_submit_with_unknown_ack(
-                    cid=cid,
-                    side=side,
-                    error=error,
-                )
-                order = self.orders.get_order(cid)
-                if order is not None:
-                    self._log_order_outcome("submit_ack_unknown", order)
-            if error_code == -5022:
-                logger.debug(
-                    "GTX rejected (would cross): %s %s@%s",
-                    side.value,
-                    quantity,
-                    price,
-                )
-            elif may_have_been_dispatched:
-                logger.error(
-                    "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
-                    "%s %s@%s: %s",
-                    side.value,
-                    quantity,
-                    price,
-                    error,
-                )
-            else:
-                logger.error(
-                    "Order place failed: %s %s@%s: %s",
-                    side.value,
-                    quantity,
-                    price,
-                    error,
-                )
-            return (
-                cid
-                if may_have_been_dispatched and error_code != -5022
-                else None
-            )
-
+        # Both transports can observe private NEW/terminal before a late
+        # response. Preserve the same monotonic evidence ordering in the
+        # synchronous path as in asynchronous completion.
         if self._execution_state_uncertain():
             logger.critical(
                 "Order submit stopped after exact-fill reconciliation fatal; "
@@ -11731,7 +11733,8 @@ class MakerEngine:
             self._pop_order_context(cid)
             self._release_side_order_ownership(side=side, cid=cid)
         else:
-            self._hold_submit_with_unknown_ack(cid=cid, side=side, error=error)
+            if not self._hold_submit_with_unknown_ack(cid=cid, side=side, error=error):
+                return self._side_order_reference(side)
             order = self.orders.get_order(cid)
             if order is not None:
                 self._log_order_outcome("submit_ack_unknown", order)
@@ -11788,9 +11791,19 @@ class MakerEngine:
                         asynchronous_completion=True,
                     )
                 else:
+                    response_validated = False
                     try:
+                        validated = self._validated_submit_response(
+                            response,
+                            route="limit-order submit",
+                            cid=cid,
+                            symbol=symbol,
+                            side=side,
+                            quantity=quantity,
+                        )
+                        response_validated = validated[2] in _REST_RECONCILE_STATUSES
                         self._complete_limit_order_submit_response(
-                            response=response,
+                            response=validated,
                             cid=cid,
                             symbol=symbol,
                             side=side,
@@ -11798,15 +11811,18 @@ class MakerEngine:
                             asynchronous_completion=True,
                         )
                     except BaseException as exc:
-                        self._complete_limit_order_submit_error(
-                            error=exc,
-                            cid=cid,
-                            side=side,
-                            price=price,
-                            quantity=quantity,
-                            request_started=True,
-                            asynchronous_completion=True,
-                        )
+                        if response_validated:
+                            self._fail_submit_response_processing(cid=cid, error=exc)
+                        else:
+                            self._complete_limit_order_submit_error(
+                                error=exc,
+                                cid=cid,
+                                side=side,
+                                price=price,
+                                quantity=quantity,
+                                request_started=True,
+                                asynchronous_completion=True,
+                            )
             except BaseException as exc:
                 logger.critical(
                     "ASYNC_ORDER_SUBMIT_COMPLETION_FAILED side=%s cid=%s error=%s",
@@ -11828,6 +11844,8 @@ class MakerEngine:
                      decision_context: Optional[dict] = None,
                      record_requote_perf: bool = True) -> Optional[str]:
         """Send limit order to exchange."""
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return None
         if not self._enforce_private_user_stream_authority():
             return None
         if self._execution_state_uncertain():
@@ -11859,6 +11877,7 @@ class MakerEngine:
         )
 
         request_started = False
+        response_validated = False
         try:
             params = dict(
                 symbol=symbol,
@@ -11936,8 +11955,17 @@ class MakerEngine:
                     self._record_perf_rest_latency(
                         "new", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
+            validated = self._validated_submit_response(
+                resp,
+                route="limit-order submit",
+                cid=cid,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+            )
+            response_validated = validated[2] in _REST_RECONCILE_STATUSES
             return self._complete_limit_order_submit_response(
-                response=resp,
+                response=validated,
                 cid=cid,
                 symbol=symbol,
                 side=side,
@@ -11945,6 +11973,9 @@ class MakerEngine:
             )
 
         except Exception as e:
+            if response_validated:
+                self._fail_submit_response_processing(cid=cid, error=e)
+                return cid
             return self._complete_limit_order_submit_error(
                 error=e,
                 cid=cid,
@@ -11961,6 +11992,8 @@ class MakerEngine:
         """Send one reduce-only close order using the caller-selected TIF."""
         MAX_GTX_REJECTS = 3
 
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return
         if getattr(self, "_order_submit_fail_closed", False):
             logger.critical(
                 "CLOSE_ORDER_SUBMIT_BLOCKED_FAIL_CLOSED side=%s; "
@@ -11984,6 +12017,7 @@ class MakerEngine:
             "submit",
         )
         request_started = False
+        response_validated = False
         try:
             tif = "IOC" if use_ioc else "GTX"
             params = dict(
@@ -12022,6 +12056,7 @@ class MakerEngine:
                 side=side,
                 quantity=quantity,
             )
+            response_validated = status in _REST_RECONCILE_STATUSES
 
             executed_quantity = float(resp["executedQty"])
             if status != "NEW" or executed_quantity > 0.0:
@@ -12103,6 +12138,9 @@ class MakerEngine:
                 logger.info(f"IOC close placed: {side.value} {quantity}@{price}")
 
         except Exception as e:
+            if response_validated:
+                self._fail_submit_response_processing(cid=cid, error=e)
+                return
             if self._execution_state_uncertain():
                 logger.critical(
                     "Close submit stopped after exact-fill reconciliation fatal; "
@@ -12121,7 +12159,8 @@ class MakerEngine:
                 self._pop_order_context(cid)
                 self._release_side_order_ownership(side=side, cid=cid)
             else:
-                self._hold_submit_with_unknown_ack(cid=cid, side=side, error=e)
+                if not self._hold_submit_with_unknown_ack(cid=cid, side=side, error=e):
+                    return
                 order = self.orders.get_order(cid)
             if exact_gtx_reject:
                 if order is not None:
@@ -12659,38 +12698,15 @@ class MakerEngine:
     def _complete_cancel_order_response(
         self,
         *,
-        response: Any,
+        response: tuple[dict[str, Any], int, str],
+        order: Any,
         cid: str,
         side: Side,
         replace_continuation_generation: int,
     ) -> bool:
-        """Validate and monotonically consume one asynchronous cancel RESULT."""
+        """Apply an already validated cancel RESULT without reclassifying errors."""
 
-        ownership = self.orders.ownership_snapshot(cid)
-        if ownership.status is OrderOwnershipStatus.UNKNOWN:
-            raise RuntimeError(f"cancel RESULT has unknown ownership: cid={cid}")
-        order = self.orders.get_order(cid)
-        if order is None:
-            raise RuntimeError(f"cancel RESULT lost local order: cid={cid}")
-        normalized, _oid, status = self._validated_submit_response(
-            response,
-            route="cancel-order",
-            cid=cid,
-            symbol=str(getattr(order, "symbol", self.cfg.symbol)),
-            side=side,
-            quantity=float(getattr(order, "quantity", 0.0)),
-        )
-        if status not in {
-            "NEW",
-            "PARTIALLY_FILLED",
-            "FILLED",
-            "CANCELED",
-            "EXPIRED",
-            "REJECTED",
-        }:
-            raise RuntimeError(
-                f"unrecognized cancel-order response status: {status or 'missing'}"
-            )
+        normalized, _oid, status = response
         self._apply_rest_reconciled_order_status(
             response=normalized,
             order=order,
@@ -12798,14 +12814,27 @@ class MakerEngine:
                     )
                 else:
                     try:
-                        self._complete_cancel_order_response(
-                            response=response,
+                        ownership = self.orders.ownership_snapshot(cid)
+                        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                            raise RuntimeError(
+                                f"cancel RESULT has unknown ownership: cid={cid}"
+                            )
+                        order = self.orders.get_order(cid)
+                        if order is None:
+                            raise RuntimeError(f"cancel RESULT lost local order: cid={cid}")
+                        validated = self._validated_submit_response(
+                            response,
+                            route="cancel-order",
                             cid=cid,
+                            symbol=str(getattr(order, "symbol", self.cfg.symbol)),
                             side=side,
-                            replace_continuation_generation=(
-                                replace_continuation_generation
-                            ),
+                            quantity=float(getattr(order, "quantity", 0.0)),
                         )
+                        if validated[2] not in _REST_RECONCILE_STATUSES:
+                            raise RuntimeError(
+                                "unrecognized cancel-order response status: "
+                                f"{validated[2] or 'missing'}"
+                            )
                     except BaseException as exc:
                         self._complete_cancel_order_error(
                             error=exc,
@@ -12816,20 +12845,35 @@ class MakerEngine:
                             ),
                             request_started=True,
                         )
+                    else:
+                        # Network/schema uncertainty ends at validation. A
+                        # local apply, callback or log failure must stop the
+                        # runtime without rewriting known exchange evidence as
+                        # CANCEL_ACK_UNKNOWN.
+                        self._complete_cancel_order_response(
+                            response=validated,
+                            order=order,
+                            cid=cid,
+                            side=side,
+                            replace_continuation_generation=(
+                                replace_continuation_generation
+                            ),
+                        )
             except BaseException as exc:
-                logger.critical(
+                self._order_submit_fail_closed = True
+                self.latch_runtime_fatal(
+                    reason="ASYNC_ORDER_CANCEL_COMPLETION_FAILED",
+                    error=exc,
+                    reconciliation_required=True,
+                    defer_reconciliation=True,
+                )
+                _critical_log_without_raising(
                     "ASYNC_ORDER_CANCEL_COMPLETION_FAILED side=%s cid=%s error=%s",
                     side.value,
                     cid,
                     exc,
-                    exc_info=True,
+                    exc_info=(type(exc), exc, exc.__traceback__),
                 )
-                if not self._execution_state_uncertain():
-                    self.latch_runtime_fatal(
-                        reason="ASYNC_ORDER_CANCEL_COMPLETION_FAILED",
-                        error=exc,
-                        reconciliation_required=True,
-                    )
 
     def _cancel_order(
         self,
@@ -13427,6 +13471,8 @@ class MakerEngine:
                 "authoritatively canceled"
             )
             return
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return
         q = self.inventory.net_position
         qty = abs(q)
         lot = float(self.cfg.lot_size)
@@ -13463,6 +13509,7 @@ class MakerEngine:
                 "submit",
             )
             request_started = False
+            response_validated = False
             try:
                 if self._abort_reserved_submit_if_fail_closed(side=side, cid=cid):
                     return
@@ -13490,6 +13537,7 @@ class MakerEngine:
                     side=side,
                     quantity=submitted_qty,
                 )
+                response_validated = status in _REST_RECONCILE_STATUSES
                 executed_quantity = float(resp["executedQty"])
                 if status == "NEW" and executed_quantity == 0.0:
                     self.orders.confirm_new(
@@ -13548,6 +13596,9 @@ class MakerEngine:
                         phase=f"emergency_submit_result_{status.lower()}",
                     )
             except Exception as e:
+                if response_validated:
+                    self._fail_submit_response_processing(cid=cid, error=e)
+                    return
                 if self._execution_state_uncertain():
                     logger.critical(
                         "Emergency close stopped after exact-fill reconciliation "
@@ -13569,11 +13620,12 @@ class MakerEngine:
                             order,
                         )
                 else:
-                    self._hold_submit_with_unknown_ack(
+                    if not self._hold_submit_with_unknown_ack(
                         cid=cid,
                         side=side,
                         error=e,
-                    )
+                    ):
+                        return
                     order = self.orders.get_order(cid)
                     if order is not None:
                         self._log_order_outcome(
@@ -14312,6 +14364,18 @@ class MakerEngine:
                         "shutdown cancel-all was not authoritatively accepted"
                     )
                 self.sync_position(required=True)
+                # Position agreement cannot resolve a lost submit ACK. Inspect
+                # current lifecycle state after response callbacks have drained;
+                # a historical unknown flag on an accepted/terminal order is
+                # not an unresolved submit and must not turn normal stop fatal.
+                if any(
+                    order.state is OrderState.PENDING_NEW
+                    and order.lifecycle.submit_ack_unknown_observed
+                    for order in self.orders.get_active_orders()
+                ):
+                    raise RuntimeError(
+                        "shutdown submit ACK remains unknown after response drain"
+                    )
             except Exception as exc:
                 shutdown_reconciliation_error = exc
                 self.latch_runtime_fatal(
@@ -14499,7 +14563,6 @@ class MakerEngine:
                     or defer_reconciliation
                 )
             self._running = False
-        self._clear_all_replace_terminal_continuations(reason="runtime_fatal")
         if not first_latch:
             if (
                 reconciliation_required
@@ -14515,6 +14578,19 @@ class MakerEngine:
         # diagnostics so even a broken third-party logging handler cannot leave
         # live exchange exposure behind.
         self._emergency_cancel_all_exchange_orders()
+        try:
+            self._clear_all_replace_terminal_continuations(reason="runtime_fatal")
+        except BaseException as continuation_error:
+            # clear_all emits lifecycle evidence. A poisoned writer must not
+            # block safety cancellation or undo the already committed latch.
+            _critical_log_without_raising(
+                "FATAL_CONTINUATION_CLEANUP_FAILED; new-order authority stopped",
+                exc_info=(
+                    type(continuation_error),
+                    continuation_error,
+                    continuation_error.__traceback__,
+                ),
+            )
         _critical_log_without_raising(
             "RUNTIME_FATAL_LATCH reason=%s reconciliation_required=%d error=%s",
             reason,
@@ -14539,8 +14615,12 @@ class MakerEngine:
     def revoke_new_order_authority_for_shutdown(self) -> None:
         """Block every future new order while leaving cancellation available."""
 
-        self._order_submit_fail_closed = True
-        self._running = False
+        # Normal shutdown is not an ownership conflict. Keep its admission
+        # barrier separate so stop() still performs exact final reconciliation
+        # and any real conflict that arrives during drain remains observable.
+        with self._order_ref_lock:
+            self._shutdown_new_order_admission_revoked = True
+            self._running = False
         transport = self._order_transport()
         revoke = getattr(transport, "revoke_new_order_admission", None)
         if not callable(revoke):
@@ -14688,6 +14768,22 @@ class MakerEngine:
         return True
 
     def raise_if_runtime_fatal(self) -> None:
+        gateway_check = getattr(
+            getattr(self, "order_gateway", None), "raise_if_evidence_failed", None
+        )
+        if callable(gateway_check):
+            try:
+                gateway_check()
+            except BaseException as gateway_error:
+                # Transport receipts are checked outside RESULT processing:
+                # a local evidence error must not change an accepted ACK to
+                # UNKNOWN. The transport has already revoked new-order writes.
+                self.latch_runtime_fatal(
+                    reason="ORDER_GATEWAY_EVIDENCE_FAILED",
+                    error=gateway_error,
+                    reconciliation_required=True,
+                    defer_reconciliation=True,
+                )
         order_status = self._order_manager_fatal_status()
         if bool(order_status.get("latched")):
             order_reason = str(order_status.get("reason", "unknown"))
