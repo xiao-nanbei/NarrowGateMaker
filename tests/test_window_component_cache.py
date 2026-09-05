@@ -29,6 +29,57 @@ def _trades() -> pd.DataFrame:
     )
 
 
+def test_compute_preroll_changes_prediction_cache_not_market_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
+    monkeypatch.setattr(dw, "_model_artifact_signatures", lambda *args: [])
+    day = "2099-01-02"
+    base = {"market_context_warmup_days": 1}
+    timed = {**base, "runtime_compute_clock": "source_time_assumption"}
+
+    def identities(params):
+        return (
+            dw._window_model_overlay_cache_path(
+                tmp_path, day, params, feature_dir=tmp_path,
+                run_ml_inference=False, cross_market_enabled=False,
+                market_context_path=tmp_path / "shared.pkl",
+            ),
+            dw._window_model_overlay_v2_identity(
+                day, params, feature_dir=tmp_path, run_ml_inference=False,
+                cross_market_enabled=False, market_context_identity_sha256="a" * 64,
+            ),
+        )
+
+    old, new = identities(base), identities(timed)
+    assert old[0] != new[0]
+    assert "prediction_context_start_ms" not in old[1]
+    start = int(pd.Timestamp(day, tz="UTC").value // 1_000_000)
+    assert new[1]["prediction_context_start_ms"] == start
+    assert new[1]["prediction_context_end_ms"] == start + 86_400_000 - 1
+    assert (
+        dw._window_market_context_v2_identity(day, base)
+        == dw._window_market_context_v2_identity(day, timed)
+    )
+    assert identities({**timed, "replay_event_clock_start_ts_ms": start + 1000}) != new
+    assert identities({**timed, "replay_event_clock_end_ts_ms": start + 2000}) != new
+
+
+def test_prediction_cache_tracks_separate_feature_warmup_directory(tmp_path, monkeypatch):
+    panel, warmup = tmp_path / "panel", tmp_path / "warmup"
+    panel.mkdir()
+    warmup.mkdir()
+    monkeypatch.delenv("MM_FEATURE_WARMUP_DIR", raising=False)
+    days = ["2099-01-01", "2099-01-02"]
+    before = dw._feature_source_signatures(panel, days)
+    source = warmup / "features_2099-01-01.parquet"
+    source.write_bytes(b"synthetic feature bytes")
+    monkeypatch.setenv("MM_FEATURE_WARMUP_DIR", str(warmup))
+    bound = dw._feature_source_signatures(panel, days)
+    assert bound != before
+    assert any(row[0] == str(source) for row in bound)
+    source.write_bytes(b"changed synthetic feature bytes")
+    assert dw._feature_source_signatures(panel, days) != bound
+
+
 @pytest.mark.parametrize(
     "changed_input", ["dtype", "_read_aggtrade_csv", "_read_individual_trade_csv"]
 )

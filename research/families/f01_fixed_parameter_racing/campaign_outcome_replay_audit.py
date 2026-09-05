@@ -73,6 +73,7 @@ from research.system_engineering.audit.market_data_latency import (  # noqa: E40
 )
 from research.system_engineering.audit.rest_latency_calibration import (  # noqa: E402
     load_runtime_timing_samples,
+    runtime_compute_overrides,
 )
 from strategy.campaign_repair import CampaignRepairModel  # noqa: E402
 
@@ -85,6 +86,7 @@ def _apply_runtime_timing_samples(
     base: dict[str, Any], path: Path, *, effective_time_assumption: str,
     arms: list[smoke.SmokeArm] | None = None,
     bulk_cancel_model: str = "unmodeled",
+    private_fill_model: str = "unmodeled",
 ) -> dict[str, Any]:
     """Bind measured gateway rows without changing the configured transport."""
     if (
@@ -99,6 +101,7 @@ def _apply_runtime_timing_samples(
     calibrated = load_runtime_timing_samples(
         path, effective_time_assumption=effective_time_assumption,
         bulk_cancel_model=bulk_cancel_model,
+        private_fill_model=private_fill_model,
     )
     bound_fields = set(calibrated["params"]) | {
         "async_order_lane_capacity", "rng_seed", "strict_calibration",
@@ -114,6 +117,8 @@ def _apply_runtime_timing_samples(
                 "exec_book_visibility_", "exec_depth_visibility_", "exec_trade_visibility_",
                 "decision_to_gateway_", "pre_snapshot_compute_", "requote_tail_work_",
                 "main_loop_work_",
+                "runtime_compute_", "exec_message_delivery", "exec_source_stratified_",
+                "private_fill_",
             )):
                 forbidden.append(name)
         if forbidden:
@@ -122,8 +127,82 @@ def _apply_runtime_timing_samples(
                 + ", ".join(sorted(forbidden))
             )
     base.update(calibrated["params"])
-    base["replay_evidence_scope"] = "runtime_gateway_only_diagnostic"
+    base["replay_evidence_scope"] = "runtime_gateway_diagnostic"
     return calibrated["calibration"]
+
+
+def _runtime_compute_for_window(
+    window: dict[str, Any], params: dict[str, Any], calibration: dict[str, Any],
+    *, clock: str, start_ms: int,
+) -> dict[str, Any]:
+    """Restore the completed signal bucket from this window's causal pre-roll."""
+    ml_data = window.get("ml_data")
+    if ml_data is None:
+        raise ValueError(
+            "runtime compute requires a prediction pre-roll, not a synthetic watermark"
+        )
+    prediction_ms = np.asarray(ml_data[0])
+    if (
+        prediction_ms.ndim != 1 or prediction_ms.dtype.kind not in "iu"
+        or not prediction_ms.size or np.any(prediction_ms[1:] <= prediction_ms[:-1])
+    ):
+        raise ValueError("runtime compute requires ordered integer prediction timestamps")
+    if clock == "prediction_delivery":
+        delivery = (params.get("_exec_message_delivery") or {}).get("prediction")
+        if params.get("exec_book_visibility_mode") != "message_schedule" or delivery is None:
+            raise ValueError("prediction_delivery compute requires a prediction message schedule")
+        exchange_ns = np.asarray(delivery["exchange_ts_ns"])
+        ready_ns = np.asarray(delivery["feature_ready_ts_ns"])
+        if (
+            ready_ns.dtype.kind not in "iu" or ready_ns.shape != prediction_ms.shape
+            or not np.array_equal(exchange_ns, prediction_ms * 1_000_000)
+            or np.any(ready_ns < exchange_ns)
+        ):
+            raise ValueError("runtime compute prediction delivery must align with prediction rows")
+    elif clock == "source_time_assumption":
+        ready_ns = prediction_ms * 1_000_000
+    else:
+        raise ValueError("runtime compute clock must explicitly identify its source")
+    completed = prediction_ms[ready_ns < start_ms * 1_000_000]
+    if not completed.size:
+        raise ValueError("runtime compute requires a completed prediction before replay start")
+    overrides = runtime_compute_overrides(
+        calibration, initial_bucket_end_ms=int(completed[-1]), clock=clock,
+    )
+    for rows in overrides["_runtime_compute_samples_by_path"].values():
+        rows.flags.writeable = False
+    return overrides
+
+
+def _runtime_timing_report(
+    calibration: dict[str, Any], daily_rows: list[dict[str, Any]], *,
+    compute_clock: str | None,
+) -> dict[str, Any]:
+    """Describe actual compute consumption without rewriting source metadata."""
+    if compute_clock is None:
+        return calibration
+    phase_semantics = sorted({
+        str(row["runtime_compute_phase_placement"])
+        for row in daily_rows if row.get("runtime_compute_phase_placement")
+    })
+    return {
+        **calibration,
+        "compute": {
+            **calibration["compute"],
+            "clock": compute_clock,
+            "consumed_by_replay": any(
+                any(row.get("runtime_compute_path_counts", {}).values()) for row in daily_rows
+            ),
+            "phase_placement": phase_semantics,
+        },
+        "limitations": [
+            item for item in calibration["limitations"] if item != (
+                "Compute paths remain metadata; no measured compute samples are injected."
+            )
+        ] + [
+            f"Compute clock: {compute_clock}; initial completed bucket comes from causal pre-roll."
+        ] + [f"Compute phase placement: {item}" for item in phase_semantics],
+    }
 
 
 def _resolve_cpp_parity_days(
@@ -1313,6 +1392,20 @@ def _campaign_daily_row(
             result.get("multi_market_reference_replay_source", "")
         ),
         "note": arm.note,
+        # Preserve emitted clock/model counters, not inferred zero-valued
+        # activation claims. Nested per-source/path diagnostics remain intact.
+        **{
+            key: value for key, value in result.items()
+            if key.startswith((
+                "runtime_compute_", "exec_message_", "pre_snapshot_compute_",
+                "requote_tail_work_", "decision_to_gateway_", "rest_gateway_",
+                "private_fill_visibility_",
+            ))
+            or key in {
+                "risk_emergency_ownership_conflict_count", "risk_emergency_stop_reason",
+                "economic_pnl_complete", "economic_pnl_status",
+            }
+        },
     }
 
 
@@ -1694,6 +1787,35 @@ def _rollup(daily: pd.DataFrame) -> pd.DataFrame:
         row["buy_fill_selection_live_hit_rate"] = row["buy_fill_selection_live_hit_count"] / max(
             row["buy_fill_selection_live_eval_count"], 1
         )
+        if "risk_emergency_ownership_conflict_count" in grp:
+            row["risk_emergency_ownership_conflict_count"] = int(
+                sum_col("risk_emergency_ownership_conflict_count")
+            )
+        if "risk_emergency_stop_reason" in grp:
+            row["risk_emergency_stop_reason"] = "|".join(sorted({
+                str(value) for value in grp["risk_emergency_stop_reason"].dropna()
+            }))
+        if "economic_pnl_complete" in grp:
+            incomplete = grp["economic_pnl_complete"].eq(False)
+            complete = grp["economic_pnl_complete"].eq(True)
+            if incomplete.any() or complete.all():
+                row["economic_pnl_complete"] = bool(complete.all())
+            row["economic_pnl_incomplete_days"] = int(incomplete.sum())
+            if "economic_pnl_status" in grp:
+                status_rows = grp.loc[incomplete] if incomplete.any() else grp
+                row["economic_pnl_status"] = "|".join(sorted({
+                    str(value) for value in status_rows["economic_pnl_status"].dropna()
+                }))
+            if incomplete.any():
+                # Keep the observed partial day/arm diagnostics, but do not
+                # represent their sum as the full requested-window reward.
+                row["replay_promotion_eligible"] = False
+                for name in (
+                    "terminal_pnl_sum", "terminal_pnl_mean_by_day", "terminal_pnl_min_day_min",
+                    "replay_pnl_sum", "replay_pnl_median_by_day", "replay_inv_adj_sum",
+                    "replay_inv_adj_median_by_day", "mtm_before_terminal_fee_sum",
+                ):
+                    row[name] = None
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -1721,12 +1843,30 @@ def _write_markdown(
     ]
     calibration = meta.get("runtime_timing_calibration")
     if calibration:
+        clock = meta.get("runtime_compute_clock")
+        components = ["Gateway"]
+        if clock:
+            components.append(f"phase-conditioned compute (`{clock}`)")
+        if calibration.get("private_fill_model", {}).get("mode") == "observed_callback":
+            components.append("observed private-fill callback visibility")
         lines[9:9] = [
             "## Runtime timing scope",
             "",
-            "Gateway-only diagnostic; not a complete current-live baseline.",
+            " + ".join(components) + " diagnostic; not a complete current-live baseline.",
             "",
             *[f"- {item}" for item in calibration["limitations"]],
+            "",
+        ]
+    if (
+        "economic_pnl_complete" in daily
+        and daily["economic_pnl_complete"].eq(False).any()
+    ):
+        lines[9:9] = [
+            "## Incomplete economic path",
+            "",
+            "At least one day/arm stopped before its economic ledger was complete. "
+            "Full-window PnL aggregates are unset and promotion is false. "
+            "Daily values preserve the partial path for diagnosis, not a completed baseline.",
             "",
         ]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -1804,6 +1944,8 @@ def _run_day_campaign_audit(
     native_exchange_book_root: str = "",
     native_exchange_book_mode: str = "strict",
     native_exchange_book_warmup_hours: int = 24,
+    runtime_compute_calibration: dict[str, Any] | None = None,
+    runtime_compute_clock: str | None = None,
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -1811,6 +1953,14 @@ def _run_day_campaign_audit(
     并行能让每个 worker 只加载一次窗口，然后顺序跑该日所有 arms；这比按
     arm 并行更少重复读 cache/parquet，也更容易保持 daily fresh-start 语义。
     """
+    if runtime_compute_clock is not None:
+        if runtime_compute_calibration is None:
+            raise ValueError("runtime compute requires the already-loaded timing calibration")
+        base = dict(base)
+        base["runtime_compute_clock"] = runtime_compute_clock
+        start_ms = int(_day_start_ts(day) * 1000)
+        base.setdefault("replay_event_clock_start_ts_ms", start_ms)
+        base.setdefault("replay_event_clock_end_ts_ms", start_ms + 86_400_000 - 1)
     # 中文说明：worker 进程是全新 Python 解释器时，裸 configure_symbol(symbol)
     # 会把 MODEL_DIR 退回 symbol 默认目录（例如 models/saved_btcusdc）。
     # parent 里 load_tick_base_params() 可能已经按 live/config.yaml 选择了
@@ -1821,6 +1971,7 @@ def _run_day_campaign_audit(
     display_label = f"{day} {task_label}" if task_label else day
     logs: list[str] = [f"\nLoading {display_label} ..."]
     window_cache: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+    compute_cache: dict[int, dict[str, Any]] = {}
 
     def _window_for_params(params: dict[str, Any]) -> dict[str, Any]:
         """Load/reuse the day window for the arm's model bundle.
@@ -1956,6 +2107,15 @@ def _run_day_campaign_audit(
         started = time.perf_counter()
         logs.append(f"  [{idx:02d}/{len(arms):02d}] {day} {arm.name} ...")
         window = _window_for_params(params)
+        if runtime_compute_clock is not None:
+            if id(window) not in compute_cache:
+                compute_cache[id(window)] = _runtime_compute_for_window(
+                    window, params, runtime_compute_calibration,
+                    clock=runtime_compute_clock,
+                    start_ms=int(params["replay_event_clock_start_ts_ms"]),
+                )
+            params.update(compute_cache[id(window)])
+            params["replay_evidence_scope"] = "runtime_gateway_diagnostic"
         arm_multi_market = bool(params.get("multi_market_policy_enabled", False))
         arm_response_mode = str(
             params.get("post_fill_quote_response_mode", "noop") or "noop"
@@ -1990,6 +2150,10 @@ def _run_day_campaign_audit(
             params.get("strict_calibration_identity_validated", False)
         )
         result["replay_evidence_scope"] = str(params.get("replay_evidence_scope", "") or "")
+        if runtime_compute_clock is not None:
+            result["runtime_compute_initial_bucket_end_ms"] = params[
+                "runtime_compute_initial_bucket_end_ms"
+            ]
         runtime_s = time.perf_counter() - started
         for hit in result.get("_adaptive_add_cooldown_trace", []) or []:
             adaptive_hit_rows.append({"day": day, "arm": arm.name, "group": arm.group, **hit})
@@ -2339,9 +2503,26 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=(
             "Anonymous per-request HTTP/private-ACK timing JSON for a Python diagnostic "
-            "with an explicit REST async GLOBAL FIFO config. Gateway only: compute, "
-            "snapshot ages and decision-to-dispatch are not injected."
+            "with an explicit REST async GLOBAL FIFO config. Compute is opt-in; "
+            "snapshot ages are never treated as message delays."
         ),
+    )
+    parser.add_argument(
+        "--runtime-compute-clock",
+        choices=("prediction_delivery", "source_time_assumption"),
+        default=None,
+        help=(
+            "Inject paired local compute phases from --runtime-timing-samples. "
+            "The first option requires per-message prediction delivery; the second "
+            "explicitly assumes source-time availability. Initial signal state comes "
+            "from the loaded window's completed prediction pre-roll."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-private-fill-model",
+        choices=("unmodeled", "observed_callback"),
+        default="unmodeled",
+        help="Optionally simulate measured exchange-fill to local private callback visibility.",
     )
     parser.add_argument(
         "--runtime-effective-time-assumption",
@@ -2588,6 +2769,10 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("--runtime-effective-time-assumption requires --runtime-timing-samples")
     elif args.runtime_bulk_cancel_model != "unmodeled":
         raise SystemExit("--runtime-bulk-cancel-model requires --runtime-timing-samples")
+    elif args.runtime_private_fill_model != "unmodeled":
+        raise SystemExit("--runtime-private-fill-model requires --runtime-timing-samples")
+    elif args.runtime_compute_clock is not None:
+        raise SystemExit("--runtime-compute-clock requires --runtime-timing-samples")
     if args.trace_fills_max <= 0:
         raise SystemExit(
             "campaign outcome audit requires --trace-fills-max > 0; "
@@ -2859,6 +3044,7 @@ def main(argv: list[str] | None = None) -> None:
             effective_time_assumption=args.runtime_effective_time_assumption,
             arms=arms,
             bulk_cancel_model=args.runtime_bulk_cancel_model,
+            private_fill_model=args.runtime_private_fill_model,
         )
 
     configure_fixed_latency_distribution(
@@ -3169,6 +3355,10 @@ def main(argv: list[str] | None = None) -> None:
                     day_initial=day_initial,
                     day_live_state=initial_live_states.get(day),
                     use_initial_state=use_initial_state,
+                    runtime_compute_calibration=(
+                        runtime_timing_calibration if args.runtime_compute_clock else None
+                    ),
+                    runtime_compute_clock=args.runtime_compute_clock,
                     campaign_repair_model_payload=campaign_repair_models.get(day),
                     historical_global_flow_root=historical_global_flow_root,
                     market_data_latency_profile_payload=(market_data_latency_profile_payload),
@@ -3250,6 +3440,10 @@ def main(argv: list[str] | None = None) -> None:
                     day_initial=task["day_initial"],
                     day_live_state=task["day_live_state"],
                     use_initial_state=use_initial_state,
+                    runtime_compute_calibration=(
+                        runtime_timing_calibration if args.runtime_compute_clock else None
+                    ),
+                    runtime_compute_clock=args.runtime_compute_clock,
                     campaign_repair_model_payload=task["campaign_repair_model_payload"],
                     historical_global_flow_root=historical_global_flow_root,
                     market_data_latency_profile_payload=task["market_data_latency_profile_payload"],
@@ -3330,6 +3524,9 @@ def main(argv: list[str] | None = None) -> None:
         module_file = getattr(cpp_module, "__file__", "")
         if module_file:
             cpp_module_path = Path(str(module_file)).expanduser().resolve()
+    reported_timing_calibration = _runtime_timing_report(
+        runtime_timing_calibration, daily_rows, compute_clock=args.runtime_compute_clock,
+    )
     meta = {
         "symbol": args.symbol.upper(),
         "days": days,
@@ -3363,7 +3560,17 @@ def main(argv: list[str] | None = None) -> None:
         "replay_locator_projection": base.get("_replay_locator_projection"),
         "live_like_replay_baseline": bool(args.live_like_replay_baseline),
         "replay_evidence_scope": str(base.get("replay_evidence_scope", "legacy_replay_diagnostic")),
-        "runtime_timing_calibration": runtime_timing_calibration,
+        "runtime_timing_calibration": reported_timing_calibration,
+        "runtime_compute_clock": args.runtime_compute_clock,
+        **({
+            "economic_pnl_complete": False,
+            "economic_pnl_incomplete_day_arms": [
+                {"day": row["day"], "arm": row["arm"],
+                 "status": row.get("economic_pnl_status")}
+                for row in daily_rows if row.get("economic_pnl_complete") is False
+            ],
+            "replay_promotion_eligible": False,
+        } if any(row.get("economic_pnl_complete") is False for row in daily_rows) else {}),
         "live_perf_telemetry": str(args.live_perf_telemetry) if args.live_perf_telemetry else "",
         "live_perf_telemetry_sha256": _sha256(
             args.live_perf_telemetry.expanduser() if args.live_perf_telemetry else None

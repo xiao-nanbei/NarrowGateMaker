@@ -314,6 +314,49 @@ def test_new_dates_inference_uses_frozen_model_with_compatible_actual_panel(tmp_
     assert np.all(np.isfinite(result[1]))
 
 
+def test_prediction_context_retains_real_bucket_before_timer_window(tmp_path, monkeypatch):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    prior = pd.DataFrame(
+        {"a": [0.0, 1.0], "b": [2.0, 1.0]},
+        index=pd.date_range("2099-01-01T23:59:40Z", periods=2, freq="10s"),
+    )
+    prior.to_parquet(panel / "features_2099-01-01.parquet")
+    start = int(trades["transact_time"].iloc[0])
+    trades.loc[0, "transact_time"] += 5000
+    default = backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+    timed = backtest_tick.load_ml_predictions(
+        trades, feature_dir=panel, prediction_context_start_ms=start,
+    )
+    assert default[0][0] == start
+    np.testing.assert_array_equal(timed[0], start + np.array([-10000, 0, 10000, 20000, 30000]))
+    assert timed[0][0] < start < trades["transact_time"].iloc[0]
+
+
+@pytest.mark.parametrize("invalid", [-1, True, 1.5])
+def test_prediction_context_start_rejects_invalid_clock(tmp_path, monkeypatch, invalid):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="prediction_context_start_ms"):
+        backtest_tick.load_ml_predictions(
+            trades, feature_dir=panel, prediction_context_start_ms=invalid,
+        )
+
+
+def test_prediction_context_keeps_updates_after_last_execution_trade(tmp_path, monkeypatch):
+    panel, _, _, _, trades = _inference_panel_fixture(tmp_path, monkeypatch)
+    start = int(trades["transact_time"].iloc[0])
+    trades.loc[1, "transact_time"] = start + 15000
+    old = backtest_tick.load_ml_predictions(trades, feature_dir=panel)
+    extended = backtest_tick.load_ml_predictions(
+        trades, feature_dir=panel, prediction_context_end_ms=start + 29999,
+    )
+    assert old[0].tolist() == [start + 10000]
+    assert extended[0].tolist() == [start + 10000, start + 20000]
+    with pytest.raises(ValueError, match="precedes the final execution trade"):
+        backtest_tick.load_ml_predictions(
+            trades, feature_dir=panel, prediction_context_end_ms=start + 14999,
+        )
+
+
 @pytest.mark.parametrize(("field", "value"), [
     ("symbol", "ETHUSDC"), ("feature_semantics_version", 5),
     ("feature_dag_id", "another-graph"), ("feature_dag_sha256", "0" * 64),

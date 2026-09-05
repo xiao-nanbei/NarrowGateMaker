@@ -1870,6 +1870,72 @@ def _async_fifo_params(*, new=(2.0, 5.0, 300.0), cancel=(2.0, 11.0, 400.0)):
     }
 
 
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
+    initial_sign, monkeypatch,
+) -> None:
+    from types import SimpleNamespace
+
+    import strategy.maker_engine as live_engine
+    from tests.test_exact_opportunity_tape import _Rest, _bare_engine
+
+    ts = np.arange(0, 80_001, 100, dtype=np.int64)
+    trades = pd.DataFrame({
+        "transact_time": ts, "price": 100.0, "quantity": 0.0, "is_buyer_maker": 1,
+    })
+    bbo = HistoricalBBOData(
+        ts_ms=ts, best_bid=np.full(ts.size, 99.0), best_ask=np.full(ts.size, 101.0),
+        bid_qty=np.ones(ts.size), ask_qty=np.ones(ts.size),
+    )
+    result = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), **_async_fifo_params(new=(1.0, 2.0, 3.0), cancel=(1.0, 2.0, 3.0)),
+         "position_timeout": 0.5, "initial_inventory": initial_sign * 0.001,
+         "initial_entry_price": 100.0, "circuit_breaker_sigma": 0.0,
+         "use_bar_pricing": False, "replay_event_clock_end_ts_ms": 80_000,
+         "_bulk_cancel_timing_samples_ms": [[4_000.0, 5_000.0, 10_000.0]],
+         "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases"},
+        bbo_data=bbo,
+    )
+    old = [row for row in result["_quote_trace"] if row["submit_ts"] == 0]
+    assert len(old) == 2
+    assert {row["cancel_request_ts"] for row in old} == {1_000}
+    assert {row["cancel_rest_return_ts"] for row in old} == {11_000}
+    closing = [row for row in result["_quote_trace"] if row["circuit_breaker_close"]]
+    assert closing
+    assert all(row["submit_ts"] > 11_000 for row in closing)
+    aggressive = [
+        row for row in closing
+        if "ioc_terminal_visible_ts" not in row
+        and row["price"] == pytest.approx(100.0 - initial_sign * 0.1)
+    ]
+    ioc = [row for row in closing if "ioc_terminal_visible_ts" in row]
+    assert aggressive and ioc
+    # Both thresholds are relative to the 11s HTTP return, not the 1s
+    # timeout/cancel dispatch. Normal quote cadence determines the next wake.
+    assert 41_000 <= min(row["submit_ts"] for row in aggressive) < 42_000
+    assert 71_000 <= min(row["submit_ts"] for row in ioc) < 72_000
+    assert all(row["price"] == pytest.approx(100.0) for row in closing if row["submit_ts"] < 41_000)
+    assert result["n_timeouts"] == 1
+    assert result["rest_gateway_max_inflight"] == 1
+    assert result["replay_main_loop_synchronous_request_pending"] is False
+
+    # The actual live method starts the same clock only after its blocking
+    # bulk call. Synthetic time avoids sleeping or touching a real gateway.
+    engine = _bare_engine(_Rest())
+    engine.inventory = SimpleNamespace(set_timeout_closing=lambda: None)
+    now_s = [1.0]
+
+    def cancel_all():
+        now_s[0] += 10.0
+        return True
+
+    engine._cancel_all_orders = cancel_all
+    monkeypatch.setattr(live_engine.time, "time", lambda: now_s[0])
+    engine._handle_position_timeout(initial_sign * 0.001, 100.0)
+    assert engine._close_start_time * 1_000 == 11_000
+
+
 @pytest.mark.parametrize("initial_watermark,first_path", [
     (0, "cached_no_new_bucket"), (-1_000, "new_bucket"), (-5_000, "catch_up"),
 ])
@@ -2038,6 +2104,94 @@ def test_async_bulk_does_not_recancel_physically_terminal_order_or_accelerate_ac
     assert result["bulk_cancel_request_count"] == 1
 
 
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+@pytest.mark.parametrize("private_cancel_ms", [5.0, 400.0])
+def test_async_emergency_ownership_attempt_matches_live_at_bulk_http_return(
+    initial_sign, private_cancel_ms,
+) -> None:
+    from types import SimpleNamespace
+
+    from strategy.order_manager import Side
+    from tests.test_exact_opportunity_tape import _Rest, _bare_engine
+
+    trades, bbo = _inputs()
+    moved_mid = 100.0 - initial_sign * 10.0
+    trades.loc[trades.transact_time >= 1_000, "price"] = moved_mid
+    bbo.best_bid[bbo.ts_ms >= 1_000] = moved_mid - 0.1
+    bbo.best_ask[bbo.ts_ms >= 1_000] = moved_mid + 0.1
+    result = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), **_async_fifo_params(new=(2.0, 5.0, 20.0)),
+         "initial_inventory": initial_sign * 0.001, "initial_entry_price": 100.0,
+         "max_daily_loss": 100.0, "max_position_value": 1_000.0,
+         "emergency_close_dd": 0.005, "use_bar_pricing": False,
+         "replay_event_clock_end_ts_ms": 3_000,
+         "_bulk_cancel_timing_samples_ms": [[4.0, private_cancel_ms, 6.0]],
+         "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+         "_private_fill_visibility_latency_samples_ms": [2.0]},
+        bbo_data=bbo,
+    )
+    terminal_before_http = private_cancel_ms < 6.0
+    old = [row for row in result["_quote_trace"] if row["submit_ts"] == 0]
+    assert len(old) == 2
+    assert {row["cancel_rest_return_ts"] for row in old} == {1_006}
+    assert {row["outcome_ts"] for row in old} == {1_000 + private_cancel_ms}
+    market = [row for row in result["_quote_trace"] if row["submit_ts"] > 0]
+    assert len(market) == int(terminal_before_http)
+    assert result["risk_emergency_ownership_conflict_count"] == int(not terminal_before_http)
+    assert result["rest_gateway_max_inflight"] == 1
+    assert result["risk_emergency_close_count"] == 1
+    if terminal_before_http:
+        assert market[0]["submit_ts"] == market[0]["gateway_request_ts"] == 1_006
+    else:
+        assert result["risk_emergency_stop_reason"] == "stop_reconciliation_required"
+        assert result["economic_pnl_complete"] is False
+        assert result["economic_pnl_status"] == "incomplete_unmodeled_emergency_fatal_recovery"
+        assert result["final_inventory"] == pytest.approx(initial_sign * 0.001)
+        assert result["_fill_trace"] == []
+        assert result["_risk_action_trace"][-1] == {
+            "ts_ms": 1_006, "side": "SELL" if initial_sign > 0 else "BUY",
+            "reason": "order_ownership_conflict", "risk_action": "stop_reconciliation_required",
+        }
+
+    # Execute the actual live one-shot method with the same HTTP/private
+    # ordering. Reuse its maintained fixture rather than duplicate runtime
+    # construction. Network/accountTrades are synthetic, never invoked live.
+    def deliver_terminals():
+        for order in list(engine.orders.get_active_orders()):
+            if order.order_id not in {1, 2}:
+                continue
+            engine.orders.on_order_update({
+                "s": "BTCUSDC", "c": order.client_order_id, "S": order.side.value,
+                "X": "CANCELED", "i": order.order_id, "p": str(order.price),
+                "q": str(order.quantity), "z": "0", "l": "0",
+            })
+
+    class Rest(_Rest):
+        def cancel_open_orders(self, **_kwargs):
+            if terminal_before_http:
+                deliver_terminals()
+            return {"code": 200, "msg": "success"}
+
+    rest = Rest()
+    engine = _bare_engine(rest)
+    engine.inventory = SimpleNamespace(net_position=initial_sign * 0.001)
+    engine.sync_position = lambda *, required=False: True
+    engine._running = True
+    for side, price, oid in ((Side.BUY, 99.9, 1), (Side.SELL, 100.1, 2)):
+        cid = engine.orders.create_order("BTCUSDC", side, price, 0.001)
+        assert engine._reserve_side_order_ownership(side=side, cid=cid)
+        engine.orders.confirm_new(cid, oid)
+    engine._emergency_close(moved_mid)
+    assert engine.is_running is False
+    assert len(rest.calls) == len(market)
+    if rest.calls:
+        assert rest.calls[0]["type"] == "MARKET"
+        assert rest.calls[0]["side"] == market[0]["side"]
+    deliver_terminals()  # a late private callback never retries the stopped caller
+    assert len(rest.calls) == len(market)
+
+
 def _async_close_params(**kwargs):
     return {
         **_async_fifo_params(**kwargs), "initial_inventory": 0.001,
@@ -2045,6 +2199,34 @@ def _async_close_params(**kwargs):
         "pnl_volatility_horizon_s": 1.0, "use_bar_pricing": False,
         "circuit_breaker_exit_mode": "maker_close",
     }
+
+
+def test_async_emergency_stop_retains_fill_matched_before_bulk_cancel_but_visible_later() -> None:
+    trades, bbo = _inputs(crossing_fill_ts_ms=1_100)
+    trades.loc[trades.transact_time >= 1_000, "price"] = 90.0
+    bbo.best_bid[bbo.ts_ms >= 1_000] = 89.9
+    bbo.best_ask[bbo.ts_ms >= 1_000] = 90.1
+    result = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), **_async_fifo_params(new=(2.0, 5.0, 20.0)),
+         "initial_inventory": 0.001, "initial_entry_price": 100.0,
+         "max_daily_loss": 100.0, "max_position_value": 1_000.0,
+         "emergency_close_dd": 0.005, "use_bar_pricing": False,
+         "replay_event_clock_end_ts_ms": 3_000,
+         "_bulk_cancel_timing_samples_ms": [[200.0, 400.0, 300.0]],
+         "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
+         "_private_fill_visibility_latency_samples_ms": [500.0]},
+        bbo_data=bbo,
+    )
+    assert result["risk_emergency_ownership_conflict_count"] == 1
+    assert result["_risk_action_trace"][-1]["ts_ms"] == 1_300
+    assert result["private_fill_exchange_match_count"] == result["private_fill_visible_count"] == 1
+    assert result["_fill_trace"][0]["fill_ts"] == 1_100
+    assert result["_fill_trace"][0]["last_private_fill_visible_ts_ms"] == 1_600
+    assert result["final_inventory"] == pytest.approx(0.002)
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(0.002)
+    assert result["economic_pnl_complete"] is False  # no invented fatal recovery/flatten
+    assert len(result["_quote_trace"]) == 2  # no late terminal/fill-triggered MARKET retry
 
 
 @pytest.mark.parametrize("private_fill", [False, True])

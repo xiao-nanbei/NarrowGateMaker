@@ -2,6 +2,7 @@ import gzip
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -91,13 +92,26 @@ def _runtime_calibration_stub(monkeypatch):
     calibration = {
         "source": {"path": "synthetic.json", "sha256": "synthetic-test-only"},
         "sample_counts": {"new": 2, "cancel": 1},
-        "compute": {"consumed_by_replay": False},
+        "compute": {
+            "consumed_by_replay": False,
+            "columns": [
+                "sync_check_ms", "signal_compute_ms", "compute_quotes_ms", "requote_total_ms",
+            ],
+            "by_signal_path": {
+                "cached_no_new_bucket": [[1.0, 2.0, 3.0, 7.0]],
+                "new_bucket": [[2.0, 3.0, 4.0, 11.0]],
+                "catch_up": [[3.0, 4.0, 5.0, 15.0]],
+            },
+        },
         "limitations": ["Gateway only; compute and source clocks remain uncalibrated."],
     }
     calls = []
 
-    def load(path, *, effective_time_assumption, bulk_cancel_model="unmodeled"):
-        calls.append((path, effective_time_assumption, bulk_cancel_model))
+    def load(
+        path, *, effective_time_assumption, bulk_cancel_model="unmodeled",
+        private_fill_model="unmodeled",
+    ):
+        calls.append((path, effective_time_assumption, bulk_cancel_model, private_fill_model))
         return {"params": params, "calibration": calibration}
 
     monkeypatch.setattr(campaign_audit, "load_runtime_timing_samples", load)
@@ -137,6 +151,10 @@ def test_campaign_runtime_timing_does_not_override_transport(monkeypatch, key, v
     "_pre_snapshot_compute_latency_samples_ms", "_main_loop_work_samples_ms",
     "_requote_tail_work_samples_ms", "_empirical_requote_ts_ms",
     "_bulk_cancel_timing_samples_ms", "_bulk_cancel_timing_sample_semantics",
+    "runtime_compute_clock", "runtime_compute_initial_bucket_end_ms",
+    "_runtime_compute_samples_by_path", "exec_message_delivery_input_semantics",
+    "_exec_message_delivery", "exec_source_stratified_profile_id",
+    "_private_fill_visibility_latency_samples_ms",
 ])
 def test_campaign_runtime_timing_arms_cannot_replace_environment(monkeypatch, key):
     _runtime_calibration_stub(monkeypatch)
@@ -220,6 +238,17 @@ def test_campaign_runtime_bulk_cli_requires_runtime_samples():
         ])
 
 
+@pytest.mark.parametrize(("flag", "value"), [
+    ("--runtime-compute-clock", "source_time_assumption"),
+    ("--runtime-private-fill-model", "observed_callback"),
+])
+def test_campaign_runtime_optional_models_require_samples(flag, value):
+    with pytest.raises(SystemExit, match="requires --runtime-timing-samples"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--replay-purpose", "diagnostic", flag, value,
+        ])
+
+
 @pytest.mark.parametrize("args", [[], ["--config", "original.yaml"],
                                  ["--replay-purpose", "diagnostic"]])
 def test_replay_locator_cli_requires_diagnostic_and_explicit_config(args):
@@ -271,8 +300,9 @@ def test_replay_locator_cli_rejects_arm_path_overrides(monkeypatch, key):
     {}, {"fill_cooldown": 85.0, "replace_terminal_continuation": False, "order_size": 0.002},
 ])
 @pytest.mark.parametrize("bulk_model", ["unmodeled", "matched_risk_case"])
+@pytest.mark.parametrize("compute_clock", [None, "source_time_assumption"])
 def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
-    monkeypatch, tmp_path, overrides, bulk_model,
+    monkeypatch, tmp_path, overrides, bulk_model, compute_clock,
 ):
     calls, calibration = _runtime_calibration_stub(monkeypatch)
     monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
@@ -295,6 +325,7 @@ def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
 
     monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", stop_before_replay)
     monkeypatch.setenv("MM_RESULTS_DIR", str(tmp_path))
+    extra = ["--runtime-compute-clock", compute_clock] if compute_clock else []
     with pytest.raises(ReplayNotStarted):
         campaign_audit_main([
             "--days", "2026-01-01", "--arms", "baseline",
@@ -302,26 +333,211 @@ def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
             "--runtime-timing-samples", "samples.json",
             "--runtime-effective-time-assumption", "observable_upper_bound",
             "--runtime-bulk-cancel-model", bulk_model,
+            "--runtime-private-fill-model", "observed_callback", *extra,
         ])
     base = captured["base"]
-    assert calls == [(Path("samples.json"), "observable_upper_bound", bulk_model)]
+    assert calls == [(
+        Path("samples.json"), "observable_upper_bound", bulk_model, "observed_callback",
+    )]
     assert base["async_order_lane_capacity"] == 3
-    assert base["replay_evidence_scope"] == "runtime_gateway_only_diagnostic"
+    assert base["replay_evidence_scope"] == "runtime_gateway_diagnostic"
     assert base["replay_promotion_eligible"] is False
     assert base["replay_event_clock"] == "merged"
     assert base["latency_baseline_clip_quantile"] == 1.0
     assert base["_serial_rest_return_samples_by_operation"]["new"][1] == [2, 15, 1200]
     assert captured["arms"][0].overrides == overrides
+    assert captured["runtime_compute_clock"] == compute_clock
+    assert captured["runtime_compute_calibration"] is (calibration if compute_clock else None)
     assert not any(key.startswith("_decision_to_gateway") for key in base)
     assert not any(key.startswith("_exec_book_visibility_delay_samples") for key in base)
     output = tmp_path / "diagnostic.md"
     campaign_audit._write_markdown(output, pd.DataFrame(), pd.DataFrame(), {
         "tag": "synthetic", "symbol": "BTCUSDC", "days": [], "arms": [],
         "runtime_timing_calibration": calibration,
+        "runtime_compute_clock": compute_clock,
     })
     rendered = output.read_text()
     assert "not a complete current-live baseline" in rendered
     assert calibration["limitations"][0] in rendered
+
+
+@pytest.mark.parametrize("clock", ["prediction_delivery", "source_time_assumption"])
+def test_campaign_runtime_compute_uses_actual_pre_roll(monkeypatch, clock):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    source_ms = np.array([10_000, 20_000, 30_000], dtype=np.int64)
+    params = {"exec_book_visibility_mode": "message_schedule", "_exec_message_delivery": {
+        "prediction": {
+            "exchange_ts_ns": source_ms * 1_000_000,
+            # The 20s source bucket was not delivered before the 30s start.
+            "feature_ready_ts_ns": np.array([11_000, 30_000, 40_000]) * 1_000_000,
+        },
+    }}
+    adapted = campaign_audit._runtime_compute_for_window(
+        {"ml_data": (source_ms,)}, params, calibration, clock=clock, start_ms=30_000,
+    )
+    assert adapted["runtime_compute_initial_bucket_end_ms"] == (
+        10_000 if clock == "prediction_delivery" else 20_000
+    )
+    assert adapted["runtime_compute_clock"] == clock
+    np.testing.assert_array_equal(
+        adapted["_runtime_compute_samples_by_path"]["new_bucket"], [[5, 9, 2]],
+    )
+    assert not adapted["_runtime_compute_samples_by_path"]["new_bucket"].flags.writeable
+    assert calibration["compute"]["consumed_by_replay"] is False
+
+
+@pytest.mark.parametrize(("source_ms", "clock", "message"), [
+    ([30_000, 40_000], "source_time_assumption", "completed prediction before"),
+    ([20_001, 30_000], "source_time_assumption", "align with the bucket grid"),
+    ([20_000, 10_000], "source_time_assumption", "ordered integer"),
+    ([10_000, 20_000], "prediction_delivery", "prediction message schedule"),
+])
+def test_campaign_runtime_compute_rejects_invented_state(monkeypatch, source_ms, clock, message):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    with pytest.raises(ValueError, match=message):
+        campaign_audit._runtime_compute_for_window(
+            {"ml_data": (np.array(source_ms),)}, {}, calibration, clock=clock, start_ms=30_000,
+        )
+
+
+def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monkeypatch):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    windows = {}
+
+    def load(day, params):
+        start = int(campaign_audit._day_start_ts(day) * 1000)
+        assert params["runtime_compute_clock"] == "source_time_assumption"
+        assert params["replay_event_clock_start_ts_ms"] == start
+        windows[day] = {
+            "ml_data": (np.array([start - 20_000, start - 10_000, start]),),
+            "trades": object(), "var_ts_ms": object(), "var_ssq": object(),
+            "bbo_data": None, "l2_data": None, "var_ti": None, "var_retsq": None,
+        }
+        return windows[day]
+
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", load)
+    captures = []
+
+    def simulate(_engine, _trades, _var_ts, _var_ssq, params, **kwargs):
+        captures.append(params)
+        return {
+            "runtime_compute_clock": params["runtime_compute_clock"],
+            "runtime_compute_path_counts": {"cached_no_new_bucket": 1, "new_bucket": 2},
+            "exec_message_delivery_sources": {"depth": {"messages": 3}},
+            "exec_message_missing_source_skip_count": 1,
+        }
+
+    monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
+    arms = [
+        campaign_audit.smoke.SmokeArm(name=name, group="synthetic", overrides={"gamma": gamma})
+        for name, gamma in (("baseline", 0.01), ("candidate", 0.02))
+    ]
+    base = _runtime_fifo_params()
+    for day in ("2026-01-01", "2026-01-02"):
+        result = campaign_audit._run_day_campaign_audit(
+            day=day, symbol="BTCUSDC", base=base, arms=arms, engine="python",
+            day_initial={}, day_live_state=None, use_initial_state=False,
+            runtime_compute_calibration=calibration, runtime_compute_clock="source_time_assumption",
+        )
+        start = int(campaign_audit._day_start_ts(day) * 1000)
+        for row in result["daily_rows"]:
+            assert row["runtime_compute_initial_bucket_end_ms"] == start - 10_000
+            assert row["runtime_compute_path_counts"]["new_bucket"] == 2
+            assert row["exec_message_delivery_sources"] == {"depth": {"messages": 3}}
+            assert row["exec_message_missing_source_skip_count"] == 1
+            assert row["replay_evidence_scope"] == "runtime_gateway_diagnostic"
+            assert "economic_pnl_complete" not in row
+        left, right = captures[-2:]
+        assert left is not right
+        assert left["_runtime_compute_samples_by_path"] is right["_runtime_compute_samples_by_path"]
+        assert left["replay_event_clock_start_ts_ms"] == start
+        assert left["replay_event_clock_end_ts_ms"] == start + 86_400_000 - 1
+    assert "runtime_compute_initial_bucket_end_ms" not in base
+
+
+@pytest.mark.parametrize("clock", [None, "source_time_assumption", "prediction_delivery"])
+@pytest.mark.parametrize("private_fill_mode", ["unmodeled", "observed_callback"])
+def test_campaign_runtime_report_reflects_consumed_components(
+    monkeypatch, tmp_path, clock, private_fill_mode,
+):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    warning = "Compute paths remain metadata; no measured compute samples are injected."
+    calibration["limitations"] = [warning, "Source messages remain modeled."]
+    calibration["private_fill_model"] = {"mode": private_fill_mode}
+    phase = "synthetic paired sync+signal before snapshot; quote before enqueue; residual after"
+    rows = [{"runtime_compute_path_counts": {"new_bucket": 2},
+             "runtime_compute_phase_placement": phase}]
+    report = campaign_audit._runtime_timing_report(calibration, rows, compute_clock=clock)
+    assert calibration["limitations"][0] == warning
+    assert calibration["compute"]["consumed_by_replay"] is False
+    if clock:
+        assert report["compute"]["consumed_by_replay"] is True
+        assert report["compute"]["phase_placement"] == [phase]
+        assert warning not in report["limitations"]
+        assert any(clock in line for line in report["limitations"])
+        assert any(phase in line for line in report["limitations"])
+    else:
+        assert report is calibration
+    path = tmp_path / "runtime.md"
+    campaign_audit._write_markdown(path, pd.DataFrame(), pd.DataFrame(), {
+        "tag": "synthetic", "symbol": "BTCUSDC", "days": [], "arms": [],
+        "runtime_timing_calibration": report, "runtime_compute_clock": clock,
+    })
+    text = path.read_text()
+    assert ("phase-conditioned compute" in text) is bool(clock)
+    assert ("observed private-fill callback visibility" in text) is (
+        private_fill_mode == "observed_callback"
+    )
+    assert "Gateway-only" not in text
+
+
+def test_campaign_runtime_report_does_not_claim_compute_without_counters(monkeypatch):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    report = campaign_audit._runtime_timing_report(
+        calibration, [{}], compute_clock="source_time_assumption",
+    )
+    assert report["compute"]["consumed_by_replay"] is False
+    assert report["compute"]["phase_placement"] == []
+
+
+@pytest.mark.parametrize("status", [
+    "incomplete_pending_private_fills", "incomplete_unmodeled_emergency_fatal_recovery",
+])
+def test_campaign_preserves_incomplete_day_but_not_full_window_reward(tmp_path, status):
+    arm = campaign_audit.smoke.SmokeArm(name="baseline", group="synthetic")
+    rows = []
+    for day, complete, pnl in (("2026-01-01", True, 2.0), ("2026-01-02", False, 3.0)):
+        result = {
+            "pnl": pnl, "economic_pnl_complete": complete,
+            "economic_pnl_status": "complete_local_fill_ledger" if complete else status,
+            "risk_emergency_ownership_conflict_count": 0 if complete else 1,
+        }
+        if not complete:
+            result["risk_emergency_stop_reason"] = "stop_reconciliation_required"
+        rows.append(campaign_audit._campaign_daily_row(
+            day=day, arm=arm, result=result, label_rows=[], runtime_s=0.0,
+            fill_split=campaign_audit._fill_split([], initial_inventory=0.0),
+        ))
+    daily = pd.DataFrame(rows)
+    rollup = campaign_audit._rollup(daily)
+    assert rows[-1]["economic_pnl_status"] == status
+    assert rows[-1]["replay_pnl"] == 3.0
+    assert rows[-1]["risk_emergency_stop_reason"] == "stop_reconciliation_required"
+    row = rollup.iloc[0]
+    assert not row["economic_pnl_complete"]
+    assert row["economic_pnl_incomplete_days"] == 1
+    assert row["economic_pnl_status"] == status
+    assert row["risk_emergency_ownership_conflict_count"] == 1
+    assert row["risk_emergency_stop_reason"] == "stop_reconciliation_required"
+    assert not row["replay_promotion_eligible"]
+    assert pd.isna(row["replay_pnl_sum"])
+    assert pd.isna(row["terminal_pnl_sum"])
+    path = tmp_path / "incomplete.md"
+    campaign_audit._write_markdown(path, daily, rollup, {
+        "tag": "synthetic", "symbol": "BTCUSDC", "days": [], "arms": [],
+    })
+    assert "Full-window PnL aggregates are unset" in path.read_text()
 
 
 def test_load_initial_states_supports_gzip_live_ledger(tmp_path: Path):

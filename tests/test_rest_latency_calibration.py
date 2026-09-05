@@ -136,6 +136,62 @@ def test_runtime_timing_samples_preserve_pairs_tails_and_compute_metadata(
     assert not any(key.startswith("_pre_snapshot_compute") for key in params)
     assert "_bulk_cancel_timing_samples_ms" not in params
     assert calibration["bulk_cancel_model"]["consumed_by_replay"] is False
+    assert "_private_fill_visibility_latency_samples_ms" not in params
+    assert calibration["private_fill_model"]["consumed_by_replay"] is False
+
+
+def test_runtime_private_fill_callback_model_is_explicit_and_preserves_all_samples(
+    tmp_path, runtime_samples,
+):
+    values = [0.0, 3.25, 3.25, 1234.56789]
+    runtime_samples["gateway"]["private_fill_exchange_event_to_callback_ms"] = values
+    source = tmp_path / "samples.json"
+    source.write_text(json.dumps(runtime_samples))
+    default = load_runtime_timing_samples(source, effective_time_assumption="dispatch")
+    assert "_private_fill_visibility_latency_samples_ms" not in default["params"]
+    result = load_runtime_timing_samples(
+        source, effective_time_assumption="dispatch", private_fill_model="observed_callback",
+    )
+    samples = result["params"]["_private_fill_visibility_latency_samples_ms"]
+    np.testing.assert_array_equal(samples, values)
+    assert samples.flags.c_contiguous and samples.dtype == np.float64
+    metadata = result["calibration"]["private_fill_model"]
+    assert metadata["mode"] == "observed_callback"
+    assert metadata["consumed_by_replay"] is True
+    assert metadata["observed_sample_count"] == 4
+    assert "match-time proxy" in metadata["limitations"][0]
+    assert "complete fill coverage" in metadata["limitations"][1]
+    assert all(item in result["calibration"]["limitations"] for item in metadata["limitations"])
+    # Callback timings are not replaced by NEW/CANCEL ACK or HTTP observations.
+    assert "_private_fill_visibility_latency_samples_ms" not in default["params"]
+    np.testing.assert_array_equal(
+        result["params"]["_serial_rest_return_samples_by_operation"]["cancel"],
+        [[0.0, 3.0, 7.0]],
+    )
+
+
+@pytest.mark.parametrize("values", [
+    None, [], "3.0", [None], [True], [-0.001], [float("nan")], [float("inf")],
+])
+def test_runtime_private_fill_model_never_fabricates_or_filters_observations(
+    tmp_path, runtime_samples, values,
+):
+    runtime_samples["gateway"]["private_fill_exchange_event_to_callback_ms"] = values
+    source = tmp_path / "samples.json"
+    source.write_text(json.dumps(runtime_samples))
+    with pytest.raises(ValueError, match="private-fill"):
+        load_runtime_timing_samples(
+            source, effective_time_assumption="dispatch", private_fill_model="observed_callback",
+        )
+
+
+def test_runtime_private_fill_model_rejects_unknown_model(tmp_path, runtime_samples):
+    source = tmp_path / "samples.json"
+    source.write_text(json.dumps(runtime_samples))
+    with pytest.raises(ValueError, match="private_fill_model"):
+        load_runtime_timing_samples(
+            source, effective_time_assumption="dispatch", private_fill_model="http_ack",
+        )
 
 
 @pytest.mark.parametrize(("assumption", "effective"), [

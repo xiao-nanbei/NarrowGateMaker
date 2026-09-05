@@ -22,7 +22,7 @@ from models.backtest_tick import (
     require_formal_dense_variance_timeline,
     simulate_tick,
 )
-from models.tick_data_types import HistoricalBBOData
+from models.tick_data_types import HistoricalBBOData, HistoricalL2Data
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import Side
 from strategy.quote_core import (
@@ -1109,6 +1109,90 @@ def test_merged_replay_clock_preserves_trades_and_adds_zero_qty_events() -> None
     synthetic = events[~events["_is_execution_trade"]]
     assert synthetic["quantity"].eq(0.0).all()
     assert synthetic["price"].tolist() == [100.1, 100.1, 100.1]
+
+
+def _explicit_start_clock_inputs():
+    trades = pd.DataFrame({
+        "transact_time": [1_000, 1_100], "price": [100.0, 101.0],
+        "quantity": [0.001, 0.002], "is_buyer_maker": [False, True],
+    })
+    bbo = HistoricalBBOData(
+        ts_ms=np.array([400, 700]), best_bid=np.array([9.0, 19.0]),
+        best_ask=np.array([11.0, 21.0]), bid_qty=np.ones(2), ask_qty=np.ones(2),
+    )
+    return trades, bbo
+
+
+@pytest.mark.parametrize("mode", ["merged", "empirical"])
+def test_explicit_replay_start_uses_causal_book_not_future_trade_price(mode):
+    trades, bbo = _explicit_start_clock_inputs()
+    events, count = build_replay_event_clock(
+        trades, mode=mode, interval_ms=100, start_ts_ms=550, end_ts_ms=1199,
+        bbo_data=bbo, empirical_ts_ms=np.array([600, 800, 1000]),
+        empirical_action=np.array([2, 2, 2]),
+    )
+    early = events[events["transact_time"] < 1000]
+    assert events["transact_time"].iloc[0] == 550
+    assert events["transact_time"].iloc[-1] == 1199
+    assert count == 2 and early["quantity"].eq(0.0).all()
+    assert not early["_is_execution_trade"].any()
+    assert early.loc[early["transact_time"] < 700, "price"].eq(10.0).all()
+    assert early.loc[early["transact_time"] >= 700, "price"].eq(20.0).all()
+    assert events.iloc[-1]["price"] == 101.0
+    assert events["quantity"].sum() == pytest.approx(0.003)
+
+
+def test_explicit_replay_start_accepts_preexisting_l2_without_bbo():
+    trades, bbo = _explicit_start_clock_inputs()
+    l2 = HistoricalL2Data(
+        ts_ms=bbo.ts_ms, bid_px=bbo.best_bid[:, None], ask_px=bbo.best_ask[:, None],
+        bid_qty=np.ones((2, 1)), ask_qty=np.ones((2, 1)),
+    )
+    events, _ = build_replay_event_clock(
+        trades, mode="merged", interval_ms=100, start_ts_ms=500, l2_data=l2,
+    )
+    assert events.iloc[0]["price"] == 10.0
+    assert events.iloc[0]["transact_time"] == 500
+
+
+@pytest.mark.parametrize("start", [-1, True, 1.5, 1001])
+def test_explicit_replay_start_rejects_invalid_boundary(start):
+    trades, bbo = _explicit_start_clock_inputs()
+    with pytest.raises(ValueError, match="replay event start"):
+        build_replay_event_clock(
+            trades, mode="merged", interval_ms=100, start_ts_ms=start, bbo_data=bbo,
+        )
+
+
+@pytest.mark.parametrize("future_book", [False, True])
+def test_explicit_replay_start_requires_a_causal_initial_price(future_book):
+    trades, bbo = _explicit_start_clock_inputs()
+    with pytest.raises(ValueError, match="no causal BBO/L2 midpoint"):
+        build_replay_event_clock(
+            trades, mode="merged", interval_ms=100, start_ts_ms=300,
+            bbo_data=bbo if future_book else None,
+        )
+
+
+@pytest.mark.parametrize("backend", ["python", "cpp"])
+def test_explicit_replay_start_reaches_both_backend_first_quote(backend):
+    from models import backtest_tick as bt
+
+    trades, bbo = _explicit_start_clock_inputs()
+    trades["quantity"] = 0.0
+    result = bt._simulate_tick_with_engine(
+        backend, trades, np.empty(0, dtype=np.int64), np.empty(0),
+        {"replay_event_clock": "merged", "replay_clock_interval_ms": 100,
+         "replay_event_clock_start_ts_ms": 550, "trace_quotes_max": 100,
+         "gamma": 0.01, "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
+         "maker_fee": 0.0, "taker_fee": 0.0, "tick_size": 0.1, "lot_size": 0.001,
+         "requote_interval": 100.0, "rq_min": 100.0, "rq_max": 100.0,
+         "max_exec_book_age_s": 0.0, "use_bar_pricing": True},
+        bbo_data=bbo,
+    )
+    assert result["_quote_trace"]
+    assert min(row["quote_ts"] for row in result["_quote_trace"]) == 550
+    assert result["fills_bid"] + result["fills_ask"] == 0
 
 
 def test_causal_1s_completion_matches_live_flat_bar_contract() -> None:

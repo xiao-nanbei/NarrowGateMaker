@@ -3177,6 +3177,8 @@ def load_ml_predictions(
     run_model_inference=True,
     feature_dir=None,
     require_target_feature_files=False,
+    prediction_context_start_ms=None,
+    prediction_context_end_ms=None,
 ):
     """
     Generate ML predictions at 10s resolution for the trade date range.
@@ -3199,6 +3201,19 @@ def load_ml_predictions(
     ts_max = trades_df["transact_time"].iloc[-1]
     dt_min = pd.Timestamp(ts_min, unit="ms", tz="UTC")
     dt_max = pd.Timestamp(ts_max, unit="ms", tz="UTC")
+    if prediction_context_start_ms is not None:
+        if type(prediction_context_start_ms) is not int or prediction_context_start_ms < 0:
+            raise ValueError("prediction_context_start_ms must be a nonnegative integer")
+        # The first execution trade can follow several timer/compute decisions.
+        # Retain the actual pre-window model state, not just the row preceding
+        # that first trade, so a UTC-start clock never invents a warm watermark.
+        dt_min = min(dt_min, pd.Timestamp(prediction_context_start_ms, unit="ms", tz="UTC"))
+    if prediction_context_end_ms is not None:
+        if type(prediction_context_end_ms) is not int or prediction_context_end_ms < 0:
+            raise ValueError("prediction_context_end_ms must be a nonnegative integer")
+        if prediction_context_end_ms < int(ts_max):
+            raise ValueError("prediction context end precedes the final execution trade")
+        dt_max = pd.Timestamp(prediction_context_end_ms, unit="ms", tz="UTC")
 
     # Load feature files covering the date range
     if feature_dir is not None:
@@ -3430,6 +3445,7 @@ def build_replay_event_clock(
     *,
     mode: str,
     interval_ms: int,
+    start_ts_ms: Optional[int] = None,
     end_ts_ms: Optional[int] = None,
     bbo_data: Optional[HistoricalBBOData] = None,
     l2_data: Optional[HistoricalL2Data] = None,
@@ -3443,7 +3459,8 @@ def build_replay_event_clock(
     ``trade`` preserves the legacy execution-trade clock. ``merged`` adds one
     zero-quantity clock event for each BBO/L2 state-change timestamp and fixed
     wall-clock interval. Synthetic events carry the latest causally visible
-    execution price, so they can advance timers and book state but cannot
+    execution price, or the latest causal BBO/L2 midpoint before the first
+    trade when an explicit start is supplied. They advance state but cannot
     consume queue or create a fill. Native snapshot/delta queue state is
     consumed lazily by its independent scheduler at every one of these
     boundaries and before every execution trade.
@@ -3466,10 +3483,20 @@ def build_replay_event_clock(
         raise ValueError(
             "system replay events require replay_event_clock=merged or empirical"
         )
-    if normalized_mode == "trade" and end_ts_ms is not None:
+    if normalized_mode == "trade" and (start_ts_ms is not None or end_ts_ms is not None):
         raise ValueError(
-            "an explicit replay event end requires merged or empirical clock mode"
+            "an explicit replay event start/end requires merged or empirical clock mode"
         )
+    if start_ts_ms is not None:
+        if (
+            isinstance(start_ts_ms, (bool, np.bool_))
+            or not isinstance(start_ts_ms, (int, np.integer))
+            or start_ts_ms < 0
+            or start_ts_ms > np.iinfo(np.int64).max
+        ):
+            raise ValueError("replay event start must be a nonnegative integer millisecond")
+        if not n_execution_trades:
+            raise ValueError("an explicit replay event start requires retained execution trades")
     if normalized_mode == "trade" or n_execution_trades == 0:
         return trades_df, n_execution_trades
     if normalized_mode == "merged" and int(interval_ms) <= 0:
@@ -3478,7 +3505,9 @@ def build_replay_event_clock(
     execution_ts = trades_df["transact_time"].to_numpy(dtype=np.int64, copy=False)
     if np.any(execution_ts[1:] < execution_ts[:-1]):
         raise ValueError("Execution trades must be ordered by transact_time")
-    start_ts = int(execution_ts[0])
+    start_ts = int(execution_ts[0]) if start_ts_ms is None else int(start_ts_ms)
+    if start_ts > int(execution_ts[0]):
+        raise ValueError("replay event start follows the first execution trade; slice inputs first")
     execution_end_ts = int(execution_ts[-1])
     end_ts = execution_end_ts if end_ts_ms is None else int(end_ts_ms)
     if end_ts < execution_end_ts:
@@ -3498,10 +3527,15 @@ def build_replay_event_clock(
         clock_action = clock_action_raw[visible]
         if np.any(~np.isin(clock_action, (2, 3))):
             raise ValueError("empirical requote actions must be 2 (ok) or 3 (blocked)")
+        if start_ts < execution_ts[0] and not np.any(clock_ts == start_ts):
+            clock_ts = np.insert(clock_ts, 0, np.int64(start_ts))
+            clock_action = np.insert(clock_action, 0, np.uint8(0))
         if end_ts_ms is not None and not np.any(clock_ts == end_ts):
             clock_ts = np.append(clock_ts, np.int64(end_ts))
             clock_action = np.append(clock_action, np.uint8(0))
     else:
+        if start_ts_ms is not None:
+            clock_sources.append(np.asarray([start_ts], dtype=np.int64))
         for data in (bbo_data, l2_data):
             if data is None:
                 continue
@@ -3565,14 +3599,48 @@ def build_replay_event_clock(
         return trades_df, n_execution_trades
 
     asof_idx = np.searchsorted(execution_ts, clock_ts, side="right") - 1
-    valid = asof_idx >= 0
-    clock_ts = clock_ts[valid]
-    clock_action = clock_action[valid]
-    asof_idx = asof_idx[valid]
     execution_price = trades_df["price"].to_numpy(dtype=np.float64, copy=False)
+    clock_price = np.empty(clock_ts.size, dtype=np.float64)
+    after_trade = asof_idx >= 0
+    clock_price[after_trade] = execution_price[asof_idx[after_trade]]
+    before_trade = ~after_trade
+    if np.any(before_trade):
+        boundaries = clock_ts[before_trade]
+        latest_source = np.full(boundaries.size, -1, dtype=np.int64)
+        bootstrap_mid = np.full(boundaries.size, np.nan, dtype=np.float64)
+        # Use exchange-time book state only as the non-fill clock price seed.
+        # Strategy visibility still follows its independently delayed feeds.
+        # Latest source wins; BBO wins a same-timestamp tie with L2.
+        for data in (l2_data, bbo_data):
+            if data is None or not len(data.ts_ms):
+                continue
+            source_ts = np.asarray(data.ts_ms, dtype=np.int64)
+            if np.any(source_ts[1:] < source_ts[:-1]):
+                raise ValueError("explicit replay start requires ordered BBO/L2 timestamps")
+            indices = np.searchsorted(source_ts, boundaries, side="right") - 1
+            available = indices >= 0
+            safe_indices = np.maximum(indices, 0)
+            if data is bbo_data:
+                bid = np.asarray(data.best_bid)[safe_indices]
+                ask = np.asarray(data.best_ask)[safe_indices]
+            else:
+                bid = np.asarray(data.bid_px)[safe_indices, 0]
+                ask = np.asarray(data.ask_px)[safe_indices, 0]
+            valid = (
+                available & np.isfinite(bid) & np.isfinite(ask)
+                & (bid > 0.0) & (ask >= bid)
+                & (source_ts[safe_indices] >= latest_source)
+            )
+            bootstrap_mid[valid] = bid[valid] / 2.0 + ask[valid] / 2.0
+            latest_source[valid] = source_ts[safe_indices[valid]]
+        if np.any(~np.isfinite(bootstrap_mid)):
+            raise ValueError(
+                "explicit replay start has no causal BBO/L2 midpoint before the first trade"
+            )
+        clock_price[before_trade] = bootstrap_mid
 
     combined_ts = np.concatenate((execution_ts, clock_ts))
-    combined_price = np.concatenate((execution_price, execution_price[asof_idx]))
+    combined_price = np.concatenate((execution_price, clock_price))
     combined_qty = np.concatenate(
         (
             trades_df["quantity"].to_numpy(dtype=np.float64, copy=False),
@@ -4271,6 +4339,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         trades_df,
         mode=replay_event_clock,
         interval_ms=replay_clock_interval_ms,
+        start_ts_ms=params.get("replay_event_clock_start_ts_ms"),
         end_ts_ms=params.get("replay_event_clock_end_ts_ms"),
         bbo_data=bbo_data,
         l2_data=l2_data,
@@ -8295,7 +8364,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     risk_emergency_close_count = 0
     risk_notional_cap_count = 0
     risk_emergency_latched = False
-    risk_emergency_submit_sent = False
+    risk_emergency_attempt_complete = False
+    risk_emergency_ownership_conflict_count = 0
     trace_risk_actions = []
     (
         expected_loss_limit,
@@ -24713,6 +24783,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     return
                 submit_prepared_close(int(ready_ts))
 
+            if emergency_market:
+                # Emergency MARKET is a one-shot call after cancel-all HTTP,
+                # not the maker-close cancel/requote state machine. Its caller
+                # has checked only the side needed for the market order.
+                submit_prepared_close(int(now_ts))
+                return
             if not close_orders and opening_orders:
                 if any(order.get("state") != ORDER_OPEN for order in opening_orders):
                     return
@@ -24799,6 +24875,33 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         circuit_breaker_close_place_count += 1
         if use_ioc:
             circuit_breaker_close_ioc_place_count += 1
+
+    def _attempt_async_emergency_close(now_ts: int) -> None:
+        """Mirror the stopped live caller's one ownership attempt after HTTP."""
+        nonlocal risk_emergency_attempt_complete
+        nonlocal risk_emergency_ownership_conflict_count
+        if risk_emergency_attempt_complete:
+            return
+        risk_emergency_attempt_complete = True
+        if abs(q) < LOT_SIZE:
+            return
+        side = "SELL" if q > 0.0 else "BUY"
+        owners = ask_orders if side == "SELL" else bid_orders
+        if owners:
+            # Bulk HTTP success does not clear private-stream ownership. Live
+            # stops here; a later terminal callback does not retry the MARKET.
+            # Its fatal cancel/query recovery is unmodeled, not synthetic flat.
+            risk_emergency_ownership_conflict_count += 1
+            if trace_decisions is not None and len(trace_risk_actions) < trace_decisions_max:
+                trace_risk_actions.append({
+                    "ts_ms": int(now_ts), "side": side,
+                    "reason": "order_ownership_conflict",
+                    "risk_action": "stop_reconciliation_required",
+                })
+            return
+        _requote_circuit_breaker_close(
+            int(now_ts), hard_risk_mark_price, emergency_market=True,
+        )
 
     def _append_fill_trace(side: str, idx: int, quote_px: float, fill_qty: float,
                            quote_ts: int, quote_mid: float, queue_init: float,
@@ -27482,7 +27585,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if math.isfinite(mark) and mark > 0.0:
                 hard_risk_mark_price = mark
                 risk_state.observe(int(t), cash, q, mark)
-        if risk_emergency_latched and risk_emergency_submit_sent:
+        if risk_emergency_latched and risk_emergency_attempt_complete:
             # The emergency call stopped the live main loop. Its exchange
             # request still settles above, but a later stale wake cannot
             # cancel that in-flight market close or resume ordinary quoting.
@@ -27533,12 +27636,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         if risk_emergency_latched:
             # The stopped live main thread finishes its cancel/market request;
             # exchange transitions and private callbacks above remain active.
-            if not risk_emergency_submit_sent and not bid_orders and not ask_orders:
+            if not risk_emergency_attempt_complete and not bid_orders and not ask_orders:
                 if abs(q) >= LOT_SIZE:
                     _requote_circuit_breaker_close(
                         int(t), hard_risk_mark_price, emergency_market=True,
                     )
-                    risk_emergency_submit_sent = bool(bid_orders or ask_orders)
+                    risk_emergency_attempt_complete = bool(bid_orders or ask_orders)
             continue
 
         if not is_quote_compute_resume and consecutive_loss_cooldown.active(int(t)):
@@ -28111,11 +28214,22 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # control calls place reduce-only limit orders. A timeout is
                 # not itself a fill and must not change cash or inventory.
                 circuit_breaker_closing = True
-                circuit_breaker_close_start_ts = int(t)
+                circuit_breaker_close_start_ts = -1 if async_rest_gateway else int(t)
                 circuit_breaker_close_gtx_reject_streak = 0
                 nto += 1
                 _request_cancel_all(bid_orders, int(t), reason="position_timeout")
                 _request_cancel_all(ask_orders, int(t), reason="position_timeout")
+                if async_rest_gateway:
+                    def start_timeout_close_clock(ready_ts: int) -> None:
+                        nonlocal circuit_breaker_close_start_ts
+                        # Live assigns _close_start_time after synchronous
+                        # cancel-all returns, excluding its FIFO/HTTP wait.
+                        circuit_breaker_close_start_ts = int(ready_ts)
+
+                    if main_loop_waiting_request is not None:
+                        main_loop_waiting_request["resume_close"] = start_timeout_close_clock
+                    else:
+                        start_timeout_close_clock(int(t))
                 continue
 
             if circuit_breaker_closing:
@@ -28215,6 +28329,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _request_cancel_all(ask_orders, t, risk_reason)
                     _process_order_transitions(bid_orders, "BUY", t, p)
                     _process_order_transitions(ask_orders, "SELL", t, p)
+                    if risk_emergency_latched and async_rest_gateway:
+                        if main_loop_waiting_request is not None:
+                            main_loop_waiting_request["resume_close"] = (
+                                _attempt_async_emergency_close
+                            )
+                        else:
+                            _attempt_async_emergency_close(int(t))
                     continue
 
             loss_cooldown_transition = consecutive_loss_cooldown.on_policy_clock(int(t))
@@ -33111,6 +33232,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         "bulk_barrier_callback_admission_or_synchronous_close_interruption",
                         "IOC_account_trades_lookup_latency",
                         "gateway_failure_and_unknown_response_tape",
+                        *(["emergency_ownership_conflict_fatal_cancel_and_reconciliation"]
+                          if risk_emergency_ownership_conflict_count else []),
                     ],
                     "bulk_cancel_request_count": bulk_cancel_request_count,
                     "bulk_cancel_phase_model": (
@@ -33925,6 +34048,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "risk_emergency_close_count": risk_emergency_close_count,
         "risk_notional_cap_count": risk_notional_cap_count,
         "risk_emergency_latched": risk_emergency_latched,
+        "risk_emergency_ownership_conflict_count": risk_emergency_ownership_conflict_count,
+        **({
+            "risk_emergency_stop_reason": "stop_reconciliation_required",
+            "economic_pnl_complete": False,
+            "economic_pnl_status": "incomplete_unmodeled_emergency_fatal_recovery",
+        } if risk_emergency_ownership_conflict_count else {}),
         "_final_risk_state": asdict(risk_state),
         "_risk_action_trace": trace_risk_actions,
         "consecutive_loss_cooldown_state": consecutive_loss_cooldown.snapshot(),
@@ -35772,6 +35901,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         trades_df,
         mode=replay_event_clock,
         interval_ms=replay_clock_interval_ms,
+        start_ts_ms=params.get("replay_event_clock_start_ts_ms"),
         end_ts_ms=params.get("replay_event_clock_end_ts_ms"),
         bbo_data=bbo_data,
         l2_data=l2_data,

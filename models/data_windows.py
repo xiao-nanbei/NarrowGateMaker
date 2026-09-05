@@ -139,6 +139,22 @@ def _model_artifact_signatures(model_dir: Path) -> list[tuple[str, int, int]]:
     return _glob_signatures(model_dir, ("*.txt", "*_meta.json", "bundle_meta.json"))
 
 
+def _feature_source_signatures(
+    feature_dir: Path, context_days: list[str],
+) -> list[tuple[str, int, int]]:
+    roots = {feature_dir.resolve()}
+    warmup = os.environ.get("MM_FEATURE_WARMUP_DIR", "").strip()
+    if warmup:
+        roots.add(Path(warmup).expanduser().resolve())
+    signatures = []
+    for root in sorted(roots):
+        signatures.extend(_glob_signatures(
+            root, tuple(f"features_{day}.parquet" for day in context_days),
+        ))
+        signatures.append(_file_signature(root / "causal_feature_manifest.json"))
+    return signatures
+
+
 def _quality_policy_signatures() -> list[tuple[str, int, int]]:
     signatures = [_file_signature(ROOT / "data_quality.py")]
     audit_override = os.environ.get("MM_CRYPTOHFT_BAD_DAYS_CSV")
@@ -218,13 +234,7 @@ def _window_source_signature(
         )
     )
     if load_ml:
-        signatures.extend(
-            _glob_signatures(
-                feature_dir,
-                tuple(f"features_{context_day}.parquet" for context_day in context_days),
-            )
-        )
-        signatures.append(_file_signature(feature_dir / "causal_feature_manifest.json"))
+        signatures.extend(_feature_source_signatures(feature_dir, context_days))
         if run_ml_inference:
             signatures.extend(_model_artifact_signatures(bt.MODEL_DIR))
     signatures.extend(_quality_policy_signatures())
@@ -549,6 +559,20 @@ def _normalize_execution_trade_source(value: Any) -> str:
     raise ValueError("execution_trade_source must be aggTrades or trades")
 
 
+def _prediction_context_bounds(day: str, params: dict[str, Any]) -> dict[str, int]:
+    if not params.get("runtime_compute_clock"):
+        return {}
+    midnight = int(pd.Timestamp(day, tz="UTC").value // 1_000_000)
+    start = params.get("replay_event_clock_start_ts_ms", midnight)
+    end = params.get("replay_event_clock_end_ts_ms", midnight + 86_400_000 - 1)
+    if (
+        type(start) is not int or type(end) is not int
+        or not midnight <= start <= end < midnight + 86_400_000
+    ):
+        raise ValueError("runtime compute window bounds must lie within the target UTC day")
+    return {"prediction_context_start_ms": start, "prediction_context_end_ms": end}
+
+
 def _window_cache_path(
     cache_dir: Path,
     day: str,
@@ -583,6 +607,7 @@ def _window_cache_path(
         "with_ml_cache": bool(with_ml_cache),
         "require_historical_bbo": bool(require_historical_bbo),
         "toxicity_horizon_s": int(params.get("toxicity_horizon_s", 10)),
+        **_prediction_context_bounds(day, params),
         "model_dir": (str(bt.MODEL_DIR.resolve()) if load_ml and run_ml_inference else ""),
         "features_dir": str(feature_dir) if load_ml else "",
         "execution_trade_source": execution_trade_source,
@@ -672,6 +697,7 @@ def _window_model_overlay_cache_path(
         "symbol": str(bt.SYMBOL).upper(),
         "day": str(day),
         "market_context_identity": market_context_path.name,
+        **_prediction_context_bounds(day, params),
         "toxicity_horizon_s": int(params.get("toxicity_horizon_s", 10)),
         "cross_market_enabled": bool(cross_market_enabled),
         "run_ml_inference": bool(run_ml_inference),
@@ -742,13 +768,9 @@ def _window_model_overlay_v2_identity(
         int(params.get("market_context_warmup_days", 1) or 0),
     )
     context_days = _causal_context_days(day, warmup_days)
-    feature_signatures = _glob_signatures(
-        feature_dir,
-        tuple(f"features_{context_day}.parquet" for context_day in context_days),
-    )
-    feature_signatures.append(_file_signature(feature_dir / "causal_feature_manifest.json"))
+    feature_signatures = _feature_source_signatures(feature_dir, context_days)
     model_signatures = _model_artifact_signatures(bt.MODEL_DIR) if run_ml_inference else []
-    return model_overlay_identity(
+    identity = model_overlay_identity(
         symbol=str(bt.SYMBOL),
         day=day,
         market_context_identity_sha256=market_context_identity_sha256,
@@ -758,6 +780,8 @@ def _window_model_overlay_v2_identity(
         cross_market_enabled=cross_market_enabled,
         run_ml_inference=run_ml_inference,
     )
+    identity.update(_prediction_context_bounds(day, params))
+    return identity
 
 
 def _load_cached_window(path: Path) -> WindowData | None:
@@ -1187,6 +1211,7 @@ def load_tick_window(
                 run_model_inference=resolved_run_ml_inference,
                 feature_dir=resolved_feature_dir,
                 require_target_feature_files=bool(require_target_feature_files),
+                **_prediction_context_bounds(day, params),
             )
             if ml_data is not None and bool(params.get("window_cache_write_enabled", True)):
                 if resolved_cache_dir is not None and model_overlay_v2_identity_payload is not None:

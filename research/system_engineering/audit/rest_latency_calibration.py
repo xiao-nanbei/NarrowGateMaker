@@ -22,7 +22,8 @@ SCHEMA_VERSION = "narrowgate_rest_latency_calibration.v1"
 
 
 def load_runtime_timing_samples(
-    path: Path, *, effective_time_assumption: str, bulk_cancel_model: str = "unmodeled"
+    path: Path, *, effective_time_assumption: str, bulk_cancel_model: str = "unmodeled",
+    private_fill_model: str = "unmodeled",
 ) -> dict[str, Any]:
     """Load observed HTTP/private pairs with an explicit effective-time model.
 
@@ -39,6 +40,8 @@ def load_runtime_timing_samples(
         raise ValueError(f"effective_time_assumption must be one of {tuple(assumptions)}")
     if bulk_cancel_model not in {"unmodeled", "matched_risk_case"}:
         raise ValueError("bulk_cancel_model must be unmodeled or matched_risk_case")
+    if private_fill_model not in {"unmodeled", "observed_callback"}:
+        raise ValueError("private_fill_model must be unmodeled or observed_callback")
     source = Path(path).expanduser().resolve()
     raw = source.read_bytes()
     payload = json.loads(raw)
@@ -242,6 +245,37 @@ def load_runtime_timing_samples(
         f"effective_time_assumption={effective_time_assumption}: "
         f"{assumptions[effective_time_assumption]}; no tail clipping"
     )
+    private_fill_params: dict[str, Any] = {}
+    private_fill_metadata: dict[str, Any] = {
+        "mode": private_fill_model,
+        "consumed_by_replay": False,
+        "observed_sample_count": 0,
+        "limitations": [
+            "Private-fill callback visibility is unmodeled; no zero-delay observation is implied."
+        ],
+    }
+    if private_fill_model == "observed_callback":
+        values = gateway.get("private_fill_exchange_event_to_callback_ms")
+        if not isinstance(values, list) or not values:
+            raise ValueError("observed_callback requires nonempty private-fill callback samples")
+        fill_samples = np.ascontiguousarray([
+            observed(value, field=f"private-fill callback sample {index}")
+            for index, value in enumerate(values)
+        ], dtype=np.float64)
+        private_fill_params = {"_private_fill_visibility_latency_samples_ms": fill_samples}
+        private_fill_metadata = {
+            "mode": private_fill_model,
+            "consumed_by_replay": True,
+            "observed_sample_count": int(fill_samples.size),
+            "population": "observed exchange-event-to-private-callback intervals",
+            "limitations": [
+                "Private-fill visibility uses observed exchange-event-to-callback intervals; "
+                "the exchange timestamp is a match-time proxy, not an independently measured "
+                "matching-engine clock. No tail clipping or missing-value substitution.",
+                "Observed callback samples do not prove complete fill coverage, a stable "
+                "long-run tail, or correlation with individual NEW/CANCEL request samples.",
+            ],
+        }
     return {
         "params": {
             "replay_purpose": "diagnostic",
@@ -258,6 +292,7 @@ def load_runtime_timing_samples(
             "_serial_rest_return_sample_semantics": semantics,
             "_serial_rest_http_result_status_by_operation": http_statuses,
             **bulk_params,
+            **private_fill_params,
         },
         "calibration": {
             "source": {"path": str(source), "sha256": hashlib.sha256(raw).hexdigest()},
@@ -271,6 +306,7 @@ def load_runtime_timing_samples(
             "http_result_status_counts": status_counts,
             "bulk_cancel_observations": payload.get("bulk_cancel_http_observations"),
             "bulk_cancel_model": bulk_metadata,
+            "private_fill_model": private_fill_metadata,
             "compute": {
                 "columns": compute_columns,
                 "by_signal_path": by_path,
@@ -280,6 +316,7 @@ def load_runtime_timing_samples(
             "limitations": [
                 *payload.get("limitations", []),
                 *bulk_metadata["limitations"],
+                *private_fill_metadata["limitations"],
                 "Compute paths remain metadata; no measured compute samples are injected.",
                 "Decision-to-dispatch includes FIFO waiting and is not a compute sample.",
                 "Snapshot source lag/total age is not injected as per-message delay.",
