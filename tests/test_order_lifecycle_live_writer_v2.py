@@ -17,8 +17,19 @@ from execution.order_lifecycle import (
     QuantityWeightedOrderLifecycle,
 )
 from execution.order_lifecycle_journal_storage_v2 import BOUNDED_REMOTE_SPOOL
+from execution.order_lifecycle_journal_v2_strict_native import (
+    OrderLifecycleJournalV2SourceCallback as StrictNativeSourceCallback,
+)
+from execution.order_lifecycle_journal_writer_v2_strict_native import (
+    OrderLifecycleJournalRuntimeBridgeV2 as StrictNativeRuntimeBridge,
+)
+from execution.order_lifecycle_journal_writer_v2_strict_native import (
+    OrderLifecycleJournalWriterV2 as StrictNativeJournalWriter,
+)
 from execution.order_lifecycle_live_writer_v2 import OrderLifecycleLiveWriterV2
+from execution.runtime_evidence_writer import RuntimeEvidenceWriter
 from strategy.maker_engine import MakerEngine
+from strategy.order_manager import OrderManager, Side
 
 
 @dataclass
@@ -1012,6 +1023,76 @@ def test_direct_frozen_commit_bypasses_secondary_queue_and_drains(tmp_path: Path
     assert health["callbacks_processed"] == 1
     assert health["drop_count"] == 0
     assert health["formal_collection_valid"] is True
+
+
+def test_rest_identity_bind_commits_through_strict_writer_and_central_barrier(
+    tmp_path: Path,
+) -> None:
+    strict_writer = StrictNativeJournalWriter(
+        tmp_path,
+        session_id="rest-identity-bind",
+        runtime_identity={"baseline_epoch_id": "epoch-bind", "hash": "c" * 64},
+        storage_format="jsonl",
+        heartbeat_interval_s=60.0,
+        start_heartbeat=False,
+    )
+    bridge = StrictNativeRuntimeBridge(strict_writer)
+    central_writer = RuntimeEvidenceWriter(queue_capacity=8)
+    lifecycle_id = "epoch-bind:pending"
+
+    def admit_snapshot(order, source_event_type: str, raw_event: dict) -> None:
+        snapshot = order.lifecycle.journal_snapshot()
+        latest = snapshot.latest_event()
+        received_ts_ns = int(
+            raw_event.get("_local_receive_ts_ns", 0) or latest.visibility_ts_ns
+        )
+        exchange_order_id = int(order.order_id or 0)
+        callback = StrictNativeSourceCallback(
+            callback_id=f"{order.client_order_id}:{latest.sequence}",
+            callback_type=source_event_type,
+            received_ts_ns=received_ts_ns,
+            simulator_queue_source="not_recorded",
+            exact_queue_path_valid=False,
+        )
+
+        def commit_snapshot() -> None:
+            if exchange_order_id > 0:
+                bridge.bind_exchange_order_id(lifecycle_id, exchange_order_id)
+            result = bridge.submit_callback(
+                lifecycle_id=lifecycle_id,
+                lifecycle=snapshot,
+                callback=callback,
+            )
+            if result.status != "committed":
+                raise RuntimeError(f"strict lifecycle callback was {result.status}")
+
+        central_writer.enqueue_task("strict_lifecycle_callback", commit_snapshot)
+
+    manager = OrderManager(on_lifecycle_event=admit_snapshot)
+    cid = manager.create_order("BTCUSDC", Side.BUY, 100.0, 0.001)
+    lifecycle_id = f"epoch-bind:{cid}"
+    order = manager.get_order(cid)
+    assert order is not None
+    bridge.register_lifecycle(
+        lifecycle_id=lifecycle_id,
+        runtime_source="live",
+        client_order_id=cid,
+        exchange_order_id=None,
+        symbol="BTCUSDC",
+        side="BUY",
+    )
+
+    admit_snapshot(order, "submit", {})
+    central_writer.barrier(timeout_s=2.0)
+    assert manager.bind_exchange_order_identity(cid, 42, activation_unknown=True)
+    central_health = central_writer.barrier(timeout_s=2.0)
+
+    final = strict_writer.close()
+    central_writer.close(drain_timeout_s=2.0)
+    assert central_health["valid"] is True
+    assert final["rows_committed"] == 2
+    assert final["error_count"] == 0
+    assert final["formal_collection_valid"] is True
 
 
 def test_lifecycle_submission_owner_cannot_mix_queue_and_external_fifo(

@@ -74,6 +74,7 @@ class OrderLifecycleV2ReplayAdapter:
         symbol: str,
         storage_format: str = "parquet",
         strict_native_only: bool = False,
+        writer_mode: str = "callback_durable",
     ) -> None:
         identity = {
             **dict(runtime_identity),
@@ -87,7 +88,17 @@ class OrderLifecycleV2ReplayAdapter:
         self.runtime_identity = identity
         self.runtime_identity_sha256 = _canonical_sha256(identity)
         self.strict_native_only = bool(strict_native_only)
-        self.writer = OrderLifecycleJournalWriterV2(
+        normalized_writer_mode = str(writer_mode).strip()
+        writer_factory = OrderLifecycleJournalWriterV2
+        if normalized_writer_mode == "day_buffered":
+            from execution.order_lifecycle_journal_writer_v2_replay_day_buffered import (
+                DayBufferedReplayJournalWriterV2,
+            )
+
+            writer_factory = DayBufferedReplayJournalWriterV2
+        elif normalized_writer_mode != "callback_durable":
+            raise ValueError("unsupported strict-native lifecycle journal writer mode")
+        self.writer = writer_factory(
             root,
             session_id=str(session_id),
             runtime_identity=identity,
@@ -136,6 +147,13 @@ class OrderLifecycleV2ReplayAdapter:
             ),
             strict_native_only=bool(
                 params.get("order_lifecycle_journal_v2_strict_native_only", False)
+            ),
+            writer_mode=str(
+                params.get(
+                    "order_lifecycle_journal_v2_writer_mode",
+                    "callback_durable",
+                )
+                or "callback_durable"
             ),
         )
 

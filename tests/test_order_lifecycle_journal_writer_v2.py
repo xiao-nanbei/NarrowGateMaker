@@ -265,14 +265,30 @@ def test_normal_callbacks_do_not_rescan_durable_parts(tmp_path: Path) -> None:
     bridge = OrderLifecycleJournalRuntimeBridgeV2(writer)
     _register(bridge)
     recover_calls = 0
+    derive_calls = 0
+    orphan_scan_calls = 0
     original_recover = writer._recover_locked
+    original_derive = writer._derived_storage_state
+    original_orphan_scan = writer._orphan_payload_files
 
     def counted_recover() -> None:
         nonlocal recover_calls
         recover_calls += 1
         original_recover()
 
+    def counted_derive(records: object) -> dict[str, object]:
+        nonlocal derive_calls
+        derive_calls += 1
+        return original_derive(records)
+
+    def counted_orphan_scan(records: object) -> list[str]:
+        nonlocal orphan_scan_calls
+        orphan_scan_calls += 1
+        return original_orphan_scan(records)
+
     writer._recover_locked = counted_recover
+    writer._derived_storage_state = counted_derive
+    writer._orphan_payload_files = counted_orphan_scan
     assert _submit(bridge, lifecycle).status == "committed"
     lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)
     assert (
@@ -284,10 +300,84 @@ def test_normal_callbacks_do_not_rescan_durable_parts(tmp_path: Path) -> None:
         == "committed"
     )
     assert recover_calls == 0
+    assert derive_calls == 0
+    assert orphan_scan_calls == 0
 
     writer.reconcile()
     assert recover_calls == 1
+    assert derive_calls == 1
+    assert orphan_scan_calls == 1
     writer.close()
+
+
+@pytest.mark.parametrize("storage_format", ["parquet", "jsonl"])
+def test_incremental_health_preserves_recovered_orphans_until_exact_admission(
+    tmp_path: Path,
+    storage_format: str,
+) -> None:
+    class SimulatedProcessDeath(BaseException):
+        pass
+
+    def die_after_payload_replace(point: str, _context: object) -> None:
+        if point == "after_payload_replace":
+            raise SimulatedProcessDeath()
+
+    lifecycle = QuantityWeightedOrderLifecycle(0.001, 1_000_000_000)
+    writer = _writer(tmp_path, storage_format=storage_format)
+    bridge = OrderLifecycleJournalRuntimeBridgeV2(writer)
+    _register(bridge)
+    writer.set_fault_injector(die_after_payload_replace)
+    try:
+        with pytest.raises(SimulatedProcessDeath):
+            _submit(bridge, lifecycle)
+    finally:
+        # Simulate process exit without running close() or an error-health write.
+        writer._release_process_lock()
+
+    with _writer(tmp_path, storage_format=storage_format) as restarted:
+        bridge = OrderLifecycleJournalRuntimeBridgeV2(restarted)
+        _register(bridge)
+        recovered_health = _read_health(tmp_path)
+        orphan_files = recovered_health["orphan_payload_files"]
+        assert len(orphan_files) == 1
+        assert recovered_health["error_count"] == 0
+        assert recovered_health["formal_collection_valid"] is False
+
+        orphan_scan_calls = 0
+        original_orphan_scan = restarted._orphan_payload_files
+
+        def counted_orphan_scan(records: object) -> list[str]:
+            nonlocal orphan_scan_calls
+            orphan_scan_calls += 1
+            return original_orphan_scan(records)
+
+        restarted._orphan_payload_files = counted_orphan_scan
+        other_lifecycle_id = "epoch-v9:client-18"
+        _register(
+            bridge,
+            lifecycle_id=other_lifecycle_id,
+            client_order_id="client-18",
+            exchange_order_id="exchange-43",
+        )
+        assert _submit(
+            bridge,
+            QuantityWeightedOrderLifecycle(0.001, 1_000_000_000),
+            lifecycle_id=other_lifecycle_id,
+        ).status == "committed"
+        health = _read_health(tmp_path)
+        assert health["orphan_payload_files"] == orphan_files
+        assert health["orphan_payload_count"] == 1
+        assert health["formal_collection_valid"] is False
+        assert health["callbacks_committed"] == 1
+        assert orphan_scan_calls == 0
+
+        assert _submit(bridge, lifecycle).status == "committed"
+        health = _read_health(tmp_path)
+        assert health["orphan_payload_count"] == 0
+        assert health["formal_collection_valid"] is True
+        assert health["callbacks_committed"] == 2
+        assert health["rows_committed"] == 2
+        assert orphan_scan_calls == 0
 
 
 def test_failed_commit_recovers_before_same_process_retry(tmp_path: Path) -> None:

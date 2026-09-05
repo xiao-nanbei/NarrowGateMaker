@@ -65,6 +65,28 @@ JournalStorageFormat = Literal["parquet", "jsonl"]
 FaultInjector = Callable[[str, Mapping[str, Any]], None]
 
 
+@dataclass(frozen=True, slots=True)
+class LifecycleJournalSchemaContract:
+    """Schema-specific hooks for the shared durable writer mechanics."""
+
+    schema_version: str
+    columns: tuple[str, ...]
+    cursor_type: type[Any]
+    batch_emitter_type: type[Any]
+    payload_validator: Callable[[Mapping[str, Any]], None]
+    extra_string_columns: frozenset[str] = frozenset()
+    extra_boolean_columns: frozenset[str] = frozenset()
+
+
+DEFAULT_SCHEMA_CONTRACT = LifecycleJournalSchemaContract(
+    schema_version=ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
+    columns=tuple(ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS),
+    cursor_type=OrderLifecycleJournalV2Cursor,
+    batch_emitter_type=OrderLifecycleJournalV2BatchEmitter,
+    payload_validator=validate_order_lifecycle_journal_v2_payload,
+)
+
+
 def _canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -145,16 +167,21 @@ def _assert_mechanics_only(value: Any, *, path: str = "root") -> None:
             _assert_mechanics_only(nested, path=f"{path}[{index}]")
 
 
-def _journal_schema_sha256() -> str:
+def _journal_schema_sha256(
+    contract: LifecycleJournalSchemaContract = DEFAULT_SCHEMA_CONTRACT,
+) -> str:
     return _canonical_sha256(
         {
-            "schema_version": ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
-            "columns": list(ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS),
+            "schema_version": contract.schema_version,
+            "columns": list(contract.columns),
         }
     )
 
 
-def _cursor_from_mapping(value: Mapping[str, object]) -> OrderLifecycleJournalV2Cursor:
+def _cursor_from_mapping(
+    value: Mapping[str, object],
+    contract: LifecycleJournalSchemaContract = DEFAULT_SCHEMA_CONTRACT,
+) -> Any:
     expected = (
         "schema_version",
         "lifecycle_id",
@@ -164,14 +191,17 @@ def _cursor_from_mapping(value: Mapping[str, object]) -> OrderLifecycleJournalV2
     )
     if set(value) != set(expected):
         raise ValueError("lifecycle cursor checkpoint schema mismatch")
-    return OrderLifecycleJournalV2Cursor.from_checkpoint({key: value[key] for key in expected})
+    return contract.cursor_type.from_checkpoint({key: value[key] for key in expected})
 
 
-def _normalize_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    if set(payload) != set(ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS):
+def _normalize_payload(
+    payload: Mapping[str, Any],
+    contract: LifecycleJournalSchemaContract = DEFAULT_SCHEMA_CONTRACT,
+) -> dict[str, Any]:
+    if set(payload) != set(contract.columns):
         raise ValueError("persisted lifecycle journal payload schema mismatch")
-    normalized = {column: payload[column] for column in ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS}
-    validate_order_lifecycle_journal_v2_payload(normalized)
+    normalized = {column: payload[column] for column in contract.columns}
+    contract.payload_validator(normalized)
     return normalized
 
 
@@ -200,13 +230,18 @@ def _validate_terminal_semantics(payloads: Sequence[Mapping[str, Any]]) -> None:
         raise ValueError("local_shutdown_censor must be the final event in its callback batch")
 
 
-def _payloads_from_batch(batch: OrderLifecycleJournalV2Batch) -> tuple[dict[str, Any], ...]:
-    payloads = tuple(_normalize_payload(payload) for payload in batch.payloads())
+def _payloads_from_batch(
+    batch: Any,
+    contract: LifecycleJournalSchemaContract = DEFAULT_SCHEMA_CONTRACT,
+) -> tuple[dict[str, Any], ...]:
+    payloads = tuple(_normalize_payload(payload, contract) for payload in batch.payloads())
     _validate_terminal_semantics(payloads)
     return payloads
 
 
-def _pyarrow_schema():
+def _pyarrow_schema(
+    contract: LifecycleJournalSchemaContract = DEFAULT_SCHEMA_CONTRACT,
+):
     import pyarrow as pa
 
     string_columns = {
@@ -231,7 +266,7 @@ def _pyarrow_schema():
         "local_censor_reason",
         "visible_exposure_invalid_reason",
         "exchange_exposure_invalid_reason",
-    }
+    } | set(contract.extra_string_columns)
     integer_columns = {
         "source_callback_event_ordinal",
         "source_callback_event_count",
@@ -250,9 +285,9 @@ def _pyarrow_schema():
         "visible_exposure_complete",
         "exchange_exposure_valid",
         "exchange_exposure_complete",
-    }
+    } | set(contract.extra_boolean_columns)
     fields = []
-    for column in ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS:
+    for column in contract.columns:
         if column in string_columns:
             fields.append(pa.field(column, pa.string(), nullable=column == "exchange_order_id"))
         elif column in integer_columns:
@@ -300,6 +335,8 @@ class _LifecycleBinding:
 class OrderLifecycleJournalWriterV2:
     """Synchronous callback-atomic writer with restart reconciliation."""
 
+    SCHEMA_CONTRACT = DEFAULT_SCHEMA_CONTRACT
+
     def __init__(
         self,
         root: str | Path,
@@ -328,6 +365,7 @@ class OrderLifecycleJournalWriterV2:
         self.identity_path = self.session_root / "runtime_identity.json"
         self.health_path = self.session_root / "health.json"
         self.storage_format: JournalStorageFormat = storage_format
+        self._schema_contract = self.SCHEMA_CONTRACT
         self.heartbeat_interval_s = float(heartbeat_interval_s)
         self._fault_injector = fault_injector
         self._lock = threading.RLock()
@@ -365,6 +403,8 @@ class OrderLifecycleJournalWriterV2:
             self._records: dict[str, dict[str, Any]] = {}
             self._committed_event_ids: set[str] = set()
             self._censored_lifecycle_ids: set[str] = set()
+            self._known_orphan_payload_files: set[str] = set()
+            self._row_count = 0
             self._recovery_required = False
             self._cleanup_partial_files()
             with self._lock:
@@ -408,8 +448,8 @@ class OrderLifecycleJournalWriterV2:
     def _persist_or_validate_identity(self) -> None:
         identity = {
             "schema_version": ORDER_LIFECYCLE_JOURNAL_WRITER_V2_IDENTITY_VERSION,
-            "journal_schema_version": ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
-            "journal_schema_sha256": _journal_schema_sha256(),
+            "journal_schema_version": self._schema_contract.schema_version,
+            "journal_schema_sha256": self._journal_schema_sha256(),
             "storage_format": self.storage_format,
             "runtime_identity": self._runtime_identity,
             "runtime_identity_sha256": self._runtime_identity_sha256,
@@ -465,7 +505,7 @@ class OrderLifecycleJournalWriterV2:
         with self._lock:
             cursor = self._cursors.get(str(lifecycle_id))
             if cursor is None:
-                return OrderLifecycleJournalV2Cursor(
+                return self._schema_contract.cursor_type(
                     lifecycle_id=str(lifecycle_id),
                     client_order_id=str(client_order_id),
                 )
@@ -543,13 +583,59 @@ class OrderLifecycleJournalWriterV2:
 
     def reconcile(self) -> None:
         with self._lock:
-            if self._closed:
-                raise RuntimeError("lifecycle journal writer is closed")
+            self._assert_operation_allowed_locked()
             self._recover_locked()
             self._recovery_required = False
 
-    def commit_batch(self, batch: OrderLifecycleJournalV2Batch) -> LifecycleJournalCommitResult:
-        payloads = _payloads_from_batch(batch)
+    def _assert_operation_allowed_locked(self) -> None:
+        if self._closed:
+            raise RuntimeError("lifecycle journal writer is closed")
+
+    def _recover_if_required_locked(self) -> None:
+        if not self._recovery_required:
+            return
+        self._cleanup_partial_files()
+        self._recover_locked()
+        self._recovery_required = False
+
+    def prepare_callback(
+        self,
+        *,
+        lifecycle_id: str,
+        client_order_id: str,
+    ) -> tuple[bool, str, Any]:
+        """Recover first, then atomically expose collection state and cursor."""
+
+        with self._lock:
+            self._assert_operation_allowed_locked()
+            self._recover_if_required_locked()
+            collect, reason = self.collection_status(
+                lifecycle_id=lifecycle_id,
+                client_order_id=client_order_id,
+            )
+            cursor = self.cursor_for(
+                lifecycle_id=lifecycle_id,
+                client_order_id=client_order_id,
+            )
+            return collect, reason, cursor
+
+    def make_batch_emitter(self, **kwargs: Any) -> Any:
+        return self._schema_contract.batch_emitter_type(**kwargs)
+
+    def _journal_schema_sha256(self) -> str:
+        return _journal_schema_sha256(self._schema_contract)
+
+    def _cursor_from_mapping(self, value: Mapping[str, object]) -> Any:
+        return _cursor_from_mapping(value, self._schema_contract)
+
+    def _payloads_from_batch(self, batch: Any) -> tuple[dict[str, Any], ...]:
+        return _payloads_from_batch(batch, self._schema_contract)
+
+    def _pyarrow_schema(self) -> Any:
+        return _pyarrow_schema(self._schema_contract)
+
+    def commit_batch(self, batch: Any) -> LifecycleJournalCommitResult:
+        payloads = self._payloads_from_batch(batch)
         if not payloads:
             return LifecycleJournalCommitResult(
                 status="noop",
@@ -559,12 +645,9 @@ class OrderLifecycleJournalWriterV2:
                 reason="no_unseen_events",
             )
         with self._lock:
-            if self._closed:
-                raise RuntimeError("lifecycle journal writer is closed")
+            self._assert_operation_allowed_locked()
             try:
-                if self._recovery_required:
-                    self._recover_locked()
-                    self._recovery_required = False
+                self._recover_if_required_locked()
                 result = self._commit_batch_locked(batch=batch, payloads=payloads)
                 self._recovery_required = False
                 return result
@@ -630,19 +713,29 @@ class OrderLifecycleJournalWriterV2:
         if lifecycle_id in self._censored_lifecycle_ids:
             raise ValueError("event follows a durable local_shutdown_censor")
 
+        next_cursor = self._cursor_from_mapping(batch.checkpoint)
         record = self._publish_part_locked(
             batch_id=batch_id,
             payloads=payloads,
             checkpoint_before=cursor_before.checkpoint(),
             checkpoint_after=dict(batch.checkpoint),
         )
-
-        prospective_records = dict(self._records)
-        prospective_records[batch_id] = record
-        prospective = self._derived_storage_state(prospective_records)
+        contains_censor = any(
+            row["terminal_observation"] == "LOCAL_SHUTDOWN_CENSOR" for row in payloads
+        )
+        prospective_summary = {
+            "record_count": len(self._records) + 1,
+            "row_count": self._row_count + len(payloads),
+            "cursor_count": len(self._cursors) + int(lifecycle_id not in self._cursors),
+            "censored_lifecycle_count": len(self._censored_lifecycle_ids)
+            + int(contains_censor and lifecycle_id not in self._censored_lifecycle_ids),
+        }
+        prospective_orphan_payloads = self._known_orphan_payload_files - {
+            str(record["data_file"])
+        }
         health_payload = self._health_payload_locked(
-            records=prospective_records,
-            derived=prospective,
+            summary=prospective_summary,
+            orphan_payloads=sorted(prospective_orphan_payloads),
             last_flush_ts_ns=int(record["committed_ts_ns"]),
             last_flush_batch_id=batch_id,
         )
@@ -650,14 +743,16 @@ class OrderLifecycleJournalWriterV2:
             health_payload,
             fault_context={"operation": "batch_commit", "batch_id": batch_id},
         )
-        self._records = prospective_records
-        self._committed_event_ids = set(prospective["event_ids"])
-        self._censored_lifecycle_ids = set(prospective["censored_lifecycle_ids"])
+        self._records[batch_id] = record
+        self._known_orphan_payload_files = prospective_orphan_payloads
+        self._committed_event_ids.update(str(row["event_id"]) for row in payloads)
+        if contains_censor:
+            self._censored_lifecycle_ids.add(lifecycle_id)
+        self._row_count = int(prospective_summary["row_count"])
         self._last_flush_ts_ns = int(record["committed_ts_ns"])
         self._last_flush_batch_id = batch_id
         self._inject("after_health_replace", {"batch_id": batch_id})
 
-        next_cursor = _cursor_from_mapping(batch.checkpoint)
         self._persist_cursor_locked(next_cursor, batch_id=batch_id, inject=True)
         self._cursors[lifecycle_id] = next_cursor
         self._inject("after_cursor_replace", {"batch_id": batch_id})
@@ -690,7 +785,7 @@ class OrderLifecycleJournalWriterV2:
                     import pyarrow as pa
                     import pyarrow.parquet as pq
 
-                    table = pa.Table.from_pylist(list(payloads), schema=_pyarrow_schema())
+                    table = pa.Table.from_pylist(list(payloads), schema=self._pyarrow_schema())
                     pq.write_table(table, temporary, compression="zstd")
                     with temporary.open("rb") as handle:
                         os.fsync(handle.fileno())
@@ -730,8 +825,8 @@ class OrderLifecycleJournalWriterV2:
             "schema_version": ORDER_LIFECYCLE_JOURNAL_WRITER_V2_PART_VERSION,
             "batch_id": batch_id,
             "runtime_identity_sha256": self._runtime_identity_sha256,
-            "journal_schema_version": ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
-            "journal_schema_sha256": _journal_schema_sha256(),
+            "journal_schema_version": self._schema_contract.schema_version,
+            "journal_schema_sha256": self._journal_schema_sha256(),
             "storage_format": self.storage_format,
             "data_file": data_path.name,
             "data_sha256": _sha256_file(data_path),
@@ -776,7 +871,9 @@ class OrderLifecycleJournalWriterV2:
                 for line in handle:
                     if line.strip():
                         raw_rows.append(json.loads(line))
-        payloads = tuple(_normalize_payload(row) for row in raw_rows)
+        payloads = tuple(
+            _normalize_payload(row, self._schema_contract) for row in raw_rows
+        )
         _validate_terminal_semantics(payloads)
         return payloads
 
@@ -820,9 +917,9 @@ class OrderLifecycleJournalWriterV2:
             raise ValueError("lifecycle journal part batch id mismatch")
         if record["runtime_identity_sha256"] != self._runtime_identity_sha256:
             raise ValueError("lifecycle journal part runtime identity mismatch")
-        if record["journal_schema_version"] != ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION:
+        if record["journal_schema_version"] != self._schema_contract.schema_version:
             raise ValueError("lifecycle journal part schema version mismatch")
-        if record["journal_schema_sha256"] != _journal_schema_sha256():
+        if record["journal_schema_sha256"] != self._journal_schema_sha256():
             raise ValueError("lifecycle journal part schema identity mismatch")
         if record["storage_format"] != self.storage_format:
             raise ValueError("lifecycle journal part storage format mismatch")
@@ -854,7 +951,7 @@ class OrderLifecycleJournalWriterV2:
             or payloads[-1]["event_id"] != record["last_event_id"]
         ):
             raise ValueError("lifecycle journal part manifest disagrees with payload")
-        checkpoint_after = _cursor_from_mapping(record["checkpoint_after"])
+        checkpoint_after = self._cursor_from_mapping(record["checkpoint_after"])
         if (
             checkpoint_after.lifecycle_id != record["lifecycle_id"]
             or checkpoint_after.client_order_id != record["client_order_id"]
@@ -862,7 +959,7 @@ class OrderLifecycleJournalWriterV2:
             or checkpoint_after.last_event_id != record["last_event_id"]
         ):
             raise ValueError("lifecycle journal part checkpoint-after mismatch")
-        _cursor_from_mapping(record["checkpoint_before"])
+        self._cursor_from_mapping(record["checkpoint_before"])
         expected_batch_id = _canonical_sha256(
             {
                 "schema_version": ORDER_LIFECYCLE_JOURNAL_WRITER_V2_PART_VERSION,
@@ -914,7 +1011,7 @@ class OrderLifecycleJournalWriterV2:
             for index, record in enumerate(lifecycle_records):
                 if str(record["client_order_id"]) != client_order_id:
                     raise ValueError("lifecycle journal client order identity changed")
-                before = _cursor_from_mapping(record["checkpoint_before"])
+                before = self._cursor_from_mapping(record["checkpoint_before"])
                 if (
                     before.lifecycle_id != lifecycle_id
                     or before.client_order_id != client_order_id
@@ -934,10 +1031,12 @@ class OrderLifecycleJournalWriterV2:
                     if index != len(lifecycle_records) - 1:
                         raise ValueError("local_shutdown_censor is not the final durable event")
                     censored.add(lifecycle_id)
-                after = _cursor_from_mapping(record["checkpoint_after"])
+                after = self._cursor_from_mapping(record["checkpoint_after"])
                 expected_sequence = after.last_emitted_sequence + 1
                 prior_event_id = after.last_event_id
-            cursors[lifecycle_id] = _cursor_from_mapping(lifecycle_records[-1]["checkpoint_after"])
+            cursors[lifecycle_id] = self._cursor_from_mapping(
+                lifecycle_records[-1]["checkpoint_after"]
+            )
         return {
             "cursors": cursors,
             "event_ids": event_ids,
@@ -949,7 +1048,7 @@ class OrderLifecycleJournalWriterV2:
         records = self._load_records_locked()
         derived = self._derived_storage_state(records)
         for lifecycle_id, persisted_path in self._cursor_files().items():
-            persisted = _cursor_from_mapping(_read_json(persisted_path))
+            persisted = self._cursor_from_mapping(_read_json(persisted_path))
             recovered = derived["cursors"].get(lifecycle_id)
             if recovered is None:
                 raise ValueError("durable cursor exists without an immutable journal part")
@@ -965,8 +1064,10 @@ class OrderLifecycleJournalWriterV2:
                     raise ValueError("durable cursor disagrees with immutable journal parts")
                 checkpoint_boundaries = {
                     (
-                        _cursor_from_mapping(record["checkpoint_after"]).last_emitted_sequence,
-                        _cursor_from_mapping(record["checkpoint_after"]).last_event_id,
+                        self._cursor_from_mapping(
+                            record["checkpoint_after"]
+                        ).last_emitted_sequence,
+                        self._cursor_from_mapping(record["checkpoint_after"]).last_event_id,
                     )
                     for record in records.values()
                     if str(record["lifecycle_id"]) == lifecycle_id
@@ -980,6 +1081,7 @@ class OrderLifecycleJournalWriterV2:
         self._records = records
         self._committed_event_ids = set(derived["event_ids"])
         self._censored_lifecycle_ids = set(derived["censored_lifecycle_ids"])
+        self._row_count = int(derived["row_count"])
         if records:
             latest = max(records.values(), key=lambda item: int(item["committed_ts_ns"]))
             self._last_flush_ts_ns = max(
@@ -1021,7 +1123,7 @@ class OrderLifecycleJournalWriterV2:
         results: dict[str, Path] = {}
         for path in self.cursors_root.glob("cursor-*.json"):
             payload = _read_json(path)
-            cursor = _cursor_from_mapping(payload)
+            cursor = self._cursor_from_mapping(payload)
             if path != self._cursor_path(cursor.lifecycle_id):
                 raise ValueError("lifecycle cursor filename does not match lifecycle identity")
             if cursor.lifecycle_id in results:
@@ -1036,7 +1138,7 @@ class OrderLifecycleJournalWriterV2:
         path = self._cursor_path(lifecycle_id)
         if not path.exists():
             return None
-        return _cursor_from_mapping(_read_json(path))
+        return self._cursor_from_mapping(_read_json(path))
 
     def _persist_cursor_locked(
         self,
@@ -1059,12 +1161,44 @@ class OrderLifecycleJournalWriterV2:
         *,
         records: Mapping[str, Mapping[str, Any]] | None = None,
         derived: Mapping[str, Any] | None = None,
+        summary: Mapping[str, int] | None = None,
+        orphan_payloads: Sequence[str] | None = None,
         last_flush_ts_ns: int | None = None,
         last_flush_batch_id: str | None = None,
     ) -> dict[str, Any]:
         active_records = self._records if records is None else records
-        active_derived = self._derived_storage_state(active_records) if derived is None else derived
-        orphan_payloads = self._orphan_payload_files(active_records)
+        if summary is None:
+            if derived is not None:
+                summary = {
+                    "record_count": len(active_records),
+                    "row_count": int(derived["row_count"]),
+                    "cursor_count": len(derived["cursors"]),
+                    "censored_lifecycle_count": len(derived["censored_lifecycle_ids"]),
+                }
+            elif records is None:
+                summary = {
+                    "record_count": len(self._records),
+                    "row_count": self._row_count,
+                    "cursor_count": len(self._cursors),
+                    "censored_lifecycle_count": len(self._censored_lifecycle_ids),
+                }
+            else:
+                recovered = self._derived_storage_state(active_records)
+                summary = {
+                    "record_count": len(active_records),
+                    "row_count": int(recovered["row_count"]),
+                    "cursor_count": len(recovered["cursors"]),
+                    "censored_lifecycle_count": len(
+                        recovered["censored_lifecycle_ids"]
+                    ),
+                }
+        active_orphan_payloads = (
+            self._orphan_payload_files(active_records)
+            if orphan_payloads is None
+            else list(orphan_payloads)
+        )
+        if orphan_payloads is None and active_records is self._records:
+            self._known_orphan_payload_files = set(active_orphan_payloads)
         return {
             "schema_version": ORDER_LIFECYCLE_JOURNAL_WRITER_V2_HEALTH_VERSION,
             "session_id": self.session_id,
@@ -1083,8 +1217,8 @@ class OrderLifecycleJournalWriterV2:
                 if last_flush_batch_id is None
                 else str(last_flush_batch_id)
             ),
-            "callbacks_committed": len(active_records),
-            "rows_committed": int(active_derived["row_count"]),
+            "callbacks_committed": int(summary["record_count"]),
+            "rows_committed": int(summary["row_count"]),
             "rows_dropped": self._rows_dropped,
             "callbacks_quarantined": self._callbacks_quarantined,
             "error_count": self._error_count,
@@ -1092,16 +1226,16 @@ class OrderLifecycleJournalWriterV2:
             "quarantine_order_ids": sorted(self._quarantine_order_ids),
             "excluded_lifecycle_ids": sorted(self._excluded_lifecycle_ids),
             "excluded_client_order_ids": sorted(self._excluded_client_order_ids),
-            "durable_cursor_count": len(active_derived["cursors"]),
-            "local_shutdown_censor_count": len(active_derived["censored_lifecycle_ids"]),
-            "orphan_payload_count": len(orphan_payloads),
-            "orphan_payload_files": orphan_payloads,
+            "durable_cursor_count": int(summary["cursor_count"]),
+            "local_shutdown_censor_count": int(summary["censored_lifecycle_count"]),
+            "orphan_payload_count": len(active_orphan_payloads),
+            "orphan_payload_files": active_orphan_payloads,
             "formal_collection_valid": bool(
                 self._rows_dropped == 0
                 and self._error_count == 0
                 and self._state in {"collecting", "closed"}
                 and not self._quarantine_order_ids
-                and not orphan_payloads
+                and not active_orphan_payloads
             ),
             "economic_outcomes_read": False,
             "q90_action_authorized": False,
@@ -1223,15 +1357,11 @@ class OrderLifecycleJournalRuntimeBridgeV2:
         binding = self._bindings.get(str(lifecycle_id))
         if binding is None:
             raise KeyError("lifecycle must be registered before callback submission")
-        collect, reason = self.writer.collection_status(
+        collect, reason, cursor = self.writer.prepare_callback(
             lifecycle_id=binding.lifecycle_id,
             client_order_id=binding.client_order_id,
         )
         if not collect:
-            cursor = self.writer.cursor_for(
-                lifecycle_id=binding.lifecycle_id,
-                client_order_id=binding.client_order_id,
-            )
             return LifecycleJournalCommitResult(
                 status="quarantined",
                 batch_id="",
@@ -1239,11 +1369,7 @@ class OrderLifecycleJournalRuntimeBridgeV2:
                 checkpoint=cursor.checkpoint(),
                 reason=reason,
             )
-        cursor = self.writer.cursor_for(
-            lifecycle_id=binding.lifecycle_id,
-            client_order_id=binding.client_order_id,
-        )
-        emitter = OrderLifecycleJournalV2BatchEmitter(
+        emitter = self.writer.make_batch_emitter(
             lifecycle_id=binding.lifecycle_id,
             runtime_source=binding.runtime_source,
             client_order_id=binding.client_order_id,

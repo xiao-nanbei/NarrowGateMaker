@@ -597,7 +597,7 @@ class OrderManager:
                 if activation_unknown:
                     order.lifecycle.activate_with_unknown_prefix(
                         now_ns,
-                        reason="rest_identity_bind_without_exact_fill",
+                        reason="rest_reconcile_activation_unknown",
                     )
                     lifecycle_event_type = "activate_unknown_prefix"
                 else:

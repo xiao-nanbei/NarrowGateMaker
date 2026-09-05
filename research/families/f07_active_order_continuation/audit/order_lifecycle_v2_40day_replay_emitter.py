@@ -181,6 +181,7 @@ _PERMISSION_KEYS = frozenset(
 _CODE_PATHS = (
     "execution/order_lifecycle.py",
     "execution/order_lifecycle_journal_v2_strict_native.py",
+    "execution/order_lifecycle_journal_writer_v2.py",
     "execution/order_lifecycle_journal_writer_v2_strict_native.py",
     "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
     "execution/order_lifecycle_quantity_contract.py",
@@ -2109,6 +2110,7 @@ def _configure_authoritative_params(
             "order_lifecycle_journal_v2_root": staging_root / "journal",
             "order_lifecycle_journal_v2_session_id": f"f07-{day_row['day']}",
             "order_lifecycle_journal_v2_storage_format": "parquet",
+            "order_lifecycle_journal_v2_writer_mode": "day_buffered",
             "_order_lifecycle_journal_v2_runtime_identity": dict(day_row["runtime_identity"]),
         }
     )
@@ -2406,15 +2408,6 @@ def _run_authoritative_day(
 ) -> Path:
     from models import backtest_tick as bt
     from models.exchange_book_replay import CryptoHFTExchangeBookTape
-    from models.replay import order_lifecycle_v2_replay_adapter_strict_native as adapter_module
-
-    from execution.order_lifecycle_journal_writer_v2_replay_day_buffered import (
-        DayBufferedReplayJournalWriterV2,
-    )
-    from execution.order_lifecycle_journal_writer_v2_strict_native import (
-        OrderLifecycleJournalWriterV2 as StrictNativeJournalWriterV2,
-    )
-
     plan = _read_json(plan_path)
     by_day = validate_execution_plan(plan)
     _revalidate_worker_runtime_artifacts(plan)
@@ -2456,27 +2449,21 @@ def _run_authoritative_day(
             params=params,
         )
 
-        if adapter_module.OrderLifecycleJournalWriterV2 is not StrictNativeJournalWriterV2:
-            raise ReplayEmitterError(f"{day}: strict-native writer binding was already replaced")
-        adapter_module.OrderLifecycleJournalWriterV2 = DayBufferedReplayJournalWriterV2
-        try:
-            with Path(os.devnull).open("w", encoding="utf-8") as sink:
-                with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-                    replay_result = bt._simulate_tick_with_engine(
-                        "python",
-                        window["trades"],
-                        window["var_ts_ms"],
-                        window["var_ssq"],
-                        params,
-                        ml_data=window["ml_data"],
-                        bbo_data=window.get("bbo_data"),
-                        l2_data=window.get("l2_data"),
-                        var_ti=window.get("var_ti"),
-                        var_retsq=window.get("var_retsq"),
-                        exchange_book_event_tape=tape,
-                    )
-        finally:
-            adapter_module.OrderLifecycleJournalWriterV2 = StrictNativeJournalWriterV2
+        with Path(os.devnull).open("w", encoding="utf-8") as sink:
+            with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                replay_result = bt._simulate_tick_with_engine(
+                    "python",
+                    window["trades"],
+                    window["var_ts_ms"],
+                    window["var_ssq"],
+                    params,
+                    ml_data=window["ml_data"],
+                    bbo_data=window.get("bbo_data"),
+                    l2_data=window.get("l2_data"),
+                    var_ti=window.get("var_ti"),
+                    var_retsq=window.get("var_retsq"),
+                    exchange_book_event_tape=tape,
+                )
         health = replay_result.get("_order_lifecycle_journal_v2_health")
         del replay_result
         if not isinstance(health, Mapping):

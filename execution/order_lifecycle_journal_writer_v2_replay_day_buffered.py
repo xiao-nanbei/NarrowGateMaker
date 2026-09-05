@@ -9,8 +9,8 @@ that replay path dominated by filesystem commits.
 This successor validates every callback and advances strict in-memory cursors,
 then publishes one content-addressed Parquet part when the day closes.  A crash
 never resumes this buffer; the unadmitted day staging directory is discarded
-and replayed from frozen inputs.  The live and historical journal writers are
-unchanged.
+and replayed from frozen inputs. It is an explicit formal-replay mode and is
+never selected by the live writer.
 """
 
 from __future__ import annotations
@@ -25,18 +25,15 @@ from typing import Any
 from execution.order_lifecycle_journal_v2_strict_native import (
     OrderLifecycleJournalV2Batch,
 )
-from execution.order_lifecycle_journal_writer_v2_strict_native import (
-    ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
-    LifecycleJournalCommitResult,
-    OrderLifecycleJournalWriterV2,
+from execution.order_lifecycle_journal_writer_v2 import (
     _atomic_write_json,
     _canonical_sha256,
     _fsync_directory,
-    _journal_schema_sha256,
-    _payloads_from_batch,
-    _pyarrow_schema,
     _sha256_file,
-    _cursor_from_mapping,
+)
+from execution.order_lifecycle_journal_writer_v2_strict_native import (
+    LifecycleJournalCommitResult,
+    OrderLifecycleJournalWriterV2,
 )
 
 REPLAY_WRITER_ID = "order_lifecycle_journal_writer_v2.replay_day_buffered.v1"
@@ -67,7 +64,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
             self._release_process_lock()
             raise
 
-    def _assert_incremental_owner_locked(self) -> None:
+    def _assert_operation_allowed_locked(self) -> None:
         if self._closed:
             raise RuntimeError("lifecycle journal writer is closed")
         if self._lock_handle is None or self._lock_handle.closed:
@@ -75,7 +72,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
 
     def reconcile(self) -> None:
         with self._lock:
-            self._assert_incremental_owner_locked()
+            self._assert_operation_allowed_locked()
 
     def _health_payload_locked(
         self,
@@ -127,7 +124,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
         self,
         batch: OrderLifecycleJournalV2Batch,
     ) -> LifecycleJournalCommitResult:
-        payloads = _payloads_from_batch(batch)
+        payloads = self._payloads_from_batch(batch)
         if not payloads:
             return LifecycleJournalCommitResult(
                 status="noop",
@@ -137,7 +134,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
                 reason="no_unseen_events",
             )
         with self._lock:
-            self._assert_incremental_owner_locked()
+            self._assert_operation_allowed_locked()
             try:
                 first = payloads[0]
                 lifecycle_id = str(first["lifecycle_id"])
@@ -183,7 +180,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
                 if lifecycle_id in self._censored_lifecycle_ids:
                     raise ValueError("event follows a local shutdown censor")
 
-                next_cursor = _cursor_from_mapping(batch.checkpoint)
+                next_cursor = self._cursor_from_mapping(batch.checkpoint)
                 self._pending_payloads.extend(payloads)
                 self._buffered_batch_ids.add(batch_id)
                 self._committed_event_ids.update(event_ids)
@@ -239,7 +236,10 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
             import pyarrow as pa
             import pyarrow.parquet as pq
 
-            table = pa.Table.from_pylist(self._pending_payloads, schema=_pyarrow_schema())
+            table = pa.Table.from_pylist(
+                self._pending_payloads,
+                schema=self._pyarrow_schema(),
+            )
             pq.write_table(table, temporary, compression="zstd")
             with temporary.open("rb") as handle:
                 os.fsync(handle.fileno())
@@ -254,8 +254,8 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
             "identity": REPLAY_WRITER_ID,
             "part_id": part_id,
             "runtime_identity_sha256": self._runtime_identity_sha256,
-            "journal_schema_version": ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
-            "journal_schema_sha256": _journal_schema_sha256(),
+            "journal_schema_version": self._schema_contract.schema_version,
+            "journal_schema_sha256": self._journal_schema_sha256(),
             "storage_format": "parquet",
             "data_file": data_path.name,
             "data_sha256": _sha256_file(data_path),
@@ -281,7 +281,7 @@ class DayBufferedReplayJournalWriterV2(OrderLifecycleJournalWriterV2):
             if self._closed:
                 return self._health_payload_locked()
             try:
-                self._assert_incremental_owner_locked()
+                self._assert_operation_allowed_locked()
                 self._publish_day_part_locked()
                 self._closed = True
                 self._state = "closed"

@@ -16,6 +16,9 @@ from execution.order_lifecycle_journal_writer_v2_replay_day_buffered import (
 from execution.order_lifecycle_journal_writer_v2_strict_native import (
     OrderLifecycleJournalRuntimeBridgeV2,
 )
+from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
+    OrderLifecycleV2ReplayAdapter,
+)
 
 
 def _writer(root: Path) -> DayBufferedReplayJournalWriterV2:
@@ -112,3 +115,30 @@ def test_day_buffered_replay_requires_held_process_lock(tmp_path: Path) -> None:
             raise AssertionError("missing process lock did not fail closed")
     finally:
         writer._closed = True
+
+
+def test_strict_adapter_selects_day_buffered_writer_without_global_rebinding(
+    tmp_path: Path,
+) -> None:
+    adapter = OrderLifecycleV2ReplayAdapter(
+        root=tmp_path,
+        session_id="adapter-day",
+        runtime_identity={"identity": REPLAY_WRITER_ID},
+        symbol="BTCUSDC",
+        writer_mode="day_buffered",
+    )
+    assert isinstance(adapter.writer, DayBufferedReplayJournalWriterV2)
+    adapter.submit(
+        {
+            "trace_id": 1,
+            "side": "BUY",
+            "submit_ts": 1_000,
+            "quote_ts": 1_000,
+            "quantity": 0.001,
+            "remaining": 0.001,
+        },
+        1_000,
+    )
+    health = adapter.close()
+    assert health["part_count"] == 1
+    assert health["callbacks_committed"] == 1

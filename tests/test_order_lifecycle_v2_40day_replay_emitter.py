@@ -742,6 +742,18 @@ def test_native_queue_authority_rejects_missing_bound_file(tmp_path: Path) -> No
         )
 
 
+def test_code_artifacts_include_shared_writer_and_selected_adapters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(emitter, "artifact_identity", lambda path: {"path": str(path)})
+    paths = {row["logical_path"] for row in emitter._current_code_artifacts()}
+    assert {
+        "execution/order_lifecycle_journal_writer_v2.py",
+        "execution/order_lifecycle_journal_writer_v2_strict_native.py",
+        "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+    } <= paths
+
+
 def test_day_identity_binds_source_and_global_runtime() -> None:
     interval = emitter._utc_interval("2026-04-17")
     first = emitter._plan_day_identity(
