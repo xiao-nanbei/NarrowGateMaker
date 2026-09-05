@@ -1423,6 +1423,89 @@ def test_public_source_publish_shell_is_source_only_and_atomic() -> None:
     assert "model" not in rendered
 
 
+def test_content_bundle_validation_reuses_each_verified_member_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    members = [("policy", tmp_path / "policy.json"), ("config", tmp_path / "config.yaml")]
+    contents = {role: f"synthetic {role}\n".encode() for role, _path in members}
+    for role, path in members:
+        path.write_bytes(contents[role])
+    reference, expected_leaves = subject._content_bundle_reference(members)
+    identities = [
+        {"role": role, "sha256": hashlib.sha256(raw).hexdigest(), "size_bytes": len(raw)}
+        for role, raw in sorted(contents.items())
+    ]
+    assert reference["root_sha256"] == hashlib.sha256(
+        json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    original_read, original_sha = subject._read_regular_file, subject._sha256
+    reads: list[Path] = []
+    hashed_members: list[bytes] = []
+
+    def read_once(path: Path, **kwargs: Any) -> bytes:
+        reads.append(path)
+        return original_read(path, **kwargs)
+
+    def hash_once(raw: bytes) -> str:
+        if raw in contents.values():
+            hashed_members.append(raw)
+        return original_sha(raw)
+
+    monkeypatch.setattr(subject, "_read_regular_file", read_once)
+    monkeypatch.setattr(subject, "_sha256", hash_once)
+    paths, leaves = subject._validate_content_bundle_reference(
+        reference, label="synthetic bundle", required_roles=frozenset(contents),
+    )
+    assert paths == reference["member_paths"]
+    assert leaves == expected_leaves
+    assert sorted(reads) == sorted(path for _role, path in members)
+    assert sorted(hashed_members) == sorted(contents.values())
+
+
+@pytest.mark.parametrize("damage", ("tampered", "symlink", "read_error", "read_changes"))
+def test_content_bundle_validation_preserves_member_read_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str,
+) -> None:
+    member = tmp_path / "policy.json"
+    member.write_bytes(b"synthetic policy\n")
+    reference, _leaves = subject._content_bundle_reference((("policy", member),))
+    expected_message = "root drifted"
+    if damage == "tampered":
+        member.write_bytes(b"modified policy\n")
+    elif damage == "symlink":
+        target = tmp_path / "replacement.json"
+        target.write_bytes(member.read_bytes())
+        member.unlink()
+        member.symlink_to(target)
+        expected_message = "not canonical"
+    elif damage == "read_error":
+        def deny_open(*_args: Any, **_kwargs: Any) -> int:
+            raise PermissionError("synthetic permission failure")
+
+        monkeypatch.setattr(subject.os, "open", deny_open)
+        expected_message = "cannot open regular file.*synthetic permission failure"
+    else:
+        original_fstat = subject.os.fstat
+        read_checks = 0
+
+        def mutate_during_read(fd: int) -> Any:
+            nonlocal read_checks
+            read_checks += 1
+            if read_checks == 2:
+                member.write_bytes(b"changed while descriptor was open\n")
+            return original_fstat(fd)
+
+        monkeypatch.setattr(subject.os, "fstat", mutate_during_read)
+        expected_message = "file changed while it was being read"
+
+    with pytest.raises(subject.LockedRuntimeError, match=expected_message) as caught:
+        subject._validate_content_bundle_reference(
+            reference, label="synthetic bundle", required_roles=frozenset({"policy"}),
+        )
+    if damage == "read_error":
+        assert isinstance(caught.value.__cause__, PermissionError)
+
+
 def test_build_deployment_envelope_b0_omits_buy_e3_extension(
     tmp_path: Path,
 ) -> None:

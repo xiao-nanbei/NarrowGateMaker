@@ -2,9 +2,9 @@
 
 <p><a href="CONTRIBUTING.md">English</a> | <a href="CONTRIBUTING.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-09-06
 
 Thank you for helping improve NarrowGateMaker. This repository combines ordinary
 software engineering with evidence-governed market-making research, so the review
@@ -42,6 +42,11 @@ Ordinary code, build, test, and documentation changes follow this workflow. A bu
 fix does not become a new research result merely because it affects a research
 executor.
 
+Build release wheels from a clean source checkout or temporary source tree. An old
+`build/lib` directory can retain deleted modules and copy them into a later wheel;
+do not treat its contents as maintained source. Test the installed wheel outside
+the checkout, including its required package resources.
+
 ## Research Identity and Formal Execution
 
 Research identity and execution identity are separate. A research identity changes
@@ -53,10 +58,7 @@ only when at least one frozen scientific-contract element changes:
 - estimand;
 - statistical contract.
 
-An implementation bug, crash, cache mismatch, concurrency race, serialization
-error, or performance repair stays under the same research identity. It must not be
-renamed as a new research `vXX`. It creates a new execution attempt after the repair
-passes the stability gates.
+An implementation bug, crash, cache mismatch, concurrency race, serialization error, or performance repair stays under the same research identity while those scientific-contract elements remain unchanged. It must not be renamed as a new research `vXX`. An ordinary code review needs proportionate software checks, not a new economic study. When the repaired executor is used for another formal run, record a new execution attempt with the actual tested source and input identities; do not overwrite the failed attempt or reuse its partial economics.
 
 The formal sequence is:
 
@@ -70,17 +72,9 @@ development branch
 -> immutable final receipt binding result hashes to the pre-run manifest
 ```
 
-The stability gates cover representative single-day output, an all-fold
-zero-economic walk, concurrency and cache durability, regression and parity,
-complete output-shape smoke, and a clean worktree. The intended worker topology,
-resource lifetime, interruption/resume behavior, atomic cache replacement,
-aggregation, scorecard generation, and receipt serialization must be exercised
-before economic values are read.
+The formal study's execution contract defines its required stability checks: representative single-day output, fold/input coverage, concurrency and cache durability, regression/parity, output-shape smoke, and the exact source identity. Apply each check at the boundary it verifies. Documentation-only changes do not require full market replay; a targeted runtime repair needs focused regressions and the affected backend/state-machine checks. Before publishing new formal economics, verify the study's required execution topology, inputs, and output completeness. Reuse prior checks only when their tested inputs and behavior are unchanged and the study contract permits it.
 
-A failed formal run receives an immutable failed-attempt receipt and is ineligible
-for economic inference. Repair it on the development line, repeat every stability
-gate, and issue a new `attempt-*` identity. Do not move, rewrite, or delete the
-failed tag, manifest, or receipt.
+A failed formal run receives an immutable failed-attempt receipt and is ineligible for economic inference. Repair it on the development line, document the impact and validation scope, then issue a new `attempt-*` identity for the next formal run. Preserve any stricter checks required by that run's already-frozen contract; do not silently weaken historical evidence requirements. Do not move, rewrite, or delete the failed tag, manifest, or receipt.
 
 See the [formal execution contract](research/shared/experiment_governance/docs/formal_execution_attempt_and_evidence_freeze_contract_v1_20260821.md)
 and the [identity guide](docs/opensource/identity_and_release.md) for the full

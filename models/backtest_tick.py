@@ -28,7 +28,6 @@ import operator
 import os
 import random
 import re
-import stat
 import sys
 import time
 from dataclasses import asdict, replace
@@ -44,31 +43,27 @@ MODEL_DIR: Path
 RESULTS_DIR: Path
 
 
-def _lexical_checkout_root(script_file):
-    """Bind direct script execution to its lexical checkout, never a symlink."""
+def _canonical_checkout_root(script_file):
+    """Resolve an ordinary offline entrypoint to one physical package root.
 
-    script = Path(os.path.abspath(os.fspath(script_file)))
-    cursor = Path(script.anchor)
-    for part in script.parts[1:]:
-        cursor = cursor / part
-        try:
-            metadata = os.lstat(cursor)
-        except OSError as exc:
-            raise RuntimeError("backtest_tick checkout path is unavailable") from exc
-        if stat.S_ISLNK(metadata.st_mode):
-            raise RuntimeError("backtest_tick checkout path contains a symlink")
-        if cursor == script:
-            if not stat.S_ISREG(metadata.st_mode):
-                raise RuntimeError("backtest_tick entrypoint is not a regular file")
-        elif not stat.S_ISDIR(metadata.st_mode):
-            raise RuntimeError("backtest_tick checkout ancestor is not a directory")
+    Checkout aliases and platform aliases such as /tmp are valid here. This
+    code-location lookup grants no authority to private live/replay artifacts;
+    their dedicated readers retain their no-symlink validation.
+    """
+
+    try:
+        script = Path(script_file).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError("backtest_tick checkout path is unavailable") from exc
+    if not script.is_file():
+        raise RuntimeError("backtest_tick entrypoint is not a regular file")
     if script.parent.name != "models":
         raise RuntimeError("backtest_tick entrypoint is outside the models directory")
     return script.parent.parent
 
 
-_LEXICAL_CHECKOUT_ROOT = _lexical_checkout_root(__file__)
-_checkout_root_text = str(_LEXICAL_CHECKOUT_ROOT)
+_CANONICAL_CHECKOUT_ROOT = _canonical_checkout_root(__file__)
+_checkout_root_text = str(_CANONICAL_CHECKOUT_ROOT)
 sys.path[:] = [
     entry
     for entry in sys.path

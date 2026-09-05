@@ -178,6 +178,21 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         self.assertEqual(discovered - declared, set())
         self.assertEqual(declared - discovered, set())
 
+    def test_wheel_declares_exact_public_governance_resources(self) -> None:
+        from research.governance.historical_reproduction import REGISTRY_PATH
+        from research.governance.paths import MIGRATION_MANIFESTS
+
+        package_root = ROOT / "research" / "governance"
+        required = {
+            path.relative_to(package_root).as_posix()
+            for path in (REGISTRY_PATH, *MIGRATION_MANIFESTS)
+        }
+        declared = _project_config()["tool"]["setuptools"]["package-data"]
+        self.assertEqual(set(declared["research.governance"]), required)
+        self.assertTrue(all((package_root / path).is_file() for path in required))
+        self.assertNotIn("*.json", declared.get("*", []))
+        self.assertNotIn("**/*.json", declared.get("*", []))
+
     def test_dockerfile_copies_every_declared_package_root_and_module(self) -> None:
         config = _project_config()
         setuptools = config["tool"]["setuptools"]
@@ -258,6 +273,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
             | set(optional["live"])
         )
         self.assertEqual(set(optional["all"]), expected)
+        self.assertIn("requests>=2.28", optional["research"])
         self.assertEqual(optional["provider-cryptohft"], ["cryptohftdata>=0.2.1"])
         self.assertNotIn("cryptohftdata>=0.2.1", optional["all"])
 

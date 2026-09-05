@@ -35,9 +35,18 @@ def test_successor_reload_rejects_candidate_sha_toctou_before_engine_mutation(
         live_config.set_restart_only_config_sha256(None)
 
 
+@pytest.mark.parametrize(
+    "changed_bytes",
+    (
+        b"spread_cap_mode: compress\n",
+        b"strategy: {boolean_cooldown_evidence_route: revised_annotation}\n",
+        b"strategy: {buy_e3_cooldown_evidence_route: revised_annotation}\n",
+    ),
+)
 def test_successor_reload_allows_only_the_exact_startup_file_hash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    changed_bytes: bytes,
 ) -> None:
     config_path = tmp_path / "successor.yaml"
     config_path.write_bytes(b"startup")
@@ -47,7 +56,7 @@ def test_successor_reload_allows_only_the_exact_startup_file_hash(
     monkeypatch.setattr(live_config, "_cfg_path", config_path)
     monkeypatch.setattr(live_config, "_engine_ref", engine)
     live_config.set_restart_only_config_sha256(hashlib.sha256(b"startup").hexdigest())
-    config_path.write_bytes(b"spread_cap_mode: compress\n")
+    config_path.write_bytes(changed_bytes)
     try:
         live_config.reload_config()
         assert live_config._cfg is previous

@@ -2413,12 +2413,13 @@ def _file_binding(path: Path, expected_sha256: Any, label: str) -> tuple[Path, s
 
 def _content_bundle_reference(
     members: Sequence[tuple[str, Path]],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Bind named non-manifest files behind one bundle root.
 
     Leaf hashes are deliberately local to this calculation.  The release
     manifest exposes one root plus locators, rather than copying each leaf
-    digest into every deployment and runtime-policy layer.
+    digest into every deployment and runtime-policy layer. Return the derived
+    leaves separately so validation reuses the same bytes that formed the root.
     """
 
     locators: dict[str, str] = {}
@@ -2440,7 +2441,10 @@ def _content_bundle_reference(
             allow_nan=False,
         ).encode("utf-8")
     )
-    return {"root_sha256": root, "member_paths": locators}
+    return (
+        {"root_sha256": root, "member_paths": locators},
+        {row["role"]: row["sha256"] for row in identities},
+    )
 
 
 def _validate_content_bundle_reference(
@@ -2461,10 +2465,9 @@ def _validate_content_bundle_reference(
         resolved_members.append(
             (role, _receipt_path(Path(str(member_paths[role])), f"{label} {role}"))
         )
-    observed = _content_bundle_reference(resolved_members)
+    observed, leaf_sha256 = _content_bundle_reference(resolved_members)
     if observed["root_sha256"] != expected_root:
         raise LockedRuntimeError(f"{label} root drifted")
-    leaf_sha256 = {role: _sha256(_read_regular_file(path)) for role, path in resolved_members}
     return {role: str(path) for role, path in resolved_members}, leaf_sha256
 
 
@@ -2785,6 +2788,8 @@ def build_deployment_envelope(
     normalized_policy_approvals = _normalize_deployment_policy_approvals(
         policy_approvals
     )
+    config_reference, _config_leaves = _content_bundle_reference((("config", active),))
+    policy_reference, _policy_leaves = _content_bundle_reference(policy_members)
     payload: dict[str, Any] = {
         "schema_version": DEPLOYMENT_ENVELOPE_SCHEMA,
         "status": "deployment_envelope_built",
@@ -2793,8 +2798,8 @@ def build_deployment_envelope(
             "manifest_path": build["manifest_path"],
             "root_sha256": build["root_sha256"],
         },
-        "config_bundle": _content_bundle_reference((("config", active),)),
-        "model_policy_bundle": _content_bundle_reference(policy_members),
+        "config_bundle": config_reference,
+        "model_policy_bundle": policy_reference,
         "policy_approvals": list(normalized_policy_approvals),
     }
     payload[DEPLOYMENT_ENVELOPE_CANONICAL_FIELD] = canonical_sha256(

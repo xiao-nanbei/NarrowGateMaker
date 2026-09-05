@@ -3553,6 +3553,7 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
             **base,
             "boolean_cooldown_policy_sha256": "a" * 64,
             "boolean_cooldown_predicate_bundle_sha256": "b" * 64,
+            "boolean_cooldown_evidence_route": "updated_research_annotation",
         },
     )
 
@@ -3603,6 +3604,7 @@ def test_f05_buy_e3_identity_is_restart_only() -> None:
             "buy_e3_cooldown_artifact_sha256": "b" * 64,
             "buy_e3_cooldown_policy_sha256": "c" * 64,
             "buy_e3_cooldown_predicate_bundle_sha256": "d" * 64,
+            "buy_e3_cooldown_evidence_route": "updated_research_annotation",
         },
     )
 
@@ -3668,7 +3670,6 @@ def test_maker_engine_reload_rejects_buy_e3_enablement_change_before_mutation(
         ("buy_e3_cooldown_policy_path", "/changed/policy.json"),
         ("buy_e3_cooldown_predicate_bundle_path", "/changed/predicates.json"),
         ("buy_e3_cooldown_ema_warmup_s", 4096.0),
-        ("buy_e3_cooldown_evidence_route", "changed_owner_route"),
     ),
 )
 def test_maker_engine_reload_rejects_buy_e3_binding_drift_before_mutation(

@@ -2,9 +2,9 @@
 
 <p><a href="CONTRIBUTING.md">English</a> | <a href="CONTRIBUTING.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-09-06
 
 感谢你帮助改进 NarrowGateMaker。本仓库同时包含常规软件工程和受证据治理的做市研究，因此审查路径取决于改动声称的内容。
 
@@ -34,6 +34,8 @@ Last materially synchronized: 2026-08-29
 
 普通代码、构建、测试和文档变更都遵循这套工作流。一项 bug fix 不会仅因它影响了研究 executor 就变成新的研究结果。
 
+发布 wheel 应从干净的源码 checkout 或临时源码树构建。旧 `build/lib` 目录可能保留已删除模块，并在下次构建时重新把它们打入 wheel；不要把其中内容当作受维护源码。应在 checkout 之外测试实际安装的 wheel，包括它需要的包内资源。
+
 ## 研究身份与正式执行
 
 研究身份和执行身份彼此独立。只有下列至少一项冻结的科学合同元素改变时，研究身份才会改变：
@@ -44,7 +46,7 @@ Last materially synchronized: 2026-08-29
 - estimand；
 - statistical contract。
 
-实现 bug、crash、cache mismatch、concurrency race、serialization error 或 performance repair 仍保持原有研究身份。不得将它们重命名为新的研究 `vXX`。修复通过稳定性门后，应创建一次新的执行尝试。
+只要这些科学合同元素不变，实现 bug、crash、cache mismatch、concurrency race、serialization error 或 performance repair 仍保持原有研究身份。不得将它们重命名为新的研究 `vXX`。普通代码审查需要与风险相称的软件检查，不需要新建经济研究。修复后的执行器用于下一次正式运行时，应记录新的执行尝试及实际测试的源码与输入身份，不得覆盖失败尝试或复用其部分经济结果。
 
 正式顺序为：
 
@@ -58,9 +60,9 @@ development branch
 -> immutable final receipt binding result hashes to the pre-run manifest
 ```
 
-稳定性门覆盖：具有代表性的单日输出、所有 fold 的零经济结果 walk、并发与 cache 持久性、regression 与 parity、完整输出形状 smoke，以及干净的 worktree。在读取经济数值之前，必须先验证预期的 worker topology、resource lifetime、interruption/resume 行为、atomic cache replacement、aggregation、scorecard generation 和 receipt serialization。
+正式研究的执行合同定义所需稳定性检查：代表性单日输出、fold/输入覆盖、并发与 cache 持久性、regression/parity、输出形状 smoke，以及精确源码身份。每项检查在其实际负责的边界触发。纯文档修改不需要全量市场回放；局部运行时修复需要针对性回归及受影响 backend/状态机检查。在发布新的正式经济结果之前，验证该研究要求的执行拓扑、输入与输出完整性。只有测试输入及行为未变、且研究合同允许时，才可复用既有检查。
 
-失败的正式运行会获得一份不可变的 failed-attempt receipt，且没有资格用于经济推断。在 development line 上修复问题，重新执行每一项稳定性门，并创建新的 `attempt-*` 身份。不得移动、改写或删除失败的 tag、manifest 或 receipt。
+失败的正式运行会获得一份不可变的 failed-attempt receipt，且没有资格用于经济推断。在 development line 上修复问题，说明影响和验证范围，然后为下一次正式运行创建新的 `attempt-*` 身份。该运行已冻结合同要求的更严格检查仍需保留，不得静默弱化历史证据要求。不得移动、改写或删除失败的 tag、manifest 或 receipt。
 
 完整边界见[正式执行合同](research/shared/experiment_governance/docs/formal_execution_attempt_and_evidence_freeze_contract_v1_20260821.md)与[身份指南](docs/opensource/identity_and_release.md)。
 

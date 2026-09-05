@@ -62,14 +62,13 @@ def require_f05_boolean_cooldown_restart(
     previous: Mapping[str, Any],
     candidate: Mapping[str, Any],
 ) -> None:
-    """Prevent SIGHUP from changing an active policy or any artifact binding."""
+    """Protect executable policy bindings, not descriptive research annotations."""
 
     fields = (
         "boolean_cooldown_policy_enabled",
         "boolean_cooldown_policy_path",
         "boolean_cooldown_predicate_bundle_path",
         "boolean_cooldown_ema_warmup_s",
-        "boolean_cooldown_evidence_route",
     )
     changed = [name for name in fields if previous.get(name) != candidate.get(name)]
     if changed:
@@ -113,7 +112,7 @@ def require_f05_buy_e3_restart(
     previous: Mapping[str, Any],
     candidate: Mapping[str, Any],
 ) -> None:
-    """Keep the BUY E3 artifact and all bindings restart-only."""
+    """Keep executable BUY E3 bindings restart-only, excluding annotations."""
 
     fields = (
         "buy_e3_cooldown_policy_enabled",
@@ -121,7 +120,6 @@ def require_f05_buy_e3_restart(
         "buy_e3_cooldown_policy_path",
         "buy_e3_cooldown_predicate_bundle_path",
         "buy_e3_cooldown_ema_warmup_s",
-        "buy_e3_cooldown_evidence_route",
     )
     changed = [name for name in fields if previous.get(name) != candidate.get(name)]
     if changed:

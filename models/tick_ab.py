@@ -1125,10 +1125,7 @@ def main(argv: list[str] | None = None) -> None:
                 "dynamic" if exp.arm_factory is not None else str(len(exp.arms))
             )
             print(f"  {key:16s} {exp.title} ({arm_count} arms)")
-        if argv and argv[0] == "--list":
-            return
-        if not argv:
-            return
+        return
     key = argv[0]
     if key not in EXPERIMENTS:
         raise SystemExit(f"Unknown experiment '{key}'. Choices: {', '.join(EXPERIMENTS)}")

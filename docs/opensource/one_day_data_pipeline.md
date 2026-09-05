@@ -1,6 +1,10 @@
 # One-Day Data Pipeline
 
-Last materially modified: 2026-08-23
+[English](one_day_data_pipeline.md) | [简体中文](one_day_data_pipeline.zh-CN.md)
+
+Last materially modified: 2026-09-06
+
+Last materially synchronized: 2026-09-06
 
 Status: Current public acquisition and diagnostic-replay tutorial.
 
@@ -12,10 +16,14 @@ For a zero-network walkthrough of the complete queue, fill denominator, campaign
 
 ## Install And Paths
 
-Use Python 3.11 or newer and install the public data tooling:
+Use an activated Python 3.11-or-newer environment and install both acquisition and replay dependencies. `.[data]` alone covers downloads and normalization, but the full tick replay imports scientific/research modules even with `--no-ml`:
 
 ```bash
-python -m pip install -e ".[data]"
+python -m pip install -e ".[data,research]"
+
+# These help commands do not download data or start replay.
+python pipeline.py download-agg-trades --help
+python -m models.backtest_tick --help
 
 export NARROWGATE_ROOT="$PWD"
 export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
@@ -78,4 +86,4 @@ Success writes the requested scalar summary plus replay diagnostics under `${NAR
 
 ## Strict Book Path
 
-CryptoHFTData is an optional authenticated third-party source. An authorized user installs `.[data,provider-cryptohft]`, supplies the provider credential outside Git, and follows the [market-data source and normalization contract](../market_data.md#binance-and-cryptohftdata). The provider client is intentionally not part of `all`, and installation grants neither access nor a data license. A newly normalized day stays in its source-labelled staging root until coverage, sequence, causality, BBO/L2 pairing, warmup, and manifest gates pass; never copy it manually into the immutable formal registry.
+CryptoHFTData is an optional authenticated third-party source. An authorized user adds `.[provider-cryptohft]` to the environment above, supplies the provider credential outside Git, and follows the [market-data source and normalization contract](../market_data.md#binance-and-cryptohftdata). Acquisition alone can use `.[data,provider-cryptohft]`; strict replay also needs the research dependencies. The provider client is intentionally not part of `all`, and installation grants neither access nor a data license. A newly normalized day stays in its source-labelled staging root until coverage, sequence, causality, BBO/L2 pairing, warmup, and manifest gates pass; never copy it manually into the immutable formal registry.

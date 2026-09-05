@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-30
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-30
+Last materially synchronized: 2026-09-06
 
 NarrowGate 研究划分为十个策略/证据家族、一条系统工程线和四个共享基础设施层。所有研究源码、证据、共享合同及治理元数据都位于同一个 `research/` 子树下。
 
@@ -12,7 +12,9 @@ NarrowGate 研究划分为十个策略/证据家族、一条系统工程线和�
 
 过去由各家族拥有、位于 `models/`、`models/audit/`、`features/`、`docs/`、`cpp/narrowgate_cpp/` 以及原根目录 `research_*` 下的路径均已删除。活跃 import、命令、测试和构建文件直接使用规范的 `research.*` package；不保留兼容 symlink 或重复源码文件。
 
-带版本的迁移合同位于 `governance/migrations/`。`layout_v1.json` 将首批 198 个已删除路径映射到家族归属；`layout_v2.json` 将原根目录研究布局映射到当前子树。精确的边界 archive 属于私有历史证据，不随公共仓库分发；[`governance/archive/README.md`](governance/archive/README.md)公开其 artifact ID、SHA256、字节数和可用性。经授权的历史复现必须验证匹配的私有 archive，而当前规范代码在重新运行时必须获得新的 experiment identity。
+带版本的迁移合同位于 `governance/migrations/`。`layout_v1.json` 将首批 198 个已删除路径映射到家族归属；`layout_v2.json` 将原根目录研究布局映射到当前子树。精确的边界 archive 属于私有历史证据，不随公共仓库分发；[`governance/archive/README.md`](governance/archive/README.md)公开其 artifact ID、SHA256、字节数和可用性。精确历史复现必须使用匹配的原始源码/archive；新工作直接使用当前规范实现，不得声称它复现了归档字节。
+
+重新运行并不自动产生新的研究身份。只要冻结样本、baseline/candidate、fold、估计目标和统计合同不变，普通缺陷、cache、序列化或性能修复就保持原研究身份；新的正式运行记录独立执行尝试及实际源码/输入身份。科学合同中的这些要素变化才需要新研究身份。复用共享算法并不继承历史家族已消耗的数据面板、结论或权限。见[贡献指南](../CONTRIBUTING.zh-CN.md#研究身份与正式执行)。
 
 | ID | 目录 | 状态 | 共享层 |
 |---|---|---|---|

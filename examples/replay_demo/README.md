@@ -1,6 +1,10 @@
 # Public Replay Demo
 
-Last materially modified: 2026-08-23
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+Last materially modified: 2026-09-06
+
+Last materially synchronized: 2026-09-06
 
 Status: Distributed synthetic mechanics fixture; non-economic and not promotion-eligible.
 
@@ -22,7 +26,7 @@ The command writes `summary.json`, `trace.jsonl`, and `receipt.json`. A second r
 
 ## Fixture
 
-- [`contract.json`](../../narrowgate/fixtures/replay_demo/contract.json) freezes the synthetic classification, denied permissions, input SHA256, denominator, expected terminal values, and gate authority.
+- [`contract.json`](../../narrowgate/fixtures/replay_demo/contract.json) freezes the fixture schema/engine version, input SHA256, denominator, expected terminal values, and deterministic receipt time. Historical classification/permission fields in that JSON are descriptive compatibility metadata; they do not grant capabilities or control output eligibility.
 - [`synthetic_tape.jsonl`](../../narrowgate/fixtures/replay_demo/synthetic_tape.jsonl) is a hand-authored top-of-book and trade sequence. It is not exchange data and has no empirical or economic authority.
 - [`reference/`](../../narrowgate/fixtures/replay_demo/reference/) contains the byte-for-byte expected summary, event trace, and receipt for the distributed engine bytes.
 - [`../../narrowgate/cli.py`](../../narrowgate/cli.py) exposes the canonical public command and delegates to the packaged [`../../narrowgate/replay_demo.py`](../../narrowgate/replay_demo.py) engine. That reference engine supports only this small FIFO top-book teaching contract; it is not the private-data full replay and does not claim live fidelity.
@@ -31,6 +35,6 @@ The command writes `summary.json`, `trace.jsonl`, and `receipt.json`. A second r
 
 The runner imports the repository's continuous accounting ledger for cash, inventory, campaign closure, and marked equity. Queue depletion and synthetic order lifecycle mechanics are intentionally implemented by the documented reference engine because the complete historical replay requires separately governed market tapes and calibration artifacts that are not part of this fixture.
 
-The gate always keeps `economic_evidence_eligible`, `promotion_eligible`, and `live_action_eligible` false. It cannot access the network, import the live runtime, submit external orders, read private evidence, or silently substitute local market data. A tape hash mismatch fails before replay; a denominator, accounting, or terminal mismatch writes a `failed_closed` gate.
+The packaged engine fixes the demo classification, permissions, and output eligibility in constants: `economic_evidence_eligible`, `promotion_eligible`, and `live_action_eligible` always remain false, regardless of input declarations. The implementation has no exchange/network client or external-order path, does not import the live runtime, and reads only its supplied public fixture/reference inputs. A JSON field such as `network_access=false` is not an operating-system sandbox. Tape identity is verified once and reused in the receipt; a mismatch fails before replay. A denominator, accounting, or terminal mismatch writes a `failed_closed` gate.
 
 Evidence availability: every tape, contract, engine, summary, trace, and receipt byte referenced by this demo is distributed in the public package or at the repository-relative source paths named by the receipt. No private evidence is used.

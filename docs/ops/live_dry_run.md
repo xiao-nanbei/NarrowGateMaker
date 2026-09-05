@@ -1,6 +1,10 @@
 # Live / Dry-Run Boundary
 
-Last materially modified: 2026-08-30
+[English](live_dry_run.md) | [简体中文](live_dry_run.zh-CN.md)
+
+Last materially modified: 2026-09-06
+
+Last materially synchronized: 2026-09-06
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -13,7 +17,7 @@ export NARROWGATE_LIVE_CONFIG="$PWD/docs/private/live_config.current.local.yaml"
 bash live/run.sh start
 ```
 
-Before a start, restart, hot reload or deployment, run the repository preflight with the project virtual environment:
+Use the repository preflight as a local diagnostic before preparing a start, restart, or deployment:
 
 ```bash
 .venv/bin/python scripts/preflight_live_deploy.py \
@@ -21,14 +25,11 @@ Before a start, restart, hot reload or deployment, run the repository preflight 
   --repo-root .
 ```
 
-Preflight validates the selected local config and resolves its model and policy
-artifacts, but it does not prove that a remote process is running the same
-release. Live startup therefore validates the deployment-envelope root and the
-stopped-exchange reconciliation root independently. Use `live/run.sh status`,
-`live/run.sh profile`, and the startup logs to verify the running release after
-every activation.
+Preflight validates the selected local config and resolves its model and policy artifacts, but it does not prove that a remote process is running the same release or authorize activation. Live startup independently consumes the deployment envelope and stopped-exchange reconciliation. Use `live/run.sh status`, `live/run.sh profile`, and the startup logs to verify the running release after every activation.
 
-`make deploy-preflight` rejects a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts fail closed during local admission. Source publication is a separate operation performed by `make publish-source-dry` or `make publish-source`; it does not inspect private deployment inputs.
+In an admitted live deployment, the complete config bytes are restart-only and bound to the release, not merely the fields listed in individual hot-reload guards. Changing even a descriptive config field produces different bytes: running preflight again cannot make those bytes hot-reloadable. Prepare a new deployment envelope with the intended config, perform the required stopped reconciliation, and activate through the normal deployment transaction. The generic SIGHUP handler retained in the library does not override the deployed config binding. See the [operations workflow](README.md).
+
+`make deploy-preflight` rejects a config marked `PUBLIC TEMPLATE` and accepts only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. This remains a local validation result, not deployment approval. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts fail closed during that check. Source publication is a separate operation performed by `make publish-source-dry` or `make publish-source`; it does not inspect private deployment inputs.
 
 Public examples:
 

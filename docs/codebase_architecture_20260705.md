@@ -1,10 +1,14 @@
 # NarrowGate BTCUSDC Codebase Architecture - 2026-07-05
 
-Last materially modified: 2026-08-26
+[English](codebase_architecture_20260705.md) | [简体中文](codebase_architecture_20260705.zh-CN.md)
 
-Current status (2026-07-29): family-specific source and evidence live under the single `research/` subtree registered in `research/registry.json`. Historical family paths and the former root `research_*` packages have been removed rather than retained as aliases. Active commands use canonical `research.families.*` packages, while versioned manifests and archives under `research/governance/` preserve both migration boundaries. Shared replay and governance implementations remain in their runtime-owned packages. New paired work uses `build_paired_daily_evidence()` followed by `research.families.f01_fixed_parameter_racing.audit.paired_screening`; panel transitions belong to `models.audit.panel_promotion_controller`. `paired_daily_selection()` is compatibility-only and has no independent ranking or promotion authority.
+Last materially modified: 2026-09-06
 
-This document defines where code and research artifacts belong.  The goal is to keep the repository open-source readable: runnable code lives in stable modules, historical evidence lives in `docs/` or generated result folders, and one-off scripts do not become permanent public entrypoints.
+Last materially synchronized: 2026-09-06
+
+Current layout, established by the 2026-07-29 migration and rechecked on the maintenance date above: family-specific source and evidence live under the single `research/` subtree registered in `research/registry.json`. Historical family paths and the former root `research_*` packages have been removed rather than retained as aliases. Active commands use canonical `research.families.*` packages, while versioned manifests and archives under `research/governance/` preserve both migration boundaries. Shared replay and governance implementations remain in their runtime-owned packages. New paired work uses `build_paired_daily_evidence()` followed by `research.families.f01_fixed_parameter_racing.audit.paired_screening`; panel transitions belong to `models.audit.panel_promotion_controller`. `paired_daily_selection()` is compatibility-only and has no independent ranking or promotion authority.
+
+This document defines where code and research artifacts belong. The goal is to keep the source-available repository understandable: runnable code lives in stable modules, public research explanations live in the owning unit's `docs/`, and generated or private evidence stays outside the public tree. One-off scripts do not become permanent public entrypoints.
 
 ## Top-Level Responsibilities
 
@@ -57,11 +61,11 @@ Scripts with names like `*_shadow_*`, `*_bucket_*`, or experimental alpha audits
 
 ## Adding New Research Work
 
-1. Add family-specific fields, labels, and models to the registered `research_*` directory. Add only genuinely cross-family contracts to `models/audit/`.
+1. Extend the owning registered `research/families/fXX_*/` package in place; use `research/system_engineering/` for reusable engineering studies. Do not create a root `research_*` package or restore a removed alias. Put genuinely shared implementations in their existing runtime-owned package and document ownership under `research/shared/`.
 2. Add a CLI report to `research/families/f10_live_replay_attribution/audit/runner.py` when the output is reusable.
 3. If the work is parameter selection, express it as an arm spec consumed by `campaign_outcome_replay_audit.py`, build paired daily evidence, and rank it through `paired_screen_v2`; do not create a custom selector or sweep-specific promotion rule.
 4. If the work is alpha discovery, start from `alpha_evidence_ledger.py` or `order_level` evidence tables.  Buckets are diagnostic slices, not policy.
-5. Document family conclusions in that family's `docs/` directory, retain a compatibility path when a frozen identity names the old `docs/` path, and keep result CSVs in the configured MarketData/backtest results directory.
+5. Document family conclusions in that family's `docs/` directory and keep generated result CSVs under `${NARROWGATE_RESULTS_DIR}`. Preserve an old path as historical metadata in the existing migration records or its original Git history, not as a duplicate file or compatibility symlink in HEAD. An exact historical rerun uses the original source/archive; current work uses canonical imports.
 
 ## Deletion Rule
 

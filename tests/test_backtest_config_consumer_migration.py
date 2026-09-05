@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,26 @@ from research.families.f06_placement_fill_cif.audit import placement_fill_panel
 from research.families.f09_campaign_action_uplift.audit import (
     causal_v12_toxicity_conditional_p3_reach_gate as toxicity_gate,
 )
+
+
+@pytest.mark.parametrize("entrypoint", ("backtest_tick", "tick_ab", "quote_decomposition_tick"))
+def test_offline_help_accepts_a_symlinked_checkout(tmp_path: Path, entrypoint: str) -> None:
+    root = Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "checkout-alias"
+    checkout.symlink_to(root, target_is_directory=True)
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "-I", str(checkout / "models" / f"{entrypoint}.py"), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
 
 
 def _normalized_v12_binding(

@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-30
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-30
+Last materially synchronized: 2026-09-06
 
 NarrowGate research is organized into ten strategy/evidence families, one system-engineering line, and four shared infrastructure layers. All research source, evidence, shared contracts, and governance metadata live under this single `research/` subtree.
 
@@ -12,7 +12,9 @@ Public research documents and owner-only evidence are separated by the repositor
 
 Historical family-owned paths under `models/`, `models/audit/`, `features/`, `docs/`, `cpp/narrowgate_cpp/`, and the former root `research_*` directories have been removed. Active imports, commands, tests, and build files use the canonical `research.*` packages directly; no compatibility symlinks or duplicate source files are retained.
 
-Versioned migration contracts live in `governance/migrations/`. `layout_v1.json` maps the first 198 removed paths into family ownership; `layout_v2.json` maps the former root research layout into this subtree. The exact boundary archives are private historical evidence and are not distributed with the public repository; [`governance/archive/README.md`](governance/archive/README.md) publishes their artifact IDs, SHA256 values, byte counts, and availability. An authorized historical reproduction must verify the matching private archive, while current canonical code must receive a new experiment identity when rerun.
+Versioned migration contracts live in `governance/migrations/`. `layout_v1.json` maps the first 198 removed paths into family ownership; `layout_v2.json` maps the former root research layout into this subtree. The exact boundary archives are private historical evidence and are not distributed with the public repository; [`governance/archive/README.md`](governance/archive/README.md) publishes their artifact IDs, SHA256 values, byte counts, and availability. An exact historical reproduction must use its matching original source/archive; new work imports the current canonical implementation without pretending to reproduce the archived bytes.
+
+A rerun does not automatically create a new research identity. Ordinary defect, cache, serialization, or performance repairs retain it while the frozen sample, baseline/candidates, folds, estimand, and statistical contract are unchanged; a new formal run records its own execution attempt and actual source/input identities. Changes to those scientific elements require a new research identity. Reusing a shared algorithm does not inherit a historical family's consumed panel, conclusions, or permissions. See [Contributing](../CONTRIBUTING.md#research-identity-and-formal-execution).
 
 | ID | Directory | Status | Shared layers |
 |---|---|---|---|
