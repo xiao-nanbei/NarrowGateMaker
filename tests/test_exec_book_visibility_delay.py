@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from models import backtest_tick as bt
+from models import data_windows
 from models.backtest_tick import (
     _advance_monotonic_visibility_cutoff,
     _exec_book_visibility_delay_ms,
@@ -304,6 +305,148 @@ def test_message_schedule_replay_uses_independent_ready_sources_and_parent_child
     execution_indices = np.flatnonzero(event_rows["_is_execution_trade"])
     assert rows["decision_visible_trade_index"].tolist() == execution_indices[[0, 0, 4, 6]].tolist()
     assert result["exec_message_delivery_sources"]["bbo"]["head_of_line_clamped_events"] == 1
+
+
+def _profile_execution_message_fixture(*, depth_delay_ms=300.0, trade_delay_ms=50.0):
+    from dataclasses import replace
+
+    inputs = _message_schedule_replay_inputs()
+    origin = 1_000_000
+    inputs["trades_df"]["transact_time"] += origin
+    inputs["trades_df"]["trade_id"] = np.arange(10, 18)
+    for name in ("bbo_data", "l2_data"):
+        value = inputs[name]
+        updates = {"ts_ms": np.r_[origin - 1_000, value.ts_ms + origin]}
+        fields = ("best_bid", "best_ask", "bid_qty", "ask_qty") if name == "bbo_data" else (
+            "bid_px", "ask_px", "bid_qty", "ask_qty",
+        )
+        for field in fields:
+            array = getattr(value, field)
+            updates[field] = np.concatenate((array[:1], array))
+        inputs[name] = replace(value, **updates)
+    inputs["var_ts_ms"] = np.r_[origin - 1_000, inputs["var_ts_ms"] + origin]
+    inputs["var_ssq"] = np.r_[1.0, inputs["var_ssq"]]
+    inputs["ml_data"] = (inputs["ml_data"][0] + origin, *inputs["ml_data"][1:])
+    parents = pd.DataFrame({
+        "agg_trade_id": np.arange(5), "first_trade_id": [1, 10, 11, 15, 17],
+        "last_trade_id": [9, 10, 14, 16, 17],
+        "transact_time": origin + np.array([-900, 0, 1_300, 3_300, 4_000]),
+        "price": np.full(5, 100.0),
+    })
+    profile = {"schema": "market_data_latency_profile.v1", "profile_id": "paired_test", "groups": [
+        {"market_id": "binance:perp:BTCUSDC", "event_type": feed, "transport": "websocket",
+         "rows": 1, "simulation_clock_pair_columns": ["transport_lag_ms", "feature_latency_ms"],
+         "simulation_clock_pair_samples_ms": [[delay, 1.0]],
+         "simulation_clock_pair_semantics": "all_observed_same_message_pairs"}
+        for feed, delay in (("book", 20.0), ("depth", depth_delay_ms), ("trade", trade_delay_ms))
+    ]}
+    window = {"trades": inputs["trades_df"], **{key: inputs[key] for key in (
+        "bbo_data", "l2_data", "var_ts_ms", "ml_data",
+    )}}
+    params = data_windows.execution_message_delivery_params(
+        window, symbol="BTCUSDC", profile=profile, seed=7,
+        parent_trades=parents, parent_source_identity=[{"sha256": "synthetic"}],
+    )
+    inputs["params"].update(params)
+    return inputs, parents, profile, window
+
+
+@pytest.mark.parametrize("async_gateway", [False, True])
+def test_empirical_execution_profile_changes_real_source_and_prediction_visibility(async_gateway):
+    fast, *_ = _profile_execution_message_fixture()
+    delayed, *_ = _profile_execution_message_fixture(depth_delay_ms=1_800.0, trade_delay_ms=1_500.0)
+    if async_gateway:
+        from tests.test_python_planned_maintenance_replay import _async_fifo_params
+
+        for inputs in (fast, delayed):
+            inputs["params"].update(_async_fifo_params(new=(2.0, 5.0, 30.0),
+                                                        cancel=(2.0, 11.0, 40.0)))
+    fast_result = bt.simulate_tick(**fast)
+    delayed_result = bt.simulate_tick(**delayed)
+    fast_rows = [row for row in fast_result["_decision_trace"] if row["side"] == "BUY"]
+    delayed_rows = [row for row in delayed_result["_decision_trace"] if row["side"] == "BUY"]
+    assert fast_rows and delayed_rows
+    for key in ("decision_visible_l2_index", "decision_visible_trade_cutoff_ts_ms",
+                "prediction_generation_index", "feature_ready_generation_index"):
+        common = {row["ts_ms"]: row[key] for row in fast_rows}
+        observed = [(common[row["ts_ms"]], row[key]) for row in delayed_rows if row["ts_ms"] in common]
+        assert observed and all(slow <= quick for quick, slow in observed)
+        assert any(slow < quick for quick, slow in observed)
+        assert [row[key] for row in delayed_rows] == sorted(row[key] for row in delayed_rows)
+    delivery = delayed["params"]["_exec_message_delivery"]
+    assert delivery["trade"]["last_child_row_index"].tolist() == [-1, 0, 4, 6, 7]
+    assert len(delivery["trade"]["exchange_ts_ns"]) < len(delayed["trades_df"])
+    for clock in delivery.values():
+        assert np.all(np.diff(clock["feature_ready_ts_ns"]) >= 0)
+        assert np.all(clock["feature_ready_ts_ns"] >= clock["receive_ts_ns"])
+    assert "not recomputed" in " ".join(
+        delayed_result["exec_message_delivery_input_semantics"]["limitations"]
+    )
+
+
+@pytest.mark.parametrize("fault", ["missing_parent", "overlap", "missing_depth"])
+def test_empirical_execution_profile_refuses_invented_parent_or_source(fault):
+    _, parents, profile, window = _profile_execution_message_fixture()
+    if fault == "missing_parent":
+        parents = parents.drop(index=2)
+    elif fault == "overlap":
+        parents.loc[2, "first_trade_id"] = 10
+    else:
+        profile["groups"] = [group for group in profile["groups"] if group["event_type"] != "depth"]
+    with pytest.raises(ValueError, match="cover every|nonoverlapping|exact source group"):
+        data_windows.execution_message_delivery_params(
+            window, symbol="BTCUSDC", profile=profile, seed=7,
+            parent_trades=parents, parent_source_identity=[],
+        )
+
+
+def test_empirical_parent_completion_floor_preserves_service_and_prediction_prefix_recovers():
+    _, parents, profile, window = _profile_execution_message_fixture(trade_delay_ms=1.0)
+    parents.loc[2, "transact_time"] = 1_000_100
+    # This frozen leading bucket has no prior depth/BBO context. Later rows do.
+    window["ml_data"] = (np.r_[998_000, window["ml_data"][0]],)
+    params = data_windows.execution_message_delivery_params(
+        window, symbol="BTCUSDC", profile=profile, seed=7,
+        parent_trades=parents, parent_source_identity=[],
+    )
+    delivery = params["_exec_message_delivery"]
+    stats = params["exec_message_delivery_input_semantics"]["source_stats"]["trade"]
+    assert stats["child_completion_floor_count"] == 1
+    assert stats["child_completion_floor_added_ms_max"] > 0
+    assert delivery["trade"]["receive_ts_ns"][2] >= 1_001_200_000_000
+    assert (delivery["trade"]["feature_ready_ts_ns"][2]
+            - delivery["trade"]["receive_ts_ns"][2]) == 1_000_000
+    ready = delivery["prediction"]["feature_ready_ts_ns"]
+    assert params["exec_message_delivery_input_semantics"]["prediction_withheld_prefix_count"] == 1
+    assert ready[0] == ready[1] < np.iinfo(np.int64).max
+    assert np.searchsorted(ready, ready[1], side="left") - 1 == -1
+    assert np.searchsorted(ready, ready[1] + 1, side="left") - 1 >= 1
+
+
+def test_empirical_unmatched_child_stays_matching_only_without_invented_parent():
+    inputs, parents, profile, window = _profile_execution_message_fixture()
+    parents.loc[2, "last_trade_id"] = 13  # child 14 is not a packet member.
+    window["trades"].loc[4, "price"] = 80.0
+    window["trades"].loc[4, "quantity"] = 10.0
+    adapted = data_windows.execution_message_delivery_params(
+        window, symbol="BTCUSDC", profile=profile, seed=7, parent_trades=parents,
+        parent_source_identity=[], unmatched_child_mode="matching_only",
+    )
+    inputs["params"].update(adapted)
+    delivery = adapted["_exec_message_delivery"]["trade"]
+    assert delivery["visible_child_mask"].tolist() == [*([True] * 4), False, *([True] * 3)]
+    assert 4 not in delivery["last_child_row_index"]
+    assert delivery["mark_price"].tolist() == parents.price.tolist()
+    assert adapted["exec_message_delivery_input_semantics"]["unmatched_child_ids"] == [14]
+    result = bt.simulate_tick(**inputs)
+    assert any(row["fill_ts"] == 1_001_300 for row in result["_fill_trace"])
+    events, _ = bt.build_replay_event_clock(
+        inputs["trades_df"], mode="merged", interval_ms=100,
+        bbo_data=inputs["bbo_data"], l2_data=inputs["l2_data"],
+    )
+    unmatched_event = np.flatnonzero(events["_is_execution_trade"])[4]
+    assert all(row["decision_visible_trade_index"] != unmatched_event
+               for row in result["_decision_trace"])
 
 
 @pytest.mark.parametrize("late_trade_ready_ns,third_mark", [
@@ -1193,6 +1336,17 @@ def test_ioc_sweeps_valid_limit_levels_with_vwap_and_bounds_market_depth(side) -
         tick_size=0.1, lot_size=0.001, market=True,
     )
     assert bounded_qty == pytest.approx(0.001)
+
+
+@pytest.mark.parametrize("field", [
+    "local_extreme_guard_enabled", "trace_local_order_value_max",
+    "trace_first_add_decision_to_terminal_max", "trace_first_opener_decision_to_terminal_max",
+])
+def test_message_clock_does_not_claim_legacy_child_time_consumer_parity(field) -> None:
+    inputs = _message_schedule_replay_inputs(crossing_fill=True)
+    inputs["params"][field] = True if field.endswith("enabled") else 100
+    with pytest.raises(NotImplementedError, match="individual child-time information"):
+        bt._simulate_tick_with_engine("python", **inputs)
 
 
 def test_sampled_visibility_lifecycle_trace_does_not_change_execution() -> None:

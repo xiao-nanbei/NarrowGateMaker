@@ -201,6 +201,37 @@ def test_profile_filters_receive_window_and_preserves_environment(tmp_path):
     assert len(group["simulation_quantile_probabilities"]) == len(
         group["simulation_visibility_lag_ms_quantiles"]
     )
+    assert group["simulation_clock_pair_samples_ms"] == [[10.0, 0.25], [30.0, 0.25]]
+
+
+def test_message_clock_pairs_preserve_source_pairing_without_marginal_fallback():
+    group = {
+        "market_id": "binance:perp:BTCUSDC", "event_type": "depth", "transport": "websocket",
+        "rows": 2, "simulation_clock_pair_columns": ["transport_lag_ms", "feature_latency_ms"],
+        "simulation_clock_pair_samples_ms": [[5.0, 70.0], [80.0, 2.0]],
+        "simulation_clock_pair_semantics": "all_observed_same_message_pairs",
+    }
+    profile = {"schema": "market_data_latency_profile.v1", "profile_id": "paired", "groups": [group]}
+    simulator = MarketDataLatencySimulator(profile)
+    events = 1_800_000_000_000_000_000 + np.arange(200, dtype=np.int64) * 1_000_000
+    kwargs = {"market_id": group["market_id"], "event_type": "depth",
+              "transport": "websocket", "seed": 7}
+    receive, ready = simulator.message_clock_arrays(events, **kwargs)
+    pairs = set(zip((receive - events) / 1_000_000, (ready - receive) / 1_000_000, strict=True))
+    assert pairs == {(5.0, 70.0), (80.0, 2.0)}
+    for actual, repeated in zip(
+        (receive, ready), simulator.message_clock_arrays(events, **kwargs), strict=True,
+    ):
+        np.testing.assert_array_equal(actual, repeated)
+    with pytest.raises(ValueError, match="exact source group"):
+        simulator.message_clock_arrays(events, **{**kwargs, "event_type": "book"})
+    for invalid in (None, -1.0, float("nan")):
+        group["simulation_clock_pair_samples_ms"][0][0] = invalid
+        with pytest.raises(ValueError, match="complete finite nonnegative"):
+            simulator.message_clock_arrays(events, **kwargs)
+    group.pop("simulation_clock_pair_samples_ms")
+    with pytest.raises(ValueError, match="complete finite nonnegative"):
+        simulator.message_clock_arrays(events, **kwargs)
 
 
 def test_simulator_separates_captured_from_profile_visibility():

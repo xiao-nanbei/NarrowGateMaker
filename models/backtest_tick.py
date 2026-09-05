@@ -2072,12 +2072,15 @@ INDIVIDUAL_TRADE_USECOLS = [
 ]
 
 
-def _read_aggtrade_csv(path: Path) -> pd.DataFrame:
+def _read_aggtrade_csv(path: Path, *, include_trade_ids: bool = False) -> pd.DataFrame:
+    identity_columns = ["agg_trade_id", "first_trade_id", "last_trade_id"]
     df = pd.read_csv(
         path,
         names=AGGTRADE_COLUMNS,
-        usecols=AGGTRADE_USECOLS,
-        dtype=AGGTRADE_DTYPES,
+        usecols=AGGTRADE_USECOLS + (identity_columns if include_trade_ids else []),
+        dtype={**AGGTRADE_DTYPES, **(
+            {name: np.int64 for name in identity_columns} if include_trade_ids else {}
+        )},
         true_values=["true", "True", "TRUE"],
         false_values=["false", "False", "FALSE"],
         header=0,
@@ -3675,6 +3678,24 @@ def replay_elapsed_days(timestamps_ms: np.ndarray) -> float:
     elapsed_s = max(1.0, float(ts[-1] - ts[0]) / 1000.0)
     return elapsed_s / 86_400.0
 
+def _configured_cooldown_evaluator(params):
+    evaluator = params.get("cooldown_duration_policy_evaluator")
+    enabled = [
+        name
+        for name in (
+            "boolean_cooldown_policy_enabled",
+            "buy_e3_cooldown_policy_enabled",
+        )
+        if bool(params.get(name, False))
+    ]
+    if enabled and evaluator is None:
+        raise ValueError(
+            "Enabled cooldown policy requires its replay evaluator; "
+            f"static cooldown is not a substitute: {', '.join(enabled)}"
+        )
+    return evaluator
+
+
 def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                   ml_data=None, bbo_data=None, l2_data=None,
                   var_ti=None, var_retsq=None, reference_event_tapes=None,
@@ -3867,9 +3888,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "cooldown v2 snapshot emitter is incomplete: "
                 f"{missing_methods}"
             )
-    cooldown_duration_policy_evaluator = params.get(
-        "cooldown_duration_policy_evaluator"
-    )
+    cooldown_duration_policy_evaluator = _configured_cooldown_evaluator(params)
     cooldown_duration_fork_baseline_policy_enabled = bool(
         params.get("cooldown_duration_fork_baseline_policy_enabled", False)
     )
@@ -8221,6 +8240,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         else np.ones(len(trades_df), dtype=np.bool_)
     )
     n_trades = len(trade_ts)
+    policy_visible_execution = is_execution_trade.copy()
     last_processed_event_idx = -1
     # Message delivery is independent of the exchange matching clock.  These
     # arrays contain one assigned receive/ready time per source message, not a
@@ -8236,6 +8256,22 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         raw_delivery = params.get("_exec_message_delivery")
         if not isinstance(raw_delivery, Mapping):
             raise ValueError("message_schedule requires source message delivery arrays")
+        child_time_consumers = [
+            name for name in (
+                "local_extreme_guard_enabled",
+                "queue_value_keep_cancel_enabled",
+                "dynamic_fill_hazard_action_enabled",
+                "dynamic_fill_hazard_shadow_enabled",
+                "trace_local_order_value_max",
+                "trace_first_add_decision_to_terminal_max",
+                "trace_first_opener_decision_to_terminal_max",
+            ) if params.get(name, False)
+        ]
+        if child_time_consumers:
+            raise NotImplementedError(
+                "These legacy consumers still use individual child-time information, "
+                "not delivered aggregate packets: " + ", ".join(child_time_consumers)
+            )
         exec_message_payload = raw_delivery
         required_sources = {"bbo", "depth", "trade", "variance"}
         if ml_data is not None:
@@ -8285,6 +8321,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ):
             raise ValueError("trade messages require ordered last_child_row_index mapping")
         exec_message_trade_event_rows = np.flatnonzero(is_execution_trade)
+        visible_children = np.asarray(raw_delivery["trade"].get(
+            "visible_child_mask", np.ones(n_execution_trades, dtype=np.bool_),
+        ))
+        if visible_children.dtype != np.bool_ or visible_children.shape != (n_execution_trades,):
+            raise ValueError("trade visible_child_mask must align with individual execution rows")
+        if np.any(~visible_children[child_rows[child_rows >= 0]]):
+            raise ValueError("trade parent last child must be policy-visible")
+        policy_visible_execution[exec_message_trade_event_rows] = visible_children
+        if "mark_price" in raw_delivery["trade"]:
+            mark_prices = np.asarray(raw_delivery["trade"]["mark_price"])
+            if (mark_prices.shape != child_rows.shape or mark_prices.dtype.kind not in "fi"
+                    or not np.all(np.isfinite(mark_prices)) or np.any(mark_prices <= 0.0)):
+                raise ValueError("trade parent mark_price must be positive and aligned")
         parents_with_children = child_rows >= 0
         child_exchange_ns = (
             trade_ts[exec_message_trade_event_rows[child_rows[parents_with_children]]]
@@ -8307,7 +8356,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         or bool(exec_message_schedules)
     ):
         execution_qty = np.where(
-            is_execution_trade,
+            policy_visible_execution,
             np.asarray(trade_qty, dtype=np.float64),
             0.0,
         )
@@ -8318,7 +8367,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             ([0.0], np.cumsum(np.where(is_seller, execution_qty, 0.0)))
         )
         last_execution_event_index = np.maximum.accumulate(
-            np.where(is_execution_trade, np.arange(n_trades), -1)
+            np.where(policy_visible_execution, np.arange(n_trades), -1)
         )
     else:
         taker_buy_qty_cumulative = np.empty(0, dtype=np.float64)
@@ -15080,11 +15129,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     ))
             parent_idx = message_clock_states["trade"][0]
             if parent_idx >= 0:
+                parent_prices = exec_message_payload["trade"].get("mark_price")
                 child_idx = int(
                     exec_message_payload["trade"]["last_child_row_index"][parent_idx]
                 )
-                if child_idx >= 0:
-                    price = float(trade_price[exec_message_trade_event_rows[child_idx]])
+                if parent_prices is not None or child_idx >= 0:
+                    price = (
+                        float(parent_prices[parent_idx]) if parent_prices is not None
+                        else float(trade_price[exec_message_trade_event_rows[child_idx]])
+                    )
                     if price > 0.0:
                         mark_candidates.append((
                             message_clock_states["trade"][2], 0, "trade", price,
@@ -35014,7 +35067,7 @@ def _validate_f05_cpp_cooldown_runtime(
     *,
     require_full_replay: bool,
 ) -> Any | None:
-    evaluator = params.get("cooldown_duration_policy_evaluator")
+    evaluator = _configured_cooldown_evaluator(params)
     if evaluator is None:
         if any(
             params.get(name) is not None

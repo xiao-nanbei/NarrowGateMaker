@@ -47,7 +47,10 @@ from models.backtest_config import (  # noqa: E402
     load_tick_base_params,
     validate_formal_replay_calibration,
 )
-from models.exchange_book_replay import CryptoHFTExchangeBookTape  # noqa: E402
+from models.exchange_book_replay import (  # noqa: E402
+    CryptoHFTExchangeBookTape,
+    build_configured_cooldown_policy_adapter,
+)
 from models.replay_contract import (  # noqa: E402
     DEFAULT_LATENCY_ENVIRONMENT,
     configure_fixed_latency_distribution,
@@ -118,7 +121,7 @@ def _apply_runtime_timing_samples(
                 "decision_to_gateway_", "pre_snapshot_compute_", "requote_tail_work_",
                 "main_loop_work_",
                 "runtime_compute_", "exec_message_delivery", "exec_source_stratified_",
-                "private_fill_",
+                "private_fill_", "market_data_latency_",
             )):
                 forbidden.append(name)
         if forbidden:
@@ -1972,6 +1975,7 @@ def _run_day_campaign_audit(
     logs: list[str] = [f"\nLoading {display_label} ..."]
     window_cache: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     compute_cache: dict[int, dict[str, Any]] = {}
+    message_cache: dict[int, dict[str, Any]] = {}
 
     def _window_for_params(params: dict[str, Any]) -> dict[str, Any]:
         """Load/reuse the day window for the arm's model bundle.
@@ -1999,6 +2003,12 @@ def _run_day_campaign_audit(
         return window_cache[key]
 
     window = _window_for_params(base)
+    execution_message_profile = bool(base.get("exec_message_delivery_profile_path"))
+    parent_trades, parent_source_identity = None, []
+    if execution_message_profile:
+        if market_data_latency_profile_payload is None or market_data_latency_mode != "profile_empirical":
+            raise ValueError("execution message delivery requires the paired empirical profile")
+        parent_trades, parent_source_identity = data_windows.load_replay_aggregate_parents(day, base)
     campaign_rows_all: list[dict[str, Any]] = []
     label_rows_all: list[dict[str, Any]] = []
     daily_rows: list[dict[str, Any]] = []
@@ -2107,6 +2117,19 @@ def _run_day_campaign_audit(
         started = time.perf_counter()
         logs.append(f"  [{idx:02d}/{len(arms):02d}] {day} {arm.name} ...")
         window = _window_for_params(params)
+        if execution_message_profile:
+            if id(window) not in message_cache:
+                message_cache[id(window)] = data_windows.execution_message_delivery_params(
+                    window, symbol=symbol, profile=market_data_latency_profile_payload,
+                    seed=market_data_latency_seed, parent_trades=parent_trades,
+                    parent_source_identity=parent_source_identity,
+                    unmatched_child_mode="matching_only",
+                )
+            params.update(message_cache[id(window)])
+        cooldown_policy = build_configured_cooldown_policy_adapter(window=window, params=params)
+        if cooldown_policy is not None:
+            params["cooldown_duration_policy_evaluator"] = cooldown_policy
+            params["cooldown_v2_snapshot_emitter"] = cooldown_policy
         if runtime_compute_clock is not None:
             if id(window) not in compute_cache:
                 compute_cache[id(window)] = _runtime_compute_for_window(
@@ -2116,6 +2139,14 @@ def _run_day_campaign_audit(
                 )
             params.update(compute_cache[id(window)])
             params["replay_evidence_scope"] = "runtime_gateway_diagnostic"
+        if execution_message_profile and bool(params.get("strict_calibration", False)):
+            initial = (base.get("replay_contract") or {}).get("initial_state") or {}
+            freeze_replay_contract(
+                params, purpose="diagnostic",
+                initial_state_mode=str(params.get("replay_initial_state_mode", "fresh_start")),
+                initial_state_artifact=initial.get("artifact_path") or None, root=ROOT,
+            )
+            validate_frozen_replay_contract(params)
         arm_multi_market = bool(params.get("multi_market_policy_enabled", False))
         arm_response_mode = str(
             params.get("post_fill_quote_response_mode", "noop") or "noop"
@@ -2372,9 +2403,10 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         default=None,
         help=(
-            "Environment-labeled market-data latency profile. It delays only "
-            "historical external/global-flow visibility; baseline quote/fill "
-            "mechanics remain unchanged."
+            "Environment-labeled market-data profile. With --runtime-timing-samples, "
+            "profile_empirical assigns observed paired clocks to execution book/depth/"
+            "aggTrade inputs and delays frozen feature publication. Otherwise this "
+            "only delays historical external/global-flow visibility."
         ),
     )
     parser.add_argument(
@@ -2382,9 +2414,8 @@ def main(argv: list[str] | None = None) -> None:
         choices=HISTORICAL_MARKET_DATA_LATENCY_MODES,
         default="exchange_zero",
         help=(
-            "Visibility model for causal historical global-flow states. "
-            "profile_p50 is the stable host baseline; profile_stable_spike "
-            "adds a seeded 0.5%% p95-p99 stall mixture."
+            "Visibility model; measured-runtime execution inputs require profile_empirical "
+            "with complete same-message clock pairs, not marginal CDFs or snapshot ages."
         ),
     )
     parser.add_argument("--market-data-latency-seed", type=int, default=7)
@@ -2765,6 +2796,18 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(
                 "--runtime-timing-samples uses unchanged empirical rows without clipping"
             )
+        if args.market_data_latency_profile is not None:
+            if args.market_data_latency_mode != "profile_empirical":
+                raise SystemExit(
+                    "runtime execution message clocks require "
+                    "--market-data-latency-mode profile_empirical"
+                )
+            if args.runtime_compute_clock == "source_time_assumption":
+                raise SystemExit("execution message clocks require --runtime-compute-clock prediction_delivery")
+            if args.execution_trade_source != "trades":
+                raise SystemExit("execution message clocks require individual --execution-trade-source trades")
+        elif args.market_data_latency_mode != "exchange_zero":
+            raise SystemExit("runtime market-data latency mode requires --market-data-latency-profile")
     elif args.runtime_effective_time_assumption is not None:
         raise SystemExit("--runtime-effective-time-assumption requires --runtime-timing-samples")
     elif args.runtime_bulk_cancel_model != "unmodeled":
@@ -3130,6 +3173,16 @@ def main(argv: list[str] | None = None) -> None:
         base["market_data_latency_environment"] = dict(
             market_data_latency_profile_payload.get("environment", {})
         )
+        if args.runtime_timing_samples is not None:
+            simulator = MarketDataLatencySimulator(market_data_latency_profile_payload)
+            for event_type in ("book", "depth", "trade"):
+                simulator.message_clock_arrays(
+                    np.array([], dtype=np.int64), market_id=f"binance:perp:{args.symbol.upper()}",
+                    event_type=event_type, transport="websocket", seed=args.market_data_latency_seed,
+                )
+            base["exec_book_visibility_mode"] = "message_schedule"
+            base["exec_message_delivery_profile_path"] = base["market_data_latency_profile_path"]
+            base["exec_book_visibility_delay_seed"] = int(args.market_data_latency_seed)
     base["market_data_latency_mode"] = args.market_data_latency_mode
     base["market_data_latency_seed"] = int(args.market_data_latency_seed)
     if (

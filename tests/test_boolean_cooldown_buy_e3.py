@@ -8,9 +8,12 @@ from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
+from models.exchange_book_replay import build_configured_cooldown_policy_adapter
+from models.tick_data_types import HistoricalL2Data
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_features import (
     CausalMultichannelEmaState,
     CausalWindowObservation,
@@ -302,6 +305,69 @@ def _runtime_reload_kwargs(paths: dict[str, Path]) -> dict[str, object]:
         "warmup_s": 2048.0,
         "max_feature_age_s": 1.0,
     }
+
+
+def test_configured_replay_buy_e3_matches_live_on_same_feature_row_and_fill_units(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "0")
+    live, paths = _artifact(tmp_path)
+    loaded = _runtime_reload_kwargs(paths)
+    params = {"buy_e3_cooldown_policy_enabled": True, "max_exec_book_visible_age_s": 1.0}
+    for key, value in loaded.items():
+        if key == "max_feature_age_s":
+            continue
+        name = {"expected_artifact_sha256": "artifact_sha256", "warmup_s": "ema_warmup_s"}
+        params[f"buy_e3_cooldown_{name.get(key, key)}"] = str(value) if isinstance(
+            value, Path
+        ) else value
+    ts = np.array([10, 110, 210], dtype=np.int64)
+    depth = HistoricalL2Data(
+        ts_ms=ts, bid_px=np.array([[99.0], [100.0], [101.0]]),
+        ask_px=np.array([[101.0], [102.0], [103.0]]),
+        bid_qty=np.ones((3, 1)), ask_qty=np.ones((3, 1)),
+    )
+    params["_exec_message_delivery"] = {"depth": {
+        key: ts * 1_000_000 + offset for key, offset in (
+            ("exchange_ts_ns", 0), ("receive_ts_ns", 1), ("feature_ready_ts_ns", 2),
+        )
+    }}
+    replay = build_configured_cooldown_policy_adapter(window={"l2_data": depth}, params=params)
+    other = build_configured_cooldown_policy_adapter(window={"l2_data": depth}, params=params)
+    assert replay._policies["BUY"] is not live  # noqa: SLF001
+    assert replay._policies["BUY"] is not other._policies["BUY"]  # noqa: SLF001
+    state = subject._FullMidEmaState()  # noqa: SLF001
+    for index in range(4):
+        state.update(ts_ns=(index + 1) * 100_000_000, value=100.0 + index)
+    cutoff = 500_000_000
+    feature_row = state.feature_row(decision_ts_ns=cutoff)
+    for policy in (live, replay._policies["BUY"]):  # noqa: SLF001
+        monkeypatch.setattr(policy.windows, "feature_row", lambda **_: (
+            feature_row, None, cutoff - 1, 0.0,
+        ))
+    for units in (0.5, 1.5, 2.000006):
+        baseline_ms = 85_000.0 * max(1.0, units)
+        for campaign_age_s in (0.0, 1_000.0):
+            snapshot = replay.capture_exposure_fill(
+                assignment_id=f"{units}:{campaign_age_s}", fill_exchange_ts_ns=cutoff - 1,
+                fill_visible_ts_ns=cutoff,
+                m0_context={
+                    "side": "BUY", "fill_visible_ts_ns": cutoff,
+                    "baseline_duration_ms": baseline_ms, "campaign_age_s": campaign_age_s,
+                    "consecutive_units_after": units, "inventory_after": units * 0.001,
+                },
+            )
+            expected = live.evaluate(
+                side="BUY", baseline_duration_ms=round(85.0 * max(1.0, units) * 1_000.0),
+                campaign_age_s=campaign_age_s, decision_ts_ns=cutoff,
+                snapshot_id=snapshot.snapshot_id,
+            )
+            actual = replay.evaluate(snapshot, baseline_ms)
+            assert actual.support_valid and actual.fallback_reason is None
+            assert (actual.action_id, actual.duration_ms) == (
+                expected.action_id, expected.duration_ms,
+            )
+    assert other.audit()["depth_callbacks_consumed"] == 0
 
 
 def _rewrite_bound_artifact(paths, manifest, policy, bundle) -> None:

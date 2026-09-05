@@ -559,6 +559,202 @@ def _normalize_execution_trade_source(value: Any) -> str:
     raise ValueError("execution_trade_source must be aggTrades or trades")
 
 
+def load_replay_aggregate_parents(
+    day: str, params: dict[str, Any],
+) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    """Load packet identity after any value-cache hit, never reuse an old shape."""
+    frames, identity = [], []
+    symbol = str(params.get("symbol") or bt.SYMBOL).upper()
+    for source_day in _causal_context_days(day, int(params.get("market_context_warmup_days", 1))):
+        stem = f"{symbol}-aggTrades-{source_day}.csv"
+        paths = [path for path in (bt.RAW_DIR / stem, bt.RAW_DIR / f"{stem}.gz") if path.is_file()]
+        if len(paths) != 1:
+            raise ValueError(f"message delivery requires one retained aggTrade source: {stem}")
+        path = paths[0]
+        frame = bt._read_aggtrade_csv(path, include_trade_ids=True)
+        frames.append(frame)
+        identity.append({"path": str(path.resolve()), "sha256": file_sha256(path),
+                         "rows": len(frame)})
+    return pd.concat(frames, ignore_index=True), identity
+
+
+def execution_message_delivery_params(
+    window: dict[str, Any], *, symbol: str, profile: dict[str, Any], seed: int,
+    parent_trades: pd.DataFrame, parent_source_identity: list[dict[str, Any]],
+    unmatched_child_mode: str = "error",
+) -> dict[str, Any]:
+    """Delay frozen execution inputs without changing exchange matching rows.
+
+    Parent packets own trade visibility. Frozen bars/predictions are released
+    behind explicit source-completion barriers; their values are not recomputed
+    from delayed feeds. This is an execution-source diagnostic, not exact live
+    feature reconstruction or a recovered shared-socket message chronology.
+    """
+    from models.exchange_book_replay import HistoricalMessageDeliverySchedule
+    from research.system_engineering.audit.market_data_latency import MarketDataLatencySimulator
+
+    trades = window["trades"]
+    if "trade_id" not in trades:
+        raise ValueError("message delivery requires retained individual trade IDs for parent mapping")
+    for name in ("agg_trade_id", "first_trade_id", "last_trade_id", "transact_time"):
+        if name not in parent_trades:
+            raise ValueError(f"aggregate parent input is missing {name}")
+    child_ids = trades["trade_id"].to_numpy(dtype=np.int64, copy=False)
+    first = parent_trades["first_trade_id"].to_numpy(dtype=np.int64, copy=False)
+    last = parent_trades["last_trade_id"].to_numpy(dtype=np.int64, copy=False)
+    parent_ms = parent_trades["transact_time"].to_numpy(dtype=np.int64, copy=False)
+    if (not len(first) or not len(child_ids) or np.any(first > last)
+            or np.any(first[1:] <= last[:-1]) or np.any(child_ids[1:] <= child_ids[:-1])
+            or np.any(parent_ms[1:] < parent_ms[:-1])):
+        raise ValueError("aggregate parent/individual child identity must be ordered and nonoverlapping")
+    owner = np.searchsorted(last, child_ids, side="left")
+    visible_child_mask = (owner < len(first)) & (
+        first[np.minimum(owner, len(first) - 1)] <= child_ids
+    )
+    if unmatched_child_mode not in {"error", "matching_only"}:
+        raise ValueError("unknown unmatched child visibility mode")
+    if not np.all(visible_child_mask) and unmatched_child_mode == "error":
+        raise ValueError("aggregate parent ranges do not cover every individual execution")
+    if not np.any(visible_child_mask):
+        raise ValueError("no individual execution has a retained aggregate parent")
+    # An aggregate's T can be its first child's timestamp. Its callback
+    # cannot expose later children before those executions have happened.
+    parent_complete_ms = parent_ms.copy()
+    np.maximum.at(
+        parent_complete_ms, owner[visible_child_mask],
+        trades["transact_time"].to_numpy(dtype=np.int64, copy=False)[visible_child_mask],
+    )
+
+    simulator = MarketDataLatencySimulator(profile)
+    delivery, source_stats = {}, {}
+    market_id = f"binance:perp:{symbol.upper()}"
+    for feed, event_type, source_ms in (
+        ("bbo", "book", getattr(window.get("bbo_data"), "ts_ms", None)),
+        ("depth", "depth", getattr(window.get("l2_data"), "ts_ms", None)),
+        ("trade", "trade", parent_ms),
+    ):
+        if source_ms is None or not len(source_ms):
+            raise ValueError(f"message delivery requires retained {feed} source rows")
+        exchange = np.asarray(source_ms, dtype=np.int64) * 1_000_000
+        receive, ready = simulator.message_clock_arrays(
+            exchange, market_id=market_id, event_type=event_type,
+            transport="websocket", seed=seed,
+        )
+        floor_added_ns = np.zeros(len(exchange), dtype=np.int64)
+        if feed == "trade":
+            floor_added_ns = np.maximum(parent_complete_ms * 1_000_000 - receive, 0)
+            # Shift both clocks together to preserve observed service time.
+            receive = receive + floor_added_ns
+            ready = ready + floor_added_ns
+        schedule = HistoricalMessageDeliverySchedule(
+            exchange, receive, ready, serialize_callback_service=True,
+        )
+        delivery[feed] = {
+            "exchange_ts_ns": schedule.exchange_ns_for_channel(),
+            "receive_ts_ns": schedule.receive_ns_for_channel(),
+            "feature_ready_ts_ns": schedule.ready_ns_for_channel(),
+        }
+        source_stats[feed] = schedule.stats_dict()
+        if feed == "trade":
+            source_stats[feed].update({
+                "child_completion_floor_model": "receive_not_before_last_retained_child_execution",
+                "child_completion_floor_count": int(np.count_nonzero(floor_added_ns)),
+                "child_completion_floor_added_ms_total": float(floor_added_ns.sum()) / 1_000_000,
+                "child_completion_floor_added_ms_max": float(floor_added_ns.max()) / 1_000_000,
+            })
+    own_last_child = np.searchsorted(child_ids, last, side="right") - 1
+    valid_last = (own_last_child >= 0) & (
+        child_ids[np.maximum(own_last_child, 0)] >= first
+    ) & visible_child_mask[np.maximum(own_last_child, 0)]
+    # Empty parents carry forward only an already-visible valid child. Never
+    # turn searchsorted's preceding unrelated/gap row into a new parent child.
+    delivery["trade"]["last_child_row_index"] = np.maximum.accumulate(
+        np.where(valid_last, own_last_child, -1)
+    )
+    delivery["trade"]["visible_child_mask"] = visible_child_mask
+    if "price" in parent_trades:
+        delivery["trade"]["mark_price"] = parent_trades["price"].to_numpy(
+            dtype=np.float64, copy=True,
+        )
+
+    unavailable_ns = np.iinfo(np.int64).max
+    variance_ms = np.asarray(window["var_ts_ms"], dtype=np.int64)
+    # Live commits a 1s aggregate when a later aggTrade advances its bucket.
+    # The next packet only supplies the completion clock, never its values.
+    closing_parent = np.searchsorted(parent_ms, variance_ms + 1_000, side="left")
+    variance_ready = np.full(len(variance_ms), unavailable_ns, dtype=np.int64)
+    has_closer = closing_parent < len(parent_ms)
+    variance_ready[has_closer] = delivery["trade"]["feature_ready_ts_ns"][
+        closing_parent[has_closer]
+    ]
+
+    def derived_clock(source_ms: np.ndarray, ready: np.ndarray) -> dict[str, np.ndarray]:
+        exchange = source_ms * 1_000_000
+        ready = np.maximum.accumulate(np.maximum(exchange, ready))
+        return {"exchange_ts_ns": exchange, "receive_ts_ns": ready,
+                "feature_ready_ts_ns": ready}
+
+    delivery["variance"] = derived_clock(variance_ms, variance_ready)
+    prediction_withheld_prefix_count = 0
+    if window.get("ml_data") is not None:
+        prediction_ms = np.asarray(window["ml_data"][0], dtype=np.int64)
+        prediction_ns = prediction_ms * 1_000_000
+        ready = prediction_ns.copy()
+        for feed in ("bbo", "depth", "variance"):
+            source = delivery[feed]
+            index = np.searchsorted(source["exchange_ts_ns"], prediction_ns, side="left") - 1
+            available = index >= 0
+            dependency = np.full(len(index), unavailable_ns, dtype=np.int64)
+            dependency[available] = source["feature_ready_ts_ns"][index[available]]
+            ready = np.maximum(ready, dependency)
+        complete = np.flatnonzero(ready < unavailable_ns)
+        if not len(complete):
+            raise ValueError("no frozen prediction has complete causal source context")
+        prediction_withheld_prefix_count = int(complete[0])
+        # Unavailable leading values must never be selected, but cannot poison
+        # all later buckets through an infinite HOL barrier. Give the prefix
+        # its first complete successor's release boundary: strictly-before
+        # latest-index lookup then jumps directly to that successor.
+        ready[:prediction_withheld_prefix_count] = ready[prediction_withheld_prefix_count]
+        delivery["prediction"] = derived_clock(prediction_ms, ready)
+    for clock in delivery.values():
+        for values in clock.values():
+            values.setflags(write=False)
+    return {
+        "exec_book_visibility_mode": "message_schedule", "_exec_message_delivery": delivery,
+        "exec_message_delivery_input_semantics": {
+            "profile_id": simulator.profile_id, "market_id": market_id,
+            "transport": "websocket", "sampling": "same_message_pairs_once_per_source_row",
+            "source_scheduler": "per_feed_callback_FIFO_not_recovered_shared_socket_order",
+            "source_stats": source_stats, "aggregate_parent_sources": parent_source_identity,
+            "aggregate_parent_count": len(parent_trades), "individual_child_count": len(trades),
+            "trade_parent_mapping": "retained_first_last_trade_ids_matching_only_unmatched",
+            "unmatched_child_mode": unmatched_child_mode,
+            "unmatched_child_count": int(np.count_nonzero(~visible_child_mask)),
+            "unmatched_child_ids": child_ids[~visible_child_mask].tolist(),
+            "trade_mark_price_semantics": (
+                "retained_aggregate_price" if "price" in parent_trades
+                else "carry_forward_previous_valid_visible_child"
+            ),
+            "prediction_withheld_prefix_count": prediction_withheld_prefix_count,
+            "variance_readiness": "next_aggTrade_callback_commits_completed_1s_bar",
+            "prediction_readiness": (
+                "conservative_frozen_bucket_release_after_prior_execution_BBO_depth_and_bar_inputs"
+            ),
+            "derived_clock_receive_semantics": "dependency_ready_barrier_not_measured_receive",
+            "limitations": [
+                "Frozen bar/feature/prediction values are delayed, not recomputed from late feeds.",
+                "No complete feature dependency manifest; unmodeled external feeds are not covered.",
+                "Per-message draws do not recover burst correlation or shared-socket feed order.",
+                "Independent per-feed callback FIFO is a model, not captured target chronology.",
+                "Trade child-completion floors are causal model adjustments, not observed delays.",
+                "Incomplete leading predictions stay withheld until a complete successor supersedes them.",
+                "No subsequent parent packet means the remaining frozen bar is unavailable.",
+            ],
+        },
+    }
+
+
 def _prediction_context_bounds(day: str, params: dict[str, Any]) -> dict[str, int]:
     if not params.get("runtime_compute_clock"):
         return {}

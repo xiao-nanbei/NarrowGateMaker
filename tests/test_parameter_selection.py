@@ -301,8 +301,9 @@ def test_replay_locator_cli_rejects_arm_path_overrides(monkeypatch, key):
 ])
 @pytest.mark.parametrize("bulk_model", ["unmodeled", "matched_risk_case"])
 @pytest.mark.parametrize("compute_clock", [None, "source_time_assumption"])
+@pytest.mark.parametrize("execution_profile", [False, True])
 def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
-    monkeypatch, tmp_path, overrides, bulk_model, compute_clock,
+    monkeypatch, tmp_path, overrides, bulk_model, compute_clock, execution_profile,
 ):
     calls, calibration = _runtime_calibration_stub(monkeypatch)
     monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
@@ -325,7 +326,22 @@ def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
 
     monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", stop_before_replay)
     monkeypatch.setenv("MM_RESULTS_DIR", str(tmp_path))
+    if execution_profile and compute_clock:
+        compute_clock = "prediction_delivery"
     extra = ["--runtime-compute-clock", compute_clock] if compute_clock else []
+    if execution_profile:
+        profile_path = tmp_path / "message-profile.json"
+        profile_path.write_text(json.dumps({"schema": "market_data_latency_profile.v1",
+            "profile_id": "synthetic", "groups": [
+                {"market_id": "binance:perp:BTCUSDC", "event_type": event_type,
+                 "transport": "websocket", "rows": 1,
+                 "simulation_clock_pair_columns": ["transport_lag_ms", "feature_latency_ms"],
+                 "simulation_clock_pair_samples_ms": [[5.0, 1.0]],
+                 "simulation_clock_pair_semantics": "all_observed_same_message_pairs"}
+                for event_type in ("book", "depth", "trade")
+            ]}))
+        extra += ["--market-data-latency-profile", str(profile_path),
+                  "--market-data-latency-mode", "profile_empirical"]
     with pytest.raises(ReplayNotStarted):
         campaign_audit_main([
             "--days", "2026-01-01", "--arms", "baseline",
@@ -350,6 +366,10 @@ def test_campaign_runtime_timing_cli_reaches_runner_with_pairs_and_limits(
     assert captured["runtime_compute_calibration"] is (calibration if compute_clock else None)
     assert not any(key.startswith("_decision_to_gateway") for key in base)
     assert not any(key.startswith("_exec_book_visibility_delay_samples") for key in base)
+    if execution_profile:
+        assert base["exec_book_visibility_mode"] == "message_schedule"
+        assert base["exec_message_delivery_profile_path"] == str(profile_path)
+        assert captured["market_data_latency_mode"] == "profile_empirical"
     output = tmp_path / "diagnostic.md"
     campaign_audit._write_markdown(output, pd.DataFrame(), pd.DataFrame(), {
         "tag": "synthetic", "symbol": "BTCUSDC", "days": [], "arms": [],
@@ -400,14 +420,15 @@ def test_campaign_runtime_compute_rejects_invented_state(monkeypatch, source_ms,
         )
 
 
-def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monkeypatch):
+@pytest.mark.parametrize("clock", ["source_time_assumption", "prediction_delivery"])
+def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monkeypatch, clock):
     _, calibration = _runtime_calibration_stub(monkeypatch)
     monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
     windows = {}
 
     def load(day, params):
         start = int(campaign_audit._day_start_ts(day) * 1000)
-        assert params["runtime_compute_clock"] == "source_time_assumption"
+        assert params["runtime_compute_clock"] == clock
         assert params["replay_event_clock_start_ts_ms"] == start
         windows[day] = {
             "ml_data": (np.array([start - 20_000, start - 10_000, start]),),
@@ -417,6 +438,32 @@ def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monk
         return windows[day]
 
     monkeypatch.setattr(campaign_audit.smoke, "_load_window", load)
+    parent_loads, message_loads = [], []
+
+    def load_parents(day, params):
+        parent_loads.append(day)
+        return object(), []
+
+    def message_params(window, **kwargs):
+        message_loads.append(window)
+        source_ns = window["ml_data"][0] * 1_000_000
+        return {"exec_book_visibility_mode": "message_schedule", "_exec_message_delivery": {
+            "prediction": {"exchange_ts_ns": source_ns,
+                           "feature_ready_ts_ns": source_ns + 1_000_000},
+        }}
+
+    monkeypatch.setattr(campaign_audit.data_windows, "load_replay_aggregate_parents", load_parents)
+    monkeypatch.setattr(campaign_audit.data_windows, "execution_message_delivery_params", message_params)
+    policy_loads = []
+
+    def policy_adapter(*, window, params):
+        if clock != "prediction_delivery":
+            return None
+        adapter = object()
+        policy_loads.append((window, params["_exec_message_delivery"], adapter))
+        return adapter
+
+    monkeypatch.setattr(campaign_audit, "build_configured_cooldown_policy_adapter", policy_adapter)
     captures = []
 
     def simulate(_engine, _trades, _var_ts, _var_ssq, params, **kwargs):
@@ -434,11 +481,15 @@ def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monk
         for name, gamma in (("baseline", 0.01), ("candidate", 0.02))
     ]
     base = _runtime_fifo_params()
+    if clock == "prediction_delivery":
+        base["exec_message_delivery_profile_path"] = "synthetic-profile.json"
     for day in ("2026-01-01", "2026-01-02"):
         result = campaign_audit._run_day_campaign_audit(
             day=day, symbol="BTCUSDC", base=base, arms=arms, engine="python",
             day_initial={}, day_live_state=None, use_initial_state=False,
-            runtime_compute_calibration=calibration, runtime_compute_clock="source_time_assumption",
+            runtime_compute_calibration=calibration, runtime_compute_clock=clock,
+            market_data_latency_profile_payload={} if clock == "prediction_delivery" else None,
+            market_data_latency_mode="profile_empirical",
         )
         start = int(campaign_audit._day_start_ts(day) * 1000)
         for row in result["daily_rows"]:
@@ -451,9 +502,44 @@ def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monk
         left, right = captures[-2:]
         assert left is not right
         assert left["_runtime_compute_samples_by_path"] is right["_runtime_compute_samples_by_path"]
+        if clock == "prediction_delivery":
+            assert left["_exec_message_delivery"] is right["_exec_message_delivery"]
+            assert (left["cooldown_duration_policy_evaluator"]
+                    is not right["cooldown_duration_policy_evaluator"])
+            assert left["cooldown_v2_snapshot_emitter"] is left["cooldown_duration_policy_evaluator"]
+            assert policy_loads[-2][0] is policy_loads[-1][0]
+            assert policy_loads[-2][1] is policy_loads[-1][1]
         assert left["replay_event_clock_start_ts_ms"] == start
         assert left["replay_event_clock_end_ts_ms"] == start + 86_400_000 - 1
     assert "runtime_compute_initial_bucket_end_ms" not in base
+    assert len(message_loads) == len(parent_loads) == (2 if clock == "prediction_delivery" else 0)
+    assert len(policy_loads) == (4 if clock == "prediction_delivery" else 0)
+
+
+def test_campaign_configured_policy_runs_real_simulator_with_atomic_emitter(monkeypatch):
+    from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
+    from tests.test_exec_book_visibility_delay import (
+        _ReceiveTimeTestPolicy,
+        _profile_execution_message_fixture,
+    )
+
+    inputs, _, _, window = _profile_execution_message_fixture()
+    window.update(var_ssq=inputs["var_ssq"], var_ti=None, var_retsq=None)
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_k: None)
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", lambda *_a: window)
+    monkeypatch.setattr(LiveBooleanCooldownPolicy, "from_files", lambda **_k: _ReceiveTimeTestPolicy())
+    params = {**inputs["params"],
+        "boolean_cooldown_policy_enabled": True,
+        "boolean_cooldown_policy_path": "synthetic-policy.json",
+        "boolean_cooldown_predicate_bundle_path": "synthetic-predicates.json",
+        "max_exec_book_visible_age_s": 5.0,
+    }
+    result = campaign_audit._run_day_campaign_audit(
+        day="2026-01-01", symbol="BTCUSDC", base=params,
+        arms=[campaign_audit.smoke.SmokeArm(name="baseline", group="synthetic")],
+        engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
+    )
+    assert len(result["daily_rows"]) == 1
 
 
 @pytest.mark.parametrize("clock", [None, "source_time_assumption", "prediction_delivery"])

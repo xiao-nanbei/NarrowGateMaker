@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,13 +12,114 @@ from models.exchange_book_replay import (
     HistoricalExchangeBookScheduler,
     HistoricalExchangeBookVisibilityScheduler,
     HistoricalMessageDeliverySchedule,
+    build_configured_cooldown_policy_adapter,
 )
 from models.tick_data_types import (
     HistoricalBBOData,
     HistoricalExchangeBookEvent,
+    HistoricalL2Data,
 )
 
 BASE_MS = 1_700_000_000_000
+
+
+@pytest.mark.parametrize("defect", ["depth", "channel", "delivery", "flag"])
+def test_configured_cooldown_refuses_missing_source_instead_of_static_baseline(defect):
+    depth = SimpleNamespace(
+        ts_ms=np.array([1]), bid_px=np.ones((1, 1)), ask_px=np.ones((1, 1)),
+        bid_qty=np.ones((1, 1)), ask_qty=np.ones((1, 1)),
+    )
+    params = {"boolean_cooldown_policy_enabled": True}
+    if defect == "depth":
+        depth = None
+    elif defect == "channel":
+        depth.bid_qty = None
+    elif defect == "flag":
+        params["boolean_cooldown_policy_enabled"] = "false"
+    with pytest.raises(ValueError, match="configured cooldown"):
+        build_configured_cooldown_policy_adapter(window={"l2_data": depth}, params=params)
+    assert build_configured_cooldown_policy_adapter(window={}, params={}) is None
+
+
+def test_configured_sell_policy_reuses_live_windows_with_independent_arm_state(monkeypatch):
+    from strategy.boolean_cooldown_live import (
+        OWNER_POLICY_SELECTED_PREDICATES,
+        LiveBooleanCooldownPolicy,
+        RuntimeCooldownPolicyEvaluator,
+    )
+
+    def load_policy(**kwargs):
+        assert kwargs["policy_path"].name == "sell.json"
+        evaluator = RuntimeCooldownPolicyEvaluator(
+            rules=(("FIXED_166S", (tuple(
+                (name, False) for name in OWNER_POLICY_SELECTED_PREDICATES
+            ),)),),
+            policy_sha256="1" * 64, predicate_bundle_sha256="2" * 64,
+        )
+        return LiveBooleanCooldownPolicy(
+            evaluator=evaluator, warmup_s=kwargs["warmup_s"],
+            max_feature_age_s=kwargs["max_feature_age_s"], native_runtime=False,
+        )
+
+    monkeypatch.setattr(LiveBooleanCooldownPolicy, "from_files", load_policy)
+    ts = np.arange(10, 1_010, 100, dtype=np.int64)
+    depth = HistoricalL2Data(
+        ts_ms=ts, bid_px=(100 + np.arange(len(ts)))[:, None],
+        ask_px=(101 + np.arange(len(ts)))[:, None],
+        bid_qty=np.ones((len(ts), 1)), ask_qty=np.ones((len(ts), 1)),
+    )
+    schedule = {key: ts * 1_000_000 + offset for key, offset in (
+        ("exchange_ts_ns", 0), ("receive_ts_ns", 1), ("feature_ready_ts_ns", 2),
+    )}
+    params = {
+        "boolean_cooldown_policy_enabled": True,
+        "boolean_cooldown_policy_path": "sell.json",
+        "boolean_cooldown_predicate_bundle_path": "sell-predicates.json",
+        "boolean_cooldown_policy_sha256": "1" * 64,
+        "boolean_cooldown_predicate_bundle_sha256": "2" * 64,
+        "boolean_cooldown_ema_warmup_s": 0.2,
+        "max_exec_book_visible_age_s": 5.0,
+        "_exec_message_delivery": {"depth": schedule},
+    }
+    first, second = [
+        build_configured_cooldown_policy_adapter(window={"l2_data": depth}, params=params)
+        for _ in range(2)
+    ]
+    live = load_policy(policy_path=Path("sell.json"), warmup_s=0.2, max_feature_age_s=5.0)
+    cutoff = 1_000_000_000
+    for index in range(len(ts)):
+        live.observe_depth(
+            receive_ts_ns=int(schedule["receive_ts_ns"][index]),
+            bids=list(zip(depth.bid_px[index], depth.bid_qty[index], strict=True)),
+            asks=list(zip(depth.ask_px[index], depth.ask_qty[index], strict=True)),
+            market_generation=index + 1, depth_generation=index + 1,
+        )
+    for baseline_ms in (85_000.0, 170_000.4, 255_000.5):
+        snapshot = first.capture_exposure_fill(
+            assignment_id=str(baseline_ms), fill_exchange_ts_ns=cutoff - 1,
+            fill_visible_ts_ns=cutoff,
+            m0_context={"side": "SELL", "fill_visible_ts_ns": cutoff,
+                        "baseline_duration_ms": baseline_ms, "campaign_age_s": 300.0},
+        )
+        expected = live.evaluate(
+            side="SELL", baseline_duration_ms=round(baseline_ms), campaign_age_s=300.0,
+            decision_ts_ns=cutoff, snapshot_id=snapshot.snapshot_id,
+        )
+        actual = first.evaluate(snapshot, baseline_ms)
+        assert (actual.action_id, actual.duration_ms, actual.fallback_reason) == (
+            expected.action_id, expected.duration_ms, expected.fallback_reason,
+        )
+    assert first.audit()["depth_callbacks_consumed"] == len(ts)
+    assert second.audit()["depth_callbacks_consumed"] == 0
+    assert second.audit()["snapshots_emitted"] == 0
+    disabled = first.capture_exposure_fill(
+        assignment_id="buy-disabled", fill_exchange_ts_ns=cutoff - 1,
+        fill_visible_ts_ns=cutoff,
+        m0_context={"side": "BUY", "fill_visible_ts_ns": cutoff,
+                    "baseline_duration_ms": 170_000.4, "campaign_age_s": 300.0},
+    )
+    assert disabled.decision.duration_ms == 170_000.4
+    assert disabled.fallback_reason == "configured_policy_disabled_for_side"
 
 
 def test_message_callback_serialization_preserves_measured_service_without_double_counting():

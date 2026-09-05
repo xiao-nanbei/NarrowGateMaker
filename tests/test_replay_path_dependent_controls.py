@@ -85,6 +85,36 @@ def _trades(
     )
 
 
+@pytest.mark.parametrize(
+    "flag", ["boolean_cooldown_policy_enabled", "buy_e3_cooldown_policy_enabled"]
+)
+@pytest.mark.parametrize("backend", ["python", "cpp"])
+def test_enabled_cooldown_cannot_silently_use_static_duration(flag, backend):
+    params = {**_base_params(), flag: True}
+    with pytest.raises(ValueError, match="static cooldown is not a substitute"):
+        if backend == "cpp":
+            bt._validate_f05_cpp_cooldown_runtime(params, require_full_replay=True)
+        else:
+            bt.simulate_tick(
+                _trades([BASE_MS, BASE_MS + 1000], [100.0, 100.0]),
+                np.array([BASE_MS]),
+                np.array([0.0]),
+                params,
+            )
+
+
+def test_configured_cooldown_preserves_explicit_evaluator_or_disabled_policy():
+    evaluator = object()
+    assert bt._configured_cooldown_evaluator({}) is None
+    assert bt._configured_cooldown_evaluator(
+        {"boolean_cooldown_policy_enabled": False}
+    ) is None
+    assert bt._configured_cooldown_evaluator(
+        {"buy_e3_cooldown_policy_enabled": True,
+         "cooldown_duration_policy_evaluator": evaluator}
+    ) is evaluator
+
+
 def test_replay_final_p3_floor_survives_post_fill_shift_and_forces_unsafe_replace() -> None:
     params = _base_params()
     params.update(

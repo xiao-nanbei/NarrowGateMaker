@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 
 import data_paths
-from models.backtest_config import load_live_config_as_params, load_tick_base_params
+from live.config import Config, to_backtest_params
+from models.backtest_config import (
+    COOLDOWN_POLICY_PARAM_KEYS,
+    build_backtest_base_params,
+    load_live_config_as_params,
+    load_tick_base_params,
+)
 from research.families.f05_fill_quality_quote_ev.audit import (
     freeze_multiscale_ema_boolean_cooldown_duration_policy as duration_freeze,
 )
@@ -18,6 +24,20 @@ from research.families.f06_placement_fill_cif.audit import placement_fill_panel
 from research.families.f09_campaign_action_uplift.audit import (
     causal_v12_toxicity_conditional_p3_reach_gate as toxicity_gate,
 )
+
+
+def test_base_params_preserve_configured_live_cooldown_binding() -> None:
+    cfg = Config()
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    cfg.strategy.buy_e3_cooldown_policy_enabled = True
+    cfg.strategy.boolean_cooldown_policy_path = "/synthetic/sell-policy.json"
+    cfg.strategy.buy_e3_cooldown_policy_path = "/synthetic/buy-policy.json"
+    cfg.risk.max_exec_book_visible_age_s = 1.25
+    live = to_backtest_params(cfg)
+    replay = build_backtest_base_params(live)
+    assert {key: replay[key] for key in COOLDOWN_POLICY_PARAM_KEYS} == {
+        key: live[key] for key in COOLDOWN_POLICY_PARAM_KEYS
+    }
 
 
 @pytest.mark.parametrize("entrypoint", ("backtest_tick", "tick_ab", "quote_decomposition_tick"))

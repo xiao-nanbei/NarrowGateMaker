@@ -10,6 +10,7 @@ pure one-way network latency because exchange clock offsets are embedded in
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -103,6 +104,7 @@ def build_latency_profile(
         str(value).strip() for value in (market_ids or set()) if str(value).strip()
     }
     groups: dict[tuple[str, str, str], LatencyGroup] = {}
+    clock_pairs: dict[tuple[str, str, str], list[list[float | None]]] = {}
     row_count = 0
     for row in iter_rows(
         paths,
@@ -123,6 +125,14 @@ def build_latency_profile(
             transport,
         )
         groups.setdefault(key, LatencyGroup(max_samples=max_samples)).add(row)
+        exchange_ns = int(row.get("exchange_event_ts_ns", 0) or 0)
+        receive_ns = int(row.get("local_receive_ts_ns", 0) or 0)
+        ready_ns = int(row.get("feature_ready_ts_ns", 0) or 0)
+        clock_pairs.setdefault(key, []).append(
+            [(receive_ns - exchange_ns) / 1_000_000.0,
+             (ready_ns - receive_ns) / 1_000_000.0]
+            if min(exchange_ns, receive_ns, ready_ns) > 0 else [None, None]
+        )
         row_count += 1
 
     probabilities = tuple(
@@ -144,6 +154,15 @@ def build_latency_profile(
                     max(0.0, float(value)) for value in raw_quantiles
                 ],
                 "simulation_negative_lag_clamped": True,
+                # Preserve complete same-message pairs separately from the
+                # marginal CDFs. Missing/negative observations remain visible
+                # and are rejected by the paired-clock consumer, never fixed
+                # by clipping, tail trimming, or borrowing another feed.
+                "simulation_clock_pair_columns": [
+                    "transport_lag_ms", "feature_latency_ms",
+                ],
+                "simulation_clock_pair_samples_ms": clock_pairs[key],
+                "simulation_clock_pair_semantics": "all_observed_same_message_pairs",
             }
         )
 
@@ -585,6 +604,57 @@ class MarketDataLatencySimulator:
     def source_stratified_bucket_ms(self) -> int:
         sampling = self.profile.get("source_stratified_sampling", {})
         return max(1, int(sampling.get("joint_bucket_ms", 1_000) or 1_000))
+
+    def message_clock_arrays(
+        self, event_ts_ns: np.ndarray, *, market_id: str, event_type: str,
+        transport: str, seed: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Assign one unchanged observed receive/service pair per source row.
+
+        This empirical model preserves within-message pairing, not observed
+        burst chronology or cross-feed correlation. The caller owns FIFO/HOL
+        projection. Unlike legacy marginal modes, missing/negative clocks are
+        errors and no source fallback, CDF interpolation, or clipping applies.
+        """
+        events = np.asarray(event_ts_ns)
+        if (events.ndim != 1 or events.dtype.kind not in "iu"
+                or np.any(events < 0) or np.any(events > np.iinfo(np.int64).max)
+                or np.any(events[1:] < events[:-1])):
+            raise ValueError("message source timestamps must be ordered nonnegative int64 ns")
+        key = (str(market_id), str(event_type), str(transport).lower())
+        matches = [group for group in self.profile.get("groups", []) if (
+            str(group.get("market_id", "")), str(group.get("event_type", "")),
+            str(group.get("transport", "unknown")).lower(),
+        ) == key]
+        if len(matches) != 1:
+            raise ValueError(f"paired message clocks require one exact source group: {key}")
+        group = matches[0]
+        pairs = np.asarray(group.get("simulation_clock_pair_samples_ms", []), dtype=np.float64)
+        if (group.get("simulation_clock_pair_columns") != [
+                "transport_lag_ms", "feature_latency_ms",
+            ] or group.get("simulation_clock_pair_semantics") != "all_observed_same_message_pairs"
+                or pairs.ndim != 2 or pairs.shape[1:] != (2,) or not len(pairs)
+                or type(group.get("rows")) is not int or group["rows"] != len(pairs)
+                or not np.all(np.isfinite(pairs)) or np.any(pairs < 0.0)):
+            raise ValueError(f"source {key} requires complete finite nonnegative observed clock pairs")
+        events = events.astype(np.int64, copy=False)
+        source_seed = int.from_bytes(hashlib.sha256(
+            f"{seed}:{key}".encode("utf-8")
+        ).digest()[:8], "little")
+        # A vectorized SplitMix draw is frozen for each source row, not each
+        # decision reading it. Identical-timestamp messages remain distinct.
+        mixed = events.astype(np.uint64) ^ np.arange(len(events), dtype=np.uint64)
+        mixed ^= np.uint64(source_seed)
+        mixed += np.uint64(0x9E3779B97F4A7C15)
+        mixed = (mixed ^ (mixed >> 30)) * np.uint64(0xBF58476D1CE4E5B9)
+        mixed = (mixed ^ (mixed >> 27)) * np.uint64(0x94D049BB133111EB)
+        mixed ^= mixed >> 31
+        selected = pairs[(mixed % np.uint64(len(pairs))).astype(np.int64)]
+        lag_ns = np.rint(selected * 1_000_000.0)
+        total_ns = lag_ns.sum(axis=1)
+        if np.any(total_ns > np.iinfo(np.int64).max - events):
+            raise ValueError("sampled message clocks exceed int64 nanoseconds")
+        return events + lag_ns[:, 0].astype(np.int64), events + total_ns.astype(np.int64)
 
     @staticmethod
     def _uniform_index(rng: random.Random, size: int) -> int:

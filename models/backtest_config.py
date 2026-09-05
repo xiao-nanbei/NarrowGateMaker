@@ -79,6 +79,24 @@ TICK_DEFAULTS: Mapping[str, Any] = {
 }
 
 ML_PARAM_KEYS = ("vol_blend", "skew_strength", "asym_strength", "ret_skew", "gamma_dir_bonus")
+COOLDOWN_POLICY_PARAM_KEYS = (
+    "boolean_cooldown_policy_enabled",
+    "boolean_cooldown_policy_path",
+    "boolean_cooldown_policy_sha256",
+    "boolean_cooldown_predicate_bundle_path",
+    "boolean_cooldown_predicate_bundle_sha256",
+    "boolean_cooldown_ema_warmup_s",
+    "buy_e3_cooldown_policy_enabled",
+    "buy_e3_cooldown_artifact_manifest_path",
+    "buy_e3_cooldown_artifact_manifest_sha256",
+    "buy_e3_cooldown_artifact_sha256",
+    "buy_e3_cooldown_policy_path",
+    "buy_e3_cooldown_policy_sha256",
+    "buy_e3_cooldown_predicate_bundle_path",
+    "buy_e3_cooldown_predicate_bundle_sha256",
+    "buy_e3_cooldown_ema_warmup_s",
+    "max_exec_book_visible_age_s",
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_TEMPLATE_CONFIG = ROOT / "live" / "config.yaml"
@@ -1487,6 +1505,9 @@ def build_backtest_base_params(
     # This is a replay execution override, not a live strategy/YAML field.
     if "replay_main_loop_sleep_ms" in live_params:
         params["replay_main_loop_sleep_ms"] = live_params["replay_main_loop_sleep_ms"]
+    params.update({
+        key: live_params[key] for key in COOLDOWN_POLICY_PARAM_KEYS if key in live_params
+    })
     if queue_calibration is not None:
         # queue calibration 是机制对齐工具，不是 alpha；正式 OOS 评估必须用 fit 以外日期验证。
         params["_queue_calibration"] = queue_calibration

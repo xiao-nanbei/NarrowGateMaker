@@ -29,6 +29,31 @@ def _trades() -> pd.DataFrame:
     )
 
 
+def test_parent_identity_reloads_after_cached_values_and_binds_retained_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(bt, "RAW_DIR", tmp_path)
+    header = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker\n"
+    first = tmp_path / "BTCUSDC-aggTrades-2026-01-01.csv"
+    target = tmp_path / "BTCUSDC-aggTrades-2026-01-02.csv"
+    first.write_text(header + "1,100,0.001,10,10,1767225600000,true\n")
+    target.write_text(header + "2,100,0.002,11,12,1767312000000,true\n")
+    params = {"symbol": "BTCUSDC", "market_context_warmup_days": 1}
+    parents, identity = dw.load_replay_aggregate_parents("2026-01-02", params)
+    assert parents["first_trade_id"].tolist() == [10, 11]
+    assert parents["last_trade_id"].tolist() == [10, 12]
+    assert all(parents[name].dtype == np.dtype("int64") for name in (
+        "agg_trade_id", "first_trade_id", "last_trade_id",
+    ))
+    # Neither a whole-window value-cache hit nor an earlier parent load owns
+    # the next run's packet mapping. A changed source is read and rebound.
+    target.write_text(header + "2,100,0.003,11,13,1767312000000,true\n")
+    changed, changed_identity = dw.load_replay_aggregate_parents("2026-01-02", params)
+    assert changed["last_trade_id"].tolist() == [10, 13]
+    assert identity[1]["sha256"] != changed_identity[1]["sha256"]
+    first.unlink()
+    with pytest.raises(ValueError, match="one retained aggTrade source"):
+        dw.load_replay_aggregate_parents("2026-01-02", params)
+
+
 def test_compute_preroll_changes_prediction_cache_not_market_context(tmp_path, monkeypatch):
     monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
     monkeypatch.setattr(dw, "_model_artifact_signatures", lambda *args: [])

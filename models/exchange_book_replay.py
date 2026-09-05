@@ -28,7 +28,7 @@ from data.download_cryptohft_orderbook import (
     OrderBookSequenceState,
     OrderBookState,
 )
-from data_paths import native_exchange_book_cache_root
+from data_paths import native_exchange_book_cache_root, resolve_portable_path
 from models.native_exchange_book_cache import (
     ensure_native_book_hour_cache,
     iter_native_book_hour_cache,
@@ -1619,6 +1619,78 @@ def _compile_cpp_boolean_cooldown_policy(cpp, policy, *, declarative: bool):
     return compiled
 
 
+def build_configured_cooldown_policy_adapter(*, window, params):
+    """Load fresh per-arm live policy state from the selected replay config.
+
+    Artifact hashes come from that config, not a historical research freeze.
+    The caller must supply the same already-scheduled depth callbacks used by
+    the execution replay; this function never resamples transport or reads a
+    mutable live selector. Missing source channels cannot become zero features.
+    """
+    enabled = {
+        "SELL": params.get("boolean_cooldown_policy_enabled", False),
+        "BUY": params.get("buy_e3_cooldown_policy_enabled", False),
+    }
+    if any(type(value) is not bool for value in enabled.values()):
+        raise ValueError("configured cooldown enabled flags must be boolean")
+    if not any(enabled.values()):
+        return None
+    depth = (
+        window.get("l2_data") if isinstance(window, Mapping) else getattr(window, "l2_data", None)
+    )
+    if depth is None or not len(getattr(depth, "ts_ms", ())):
+        raise ValueError("configured cooldown policy requires retained warmup/target depth")
+    for field in ("bid_px", "ask_px", "bid_qty", "ask_qty"):
+        values = np.asarray(getattr(depth, field, ()))
+        if values.ndim != 2 or values.shape[0] != len(depth.ts_ms) or values.shape[1] < 1:
+            raise ValueError(f"configured cooldown policy missing aligned depth channel: {field}")
+    deliveries = params.get("_exec_message_delivery")
+    delivery = deliveries.get("depth") if isinstance(deliveries, Mapping) else None
+    clocks = ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns")
+    if not isinstance(delivery, Mapping) or any(key not in delivery for key in clocks):
+        raise ValueError("configured cooldown policy requires explicit depth message delivery")
+    schedule = HistoricalMessageDeliverySchedule(*(delivery[key] for key in clocks))
+    max_age = float(params.get("max_exec_book_visible_age_s", 0.0))
+    if not math.isfinite(max_age) or max_age <= 0.0:
+        raise ValueError("configured cooldown policy feature-age limit must be positive")
+
+    from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
+    from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
+
+    root = Path(__file__).resolve().parents[1]
+
+    def artifact_path(key):
+        value = params.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"configured cooldown policy missing artifact path: {key}")
+        path = resolve_portable_path(value, root=root)
+        return path if path.is_absolute() else root / path
+
+    policies = {}
+    for side, prefix, loader in (
+        ("SELL", "boolean_cooldown", LiveBooleanCooldownPolicy),
+        ("BUY", "buy_e3_cooldown", LiveBuyE3CooldownPolicy),
+    ):
+        if not enabled[side]:
+            continue
+        kwargs = {
+            "policy_path": artifact_path(f"{prefix}_policy_path"),
+            "policy_sha256": params.get(f"{prefix}_policy_sha256", ""),
+            "predicate_bundle_path": artifact_path(f"{prefix}_predicate_bundle_path"),
+            "predicate_bundle_sha256": params.get(f"{prefix}_predicate_bundle_sha256", ""),
+            "warmup_s": params.get(f"{prefix}_ema_warmup_s", 0.0),
+            "max_feature_age_s": max_age,
+        }
+        if side == "BUY":
+            kwargs.update(
+                artifact_manifest_path=artifact_path("buy_e3_cooldown_artifact_manifest_path"),
+                artifact_manifest_sha256=params.get("buy_e3_cooldown_artifact_manifest_sha256", ""),
+                expected_artifact_sha256=params.get("buy_e3_cooldown_artifact_sha256", ""),
+            )
+        policies[side] = loader.from_files(**kwargs)
+    return ReceiveTimeCooldownReplayAdapter(depth, schedule, policies=policies)
+
+
 class ReceiveTimeCooldownReplayAdapter:
     """Replay supplied live policies using delivered depth callbacks.
 
@@ -1881,7 +1953,9 @@ class ReceiveTimeCooldownReplayAdapter:
         if int(context["fill_visible_ts_ns"]) != cutoff:
             raise ValueError("receive-time policy context fill clock differs")
         side = str(context["side"]).upper()
-        policy = self._policies[side]
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("receive-time policy fill side must be BUY or SELL")
+        policy = self._policies.get(side)
         last = int(np.searchsorted(self._ready, cutoff, side="left"))
         # All callbacks are delivered, not just the latest book. A same-time
         # callback is withheld because its order relative to the fill is unknown.
@@ -1896,10 +1970,18 @@ class ReceiveTimeCooldownReplayAdapter:
         self._cursor = last
         self._last_cutoff = cutoff
         snapshot_id = f"{assignment_id}:receive-time-policy"
-        raw = policy.evaluate(
-            side=side, baseline_duration_ms=int(round(context["baseline_duration_ms"])),
-            campaign_age_s=float(context["campaign_age_s"]), decision_ts_ns=cutoff,
-            snapshot_id=snapshot_id,
+        raw = (
+            policy.evaluate(
+                side=side, baseline_duration_ms=int(round(context["baseline_duration_ms"])),
+                campaign_age_s=float(context["campaign_age_s"]), decision_ts_ns=cutoff,
+                snapshot_id=snapshot_id,
+            )
+            if policy is not None else _ReceiveTimeCooldownDecision(
+                action_id="CONTROL_85N", duration_ms=float(context["baseline_duration_ms"]),
+                fallback_reason="configured_policy_disabled_for_side", matched_rule_index=None,
+                policy_sha256="", predicate_bundle_sha256="", snapshot_id=snapshot_id,
+                support_valid=False,
+            )
         )
         decision = _ReceiveTimeCooldownDecision(
             action_id=str(raw.action_id), duration_ms=float(raw.duration_ms),
