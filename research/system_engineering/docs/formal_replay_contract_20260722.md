@@ -102,4 +102,22 @@ The runner writes `*.replay_contract.json` beside the daily/rollup artifacts. Th
 
 ## Interpretation
 
+F01 campaign attribution uses the simulated execution price (`quote_px`), not
+the triggering public trade price (`fill_trade_px`). It includes signed
+commission, preserves physical `fill_sequence`, and splits cross-zero fills
+into closing/opening economic legs with proportional fees. Opening fees belong
+to the new campaign. A completed-window mark values residual inventory without
+creating a liquidation; open campaigns remain open. Physical fill counts and
+economic-leg counts are different quantities.
+
+These campaign paths are marked at observed fills and at the final window mark,
+not continuously between every market event. Their path extrema are therefore
+fill-marked diagnostics. The current runner does not book funding or operating
+costs, and `economic_pnl_complete` describes its local fill-ledger coverage, not
+all-in account economics. Summing independent fresh-start days is not continuous
+deployment PnL. New action-value labels must use a shared absolute endpoint and
+the actual cost/state coverage required by the study, not silently inherit old
+campaign labels after an attribution correction. Old result files are preserved;
+regenerated attribution is a new derived result, not a new execution history.
+
 Live alignment is successful when it explains or catches structural errors in units, clocks, state transitions, or gate order. Residual differences caused by unobservable queue priority, asynchronous ACK/fill ordering, inherited campaign state, or random network stalls do not require one-to-one campaign or PnL replication. Strategy comparisons use the frozen formal baseline instead.

@@ -71,6 +71,9 @@ class TradeRow:
     position: float
     realized_pnl: float
     unrealized_pnl: float
+    # Optional signed execution commission; positive cost, negative rebate.
+    # Legacy live rows retain their existing semantics when it is unavailable.
+    fee_usdc: float = 0.0
 
     @property
     def total_pnl(self) -> float:
@@ -1095,8 +1098,8 @@ def build_campaigns(trades: list[TradeRow]) -> list[Campaign]:
                 campaign_id=campaign_id,
                 start_ts=row.ts,
                 start_position=row.position,
-                start_realized_pnl=row.realized_pnl,
-                start_total_pnl=row.total_pnl,
+                start_realized_pnl=row.realized_pnl + row.fee_usdc,
+                start_total_pnl=row.total_pnl + row.fee_usdc,
                 final_total_pnl=row.total_pnl,
                 max_abs_inventory=abs(row.position),
             )

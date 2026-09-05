@@ -66,6 +66,87 @@ def test_campaign_audit_rejects_disabled_fill_trace():
         )
 
 
+@pytest.mark.parametrize("opening_fee", [0.1, -0.1, 0.0])
+def test_campaign_ledger_uses_execution_price_and_both_signed_fees(opening_fee):
+    fills = [
+        {"fill_sequence": 0, "fill_ts": 1000, "order_id": 9, "side": "BUY",
+         "fill_qty": 1.0, "quote_px": 100.0, "fill_trade_px": 99.0,
+         "fill_fee_usdc": opening_fee},
+        {"fill_sequence": 1, "fill_ts": 1001, "order_id": 1, "side": "SELL",
+         "fill_qty": 1.0, "quote_px": 102.0, "fill_trade_px": 103.0,
+         "fill_fee_usdc": 0.2},
+    ]
+    rows = campaign_audit._fills_to_trade_rows(fills)
+    expected = 2.0 - opening_fee - 0.2
+    assert [row.price for row in rows] == [100.0, 102.0]
+    assert rows[-1].realized_pnl == pytest.approx(expected)
+    campaign, = campaign_audit.build_campaigns(rows)
+    assert campaign.closed
+    assert campaign.final_total_pnl - campaign.start_total_pnl == pytest.approx(expected)
+
+
+def test_campaign_ledger_splits_flip_and_preserves_execution_sequence():
+    fills = [
+        {"fill_sequence": 2, "fill_ts": 1001, "order_id": 1, "side": "BUY",
+         "fill_qty": 1.0, "quote_px": 101.0, "fill_fee_usdc": 0.1},
+        {"fill_sequence": 0, "fill_ts": 1000, "order_id": 8, "side": "BUY",
+         "fill_qty": 1.0, "quote_px": 100.0, "fill_fee_usdc": 0.1},
+        {"fill_sequence": 1, "fill_ts": 1001, "order_id": 9, "side": "SELL",
+         "fill_qty": 2.0, "quote_px": 102.0, "fill_fee_usdc": 0.4},
+    ]
+    rows = campaign_audit._fills_to_trade_rows(fills)
+    assert [row.position for row in rows] == [1.0, 0.0, -1.0, 0.0]
+    assert sum(row.fee_usdc for row in rows) == pytest.approx(0.6)
+    campaigns = campaign_audit.build_campaigns(rows)
+    values = [row.final_total_pnl - row.start_total_pnl for row in campaigns]
+    assert values == pytest.approx([1.7, 0.7])
+    assert sum(values) == pytest.approx(rows[-1].total_pnl)
+    # Fill counts remain physical executions, not the expanded economic legs.
+    split = campaign_audit._fill_split(fills)
+    assert split["buy_exposure_fills"] == 1
+    assert split["buy_reducing_fills"] == 1
+
+
+def test_campaign_legacy_same_timestamp_order_is_not_sorted_by_order_id():
+    fills = [
+        {"fill_ts": 1000, "order_id": 8, "side": "BUY", "fill_qty": 1.0, "price": 100},
+        {"fill_ts": 1000, "order_id": 1, "side": "SELL", "fill_qty": 1.0, "price": 101},
+    ]
+    assert [row.side for row in campaign_audit._fills_to_trade_rows(fills)] == ["BUY", "SELL"]
+
+
+def test_campaign_residual_inventory_is_marked_without_terminal_liquidation():
+    fills = [{"fill_sequence": 0, "fill_ts": 1000, "side": "BUY",
+              "fill_qty": 1.0, "quote_px": 100.0, "fill_fee_usdc": 0.1}]
+    rows = campaign_audit._fills_to_trade_rows(
+        fills, terminal_ts=2000.0, terminal_mark_price=103.0,
+    )
+    assert rows[-1].total_pnl == pytest.approx(2.9)
+    assert rows[-1].position == 1.0
+    assert not rows[-1].is_real_fill
+    campaign, = campaign_audit.build_campaigns(rows)
+    assert not campaign.closed
+    assert campaign.fills == 1
+    assert campaign.end_ts == 2000.0
+    assert campaign.final_total_pnl - campaign.start_total_pnl == pytest.approx(2.9)
+
+
+@pytest.mark.parametrize("fee", [float("nan"), float("inf"), -float("inf")])
+def test_campaign_ledger_does_not_turn_invalid_commission_into_zero(fee):
+    with pytest.raises(ValueError, match="fill_fee_usdc"):
+        campaign_audit._fills_to_trade_rows([
+            {"fill_ts": 1000, "side": "BUY", "fill_qty": 1.0,
+             "quote_px": 100.0, "fill_fee_usdc": fee},
+        ])
+
+
+@pytest.mark.parametrize("sequences", [[0, 0], [0, None]])
+def test_campaign_ledger_rejects_ambiguous_partial_sequence(sequences):
+    fills = [{"fill_sequence": value} if value is not None else {} for value in sequences]
+    with pytest.raises(ValueError, match="fill_sequence"):
+        campaign_audit._ordered_fill_trace(fills)
+
+
 def _runtime_fifo_params():
     return {
         "order_transport": "rest",

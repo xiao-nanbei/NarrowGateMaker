@@ -883,18 +883,35 @@ def _load_initial_live_states_json(
     return states
 
 
+def _ordered_fill_trace(fill_trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Preserve physical execution order, including same-millisecond fills."""
+    if any("fill_sequence" in row for row in fill_trace):
+        if not all("fill_sequence" in row for row in fill_trace):
+            raise ValueError("fill trace mixes present and missing fill_sequence")
+        sequences = [int(row["fill_sequence"]) for row in fill_trace]
+        if len(set(sequences)) != len(sequences):
+            raise ValueError("fill trace contains duplicate fill_sequence")
+        return sorted(fill_trace, key=lambda row: int(row["fill_sequence"]))
+    # Legacy traces have no physical sequence. Stable input order is a better
+    # tie-breaker than order ID, which does not identify execution priority.
+    return sorted(fill_trace, key=lambda row: safe_float(row, "fill_ts"))
+
+
 def _fills_to_trade_rows(
     fill_trace: list[dict[str, Any]],
     *,
     initial_inventory: float = 0.0,
     initial_entry_price: float = 0.0,
     day_start_ts: float = 0.0,
+    terminal_ts: float | None = None,
+    terminal_mark_price: float | None = None,
 ) -> list[TradeRow]:
     """Reconstruct a minimal replay trade ledger from fill trace rows.
 
-    中文说明：这里的 PnL 是 campaign-level mark-to-fill 账本，用于比较
-    不同 arm 的终局 campaign outcome。它不是交易所账单，也不替代
-    backtest summary 的 raw PnL。
+    Use execution price and signed commission, not the triggering public trade
+    price. Cross-zero executions produce closing/opening economic legs. This
+    fill-marked ledger is not a funding ledger or a continuous market-MTM path.
+    An explicit completed-window mark values residual inventory without a fill.
     """
     rows: list[TradeRow] = []
     q = float(initial_inventory or 0.0)
@@ -913,36 +930,51 @@ def _fills_to_trade_rows(
                 unrealized_pnl=q * entry,
             )
         )
-    for raw in sorted(
-        fill_trace, key=lambda r: (safe_float(r, "fill_ts"), safe_float(r, "order_id"))
-    ):
+    for raw in _ordered_fill_trace(fill_trace):
         side = norm_side(raw.get("side", ""))
         qty = safe_float(raw, "fill_qty", safe_float(raw, "quantity", 0.0))
         px = safe_float(
-            raw, "fill_trade_px", safe_float(raw, "quote_px", safe_float(raw, "price", 0.0))
+            raw, "quote_px", safe_float(raw, "price", safe_float(raw, "fill_trade_px", 0.0))
         )
         ts_raw = safe_float(raw, "fill_ts", 0.0)
         ts = ts_raw / 1000.0 if ts_raw > 10_000_000_000 else ts_raw
         if side not in {"BUY", "SELL"} or qty <= 0.0 or px <= 0.0 or ts <= 0.0:
             continue
-        if side == "BUY":
-            cash -= qty * px
-            q += qty
-        else:
-            cash += qty * px
-            q -= qty
-        rows.append(
-            TradeRow(
-                ts=ts,
-                side=side,
-                trade_type="FILL",
-                qty=qty,
-                price=px,
-                position=q,
-                realized_pnl=cash,
-                unrealized_pnl=q * px,
+        fee = float(raw.get("fill_fee_usdc", 0.0))
+        if not math.isfinite(fee):
+            raise ValueError("fill_fee_usdc must be finite")
+        signed = 1.0 if side == "BUY" else -1.0
+        closing = min(abs(q), qty) if q * signed < 0.0 else 0.0
+        quantities = (closing, qty - closing) if 0.0 < closing < qty else (qty,)
+        remaining_fee = fee
+        for index, leg_qty in enumerate(quantities):
+            leg_fee = remaining_fee if index == len(quantities) - 1 else fee * leg_qty / qty
+            remaining_fee -= leg_fee
+            cash -= signed * leg_qty * px + leg_fee
+            q += signed * leg_qty
+            if abs(q) <= 1e-12:
+                q = 0.0
+            rows.append(
+                TradeRow(
+                    ts=ts, side=side, trade_type="FILL", qty=leg_qty, price=px,
+                    position=q, realized_pnl=cash, unrealized_pnl=q * px,
+                    fee_usdc=leg_fee,
+                )
             )
-        )
+    if terminal_ts is not None or terminal_mark_price is not None:
+        if terminal_ts is None or terminal_mark_price is None:
+            raise ValueError("terminal mark requires both timestamp and price")
+        if (
+            not math.isfinite(terminal_ts) or not math.isfinite(terminal_mark_price)
+            or terminal_mark_price <= 0.0
+            or terminal_ts < (rows[-1].ts if rows else day_start_ts)
+        ):
+            raise ValueError("terminal mark has invalid time or price")
+        rows.append(TradeRow(
+            ts=terminal_ts, side="MARK", trade_type="SYNC_ADJUST", qty=0.0,
+            price=terminal_mark_price, position=q, realized_pnl=cash,
+            unrealized_pnl=q * terminal_mark_price,
+        ))
     return rows
 
 
@@ -966,9 +998,7 @@ def _fill_split(
         "buy_fill_notional": 0.0,
         "sell_fill_notional": 0.0,
     }
-    for raw in sorted(
-        fill_trace, key=lambda r: (safe_float(r, "fill_ts"), safe_float(r, "order_id"))
-    ):
+    for raw in _ordered_fill_trace(fill_trace):
         side = norm_side(raw.get("side", ""))
         qty = safe_float(raw, "fill_qty", safe_float(raw, "quantity", 0.0))
         px = safe_float(
@@ -2223,6 +2253,13 @@ def _run_day_campaign_audit(
             initial_inventory=initial_inventory,
             initial_entry_price=initial_entry_price,
             day_start_ts=_day_start_ts(day),
+            **({
+                "terminal_ts": float(params.get(
+                    "replay_event_clock_end_ts_ms", (_day_start_ts(day) + 86400) * 1000,
+                )) / 1000.0,
+                "terminal_mark_price": float(result["terminal_mark_price"]),
+            } if result.get("economic_pnl_complete") is not False
+                and float(result.get("terminal_mark_price", 0.0) or 0.0) > 0.0 else {}),
         )
         campaigns = build_campaigns(trades)
         c_rows = []
