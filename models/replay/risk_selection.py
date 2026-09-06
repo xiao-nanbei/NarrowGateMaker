@@ -1,4 +1,4 @@
-"""Complete offline E/C opportunities, one intervention, or a frozen policy.
+"""Offline E/C opportunities, interventions, learned policies, and controls.
 
 This collector owns no simulator state and authorizes no live actions. The
 existing replay applies each selected action through its normal order path.
@@ -6,8 +6,11 @@ existing replay applies each selected action through its normal order path.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from strategy.risk_selection import (
@@ -42,15 +45,35 @@ def feature_ready_time(source_ready_ns: Mapping[str, int], prediction_ready_ns: 
     return max(prediction_ready_ns, max(source_ready_ns.values(), default=decision_ts_ns))
 
 
+def random_control_draw(seed: int, scope: str, identity: str) -> float:
+    """Order-independent control noise; never advance execution/latency RNGs.
+
+    This digest is a deterministic PRF, not an artifact identity or permission.
+    The experiment freezes seed/scope before its evaluation outcomes are read.
+    """
+    key = json.dumps(["risk-selection-random-v1", seed, scope, identity],
+                     ensure_ascii=True, separators=(",", ":")).encode()
+    bits = int.from_bytes(hashlib.blake2b(key, digest_size=8).digest(), "big") >> 11
+    return bits / 2**53
+
+
 class ReplayRiskSelection:
     """An uncapped collector, or an explicit streaming sink that must succeed."""
 
     def __init__(self, *, intervention: Mapping[str, Any] | None = None,
                  sink: Callable[[dict[str, Any]], None] | None = None,
                  max_rows: int = 0, mode: str = "B",
-                 policy: RiskSelectionPolicy | Mapping[str, Any] | None = None) -> None:
+                 policy: RiskSelectionPolicy | Mapping[str, Any] | None = None,
+                 control: str = "learned", random_rates: Mapping[str, float] | None = None,
+                 random_seed: int | None = None, random_scope: str = "") -> None:
         if not isinstance(mode, str) or mode not in {"B", "E", "C", "EC"}:
             raise ValueError("risk_selection_mode must be B, E, C, or EC")
+        if not isinstance(control, str) or control not in {"learned", "random", "flat"}:
+            raise ValueError("risk_selection_control must be learned, random, or flat")
+        if control == "flat" and mode != "E":
+            raise ValueError("Flat uses mode E and skips every new opener")
+        if control == "random" and mode == "B":
+            raise ValueError("random control requires an E/C selection mode")
         self.target = dict(intervention or {})
         if self.target and (
             set(self.target) != {"opportunity_id", "action"}
@@ -58,12 +81,36 @@ class ReplayRiskSelection:
             or self.target["action"] not in {"WAIT", "CANCEL"}
         ):
             raise ValueError("risk_selection_intervention requires opportunity_id and WAIT/CANCEL")
-        if self.target and mode != "B":
+        if self.target and (mode != "B" or control != "learned"):
             raise ValueError("risk-selection policy cannot share a single intervention")
+        if control == "flat":
+            # A shared experiment may load one policy for its other arms. Flat
+            # neither parses nor evaluates it and cannot inherit its coverage.
+            policy = None
         if isinstance(policy, Mapping):
             policy = RiskSelectionPolicy.from_dict(policy)
         if policy is not None and not isinstance(policy, RiskSelectionPolicy):
             raise ValueError("risk_selection_policy requires a parsed policy or JSON object")
+        self.random_rates: dict[str, float] = {}
+        if control == "random":
+            if policy is None:
+                raise ValueError("random control requires the reference policy's support")
+            if (type(random_seed) is not int or not isinstance(random_scope, str)
+                    or not random_scope.strip()):
+                raise ValueError("random control requires an explicit integer seed and scope")
+            if not isinstance(random_rates, Mapping) or not random_rates:
+                raise ValueError("random control requires frozen per-surface veto rates")
+            for surface, rate in random_rates.items():
+                if surface not in {f"{k}:{s}" for k in "EC" for s in ("BUY", "SELL")}:
+                    raise ValueError("unknown random-control surface")
+                if isinstance(rate, bool):
+                    raise ValueError("random-control rates must be numeric probabilities, not bool")
+                rate = float(rate)
+                if not math.isfinite(rate) or not 0 <= rate <= 1:
+                    raise ValueError("random-control rates must be finite and within [0, 1]")
+                self.random_rates[surface] = rate
+        elif random_rates is not None or random_seed is not None or random_scope:
+            raise ValueError("random-control parameters require control random")
         if sink is not None and not callable(sink):
             raise ValueError("risk-selection opportunity sink must be callable")
         if max_rows < 0:
@@ -75,6 +122,13 @@ class ReplayRiskSelection:
         self.intervention_count = 0
         self.mode = mode
         self.policy = policy
+        self.control = control
+        self.random_seed = random_seed
+        self.random_scope = random_scope
+        self.control_action_counts = {action: 0 for action in ("POST", "WAIT", "KEEP", "CANCEL")}
+        self.control_fallback_counts: dict[str, int] = {}
+        self.control_change_count = 0
+        self.reference_evaluation_count = 0
         self.policy_action_counts = {action: 0 for action in ("POST", "WAIT", "KEEP", "CANCEL")}
         self.policy_fallback_counts: dict[str, int] = {}
         self.policy_change_count = 0
@@ -107,27 +161,62 @@ class ReplayRiskSelection:
                 )
                 for row in rows if row["kind"] in self.mode
             )
+            if self.control == "flat" and (
+                abs(observation.inventory_btc) > 1e-10 or observation.pending_orders
+            ):
+                raise ValueError("Flat requires a known flat account without pending ownership")
             decisions = {decision.opportunity_id: decision for decision in
                          evaluate_risk_selection(observation, candidates, self.policy)}
+            if self.control == "random":
+                self.reference_evaluation_count += len(decisions)
         actions = []
         for row in rows:
             decision = decisions.get(row["opportunity_id"])
+            draw = rate = None
+            if decision is not None and self.control == "flat":
+                decision = replace(decision, action="WAIT", value_delta_usdc=None,
+                                   reason="flat_no_new_risk", out_of_scope=False)
+            elif decision is not None and self.control == "random":
+                # Reuse the exact reference eligibility, including missing or
+                # nonfinite predictions, but discard its value before drawing.
+                # This computes the reference model; report that cost honestly.
+                reason = decision.reason if decision.out_of_scope else "random_veto_rate_missing"
+                action = row["baseline_action"]
+                rate = self.random_rates.get(f"{row['kind']}:{row['side']}")
+                eligible = not decision.out_of_scope and rate is not None
+                if eligible:
+                    draw = random_control_draw(self.random_seed, self.random_scope,
+                                               row["opportunity_id"])
+                    action = ("WAIT" if row["kind"] == "E" else "CANCEL") if draw < rate else action
+                    reason = "random_veto" if draw < rate else "random_baseline"
+                decision = replace(decision, action=action, value_delta_usdc=None,
+                                   reason=reason, out_of_scope=not eligible)
             if self.mode != "B":
                 row.update(
                     policy_mode=self.mode,
-                    policy_id=self.policy.policy_id if self.policy else "",
+                    policy_id=(self.policy.policy_id
+                               if self.policy and self.control == "learned" else ""),
                     value_delta_usdc=decision.value_delta_usdc if decision else None,
                     policy_reason=decision.reason if decision else "mode_disabled",
                 )
+                if self.control != "learned":
+                    row.update(control=self.control, control_reason=row["policy_reason"],
+                               reference_policy_id=self.policy.policy_id if self.policy else "",
+                               random_veto_rate=rate, random_draw=draw)
             baseline_action = row["baseline_action"]
             action = self._observe(row, decision.action if decision else None)
             if decision is not None:
-                self.policy_action_counts[action] += 1
-                self.policy_change_count += int(action != baseline_action)
+                counts = (self.policy_action_counts if self.control == "learned"
+                          else self.control_action_counts)
+                fallbacks = (self.policy_fallback_counts if self.control == "learned"
+                             else self.control_fallback_counts)
+                counts[action] += 1
+                if self.control == "learned":
+                    self.policy_change_count += int(action != baseline_action)
+                else:
+                    self.control_change_count += int(action != baseline_action)
                 if decision.out_of_scope:
-                    self.policy_fallback_counts[decision.reason] = (
-                        self.policy_fallback_counts.get(decision.reason, 0) + 1
-                    )
+                    fallbacks[decision.reason] = fallbacks.get(decision.reason, 0) + 1
             actions.append(action)
         return tuple(actions)
 
@@ -162,11 +251,25 @@ class ReplayRiskSelection:
             "risk_selection_intervention_count": self.intervention_count,
             "risk_selection_opportunities_streamed": self.sink is not None,
             "risk_selection_mode": self.mode,
-            "risk_selection_policy_id": self.policy.policy_id if self.policy else "",
+            "risk_selection_policy_id": (
+                self.policy.policy_id if self.policy and self.control == "learned" else ""
+            ),
             "risk_selection_policy_decision_count": sum(self.policy_action_counts.values()),
             "risk_selection_policy_action_counts": dict(self.policy_action_counts),
             "risk_selection_policy_change_count": self.policy_change_count,
             "risk_selection_policy_fallback_counts": dict(self.policy_fallback_counts),
+            **({
+                "risk_selection_control": self.control,
+                "risk_selection_control_action_counts": dict(self.control_action_counts),
+                "risk_selection_control_decision_count": sum(self.control_action_counts.values()),
+                "risk_selection_control_change_count": self.control_change_count,
+                "risk_selection_control_fallback_counts": dict(self.control_fallback_counts),
+                "risk_selection_reference_evaluation_count": self.reference_evaluation_count,
+                "risk_selection_reference_policy_id": self.policy.policy_id if self.policy else "",
+                "risk_selection_random_rates": dict(self.random_rates),
+                "risk_selection_random_seed": self.random_seed,
+                "risk_selection_random_scope": self.random_scope,
+            } if self.control != "learned" else {}),
         }
 
 
@@ -191,7 +294,8 @@ def assemble_paired_label(
     for result, expected_count, funding in (
         (baseline, 0, baseline_funding_usdc), (alternative, 1, alternative_funding_usdc),
     ):
-        if result.get("risk_selection_mode", "B") != "B":
+        if (result.get("risk_selection_mode", "B") != "B"
+                or result.get("risk_selection_control", "learned") != "learned"):
             raise ValueError("single-intervention labels cannot contain a full-path learned policy")
         if (result["risk_selection_start_ts_ms"] != start_ts_ms
                 or result["risk_selection_end_ts_ms"] != end_ts_ms):

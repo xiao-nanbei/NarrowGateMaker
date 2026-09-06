@@ -1,6 +1,6 @@
 # E/C 配对标签训练
 
-最后实质更新：2026-09-06
+Last materially modified: 2026-09-06
 
 Last materially synchronized: 2026-09-06
 
@@ -41,10 +41,7 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 
 ## 完整学习策略回放
 
-拟合后，保留已有冻结的 F01 baseline 命令，增加
-`--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`。
-此入口使用 Python diagnostic、明确的资金费记录和 `--continuous`；不能把连续日期拆成每天清零的实验臂。
-通过原有 arm-spec JSON 选择 B/E/C/EC，例如：
+拟合后，保留已有冻结的 F01 baseline 命令，增加 `--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`。此入口使用 Python diagnostic、明确的资金费记录和 `--continuous`；不能把连续日期拆成每天清零的实验臂。通过原有 arm-spec JSON 选择 B/E/C/EC，例如：
 
 ```json
 [
@@ -56,7 +53,19 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 
 在 `--arms` 中选取这些名称及 `baseline`。加载行情前只读取一次策略文件；各臂共享其参数和不可变输入，但独立维护订单、预算、库存及后续动作。默认 B 不评分；E/C/EC 在预算 reservation 前，用同一可见快照批量判断两侧。WAIT 不增加冷却，C 继续走正常撤单、ACK 和终态流程。
 
-此模式自动保留完整机会表，含 policy ID、预测 USDC 价值差和原因。经济结果行同时记录动作数、变化数和回退数，以及净 PnL 和资金费。缺少某个侧模型时保留基线，不借用另一侧。不能与 `--risk-pair-baseline-arm` 混用：重叠的单次干预标签不是完整策略收益。这个开关没有启用 C++ 执行或 live 部署；随机参与和 Flat 对照仍需各自冻结比较设计。
+此模式自动保留完整机会表，含 policy ID、预测 USDC 价值差和原因。经济结果行同时记录动作数、变化数和回退数，以及净 PnL 和资金费。缺少某个侧模型时保留基线，不借用另一侧。不能与 `--risk-pair-baseline-arm` 混用：重叠的单次干预标签不是完整策略收益。这个开关没有启用 C++ 执行或 live 部署。
+
+## 随机参与和空仓对照
+
+同一个 F01 的实验臂覆盖参数可选择 `risk_selection_control=learned`（默认）、`random` 或 `flat`。这些对照复用现有机会收集器和正常订单路径；原有会改变报价节奏或几何形状的随机被动报价实验臂，不是匹配参与率对照。查看评估结果之前必须冻结比较设计；接口本身不提供经过科学校准的否决率。
+
+R 使用 E、C 或 EC 模式，同一个 `--risk-selection-policy` 参考产物，以及 `risk_selection_random_rates`，将 `E:BUY`、`C:SELL` 等表面映射为 `[0,1]` 内的 WAIT/CANCEL 概率；还必须明确整数 `risk_selection_random_seed` 和非空 `risk_selection_random_scope`。否决率只能由冻结的训练区间估计，评估期间固定 seed、scope 和概率。参考评分器确实会运行，以严格复用相同的模型和特征支持范围，但模型价值不决定随机动作。缺模型、模型输入或否决率时保留基线，并明确计数；仅覆盖部分表面的 R 臂不能被描述成完整的四表面匹配对照。
+
+随机抽样由 seed、scope 和机会身份共同确定，不推进行情、执行或延迟的随机数生成器。匹配训练期否决概率，不保证路径分叉后实际参与次数完全一致。必须按 BUY/SELL 和 E/C 表面报告实际判断数、否决数、回退质量及活动量，不能根据评估路径重新调整概率。
+
+Flat 设置 `risk_selection_control=flat` 和 `risk_selection_mode=E`，从共同且已知空仓、无待确认订单的分段初态开始，整个分段每次 eligible E 都 WAIT。它不是只跳过首单、重置已有账户或强制清仓；非空仓或仍有待确认订单所有权的初态不受支持。即使其他实验臂共享策略产物，Flat 也不使用价值模型。
+
+两种对照都要求 Python diagnostic、`--continuous` 和明确资金费输入，自动保留全部机会，且不能与单次干预标签混用。机会价值为 null，原因明确标识控制组。日报中的 `risk_selection_control_*` 计数与保持为零的 `risk_selection_policy_*` 动作和判断计数分开；`risk_selection_reference_evaluation_count` 和 `risk_selection_reference_policy_id` 如实记录 R 实际执行的参考模型工作，Flat 则为零和空。R 的 null 价值不表示从未计算模型。对照都不改变价格、数量、报价节奏、数量角色安全检查、预算所有权或撤单终态处理。Flat 等零活动对照不能证明选择性执行成功。
 
 ## 尚未覆盖
 

@@ -3764,14 +3764,27 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     validate_replay_initial_state(params.get("initial_live_state"), backend="python")
     risk_selection = None
     risk_selection_mode = params.get("risk_selection_mode", "B")
+    risk_selection_control = params.get("risk_selection_control", "learned")
     if (bool(params.get("risk_selection_collect_opportunities", False))
-            or risk_selection_mode != "B"):
+            or risk_selection_mode != "B" or risk_selection_control != "learned"):
+        if risk_selection_control == "flat":
+            initial_q = float(params.get("initial_inventory", 0.0) or 0.0)
+            state = params.get("initial_live_state") or {}
+            if (not math.isfinite(initial_q) or abs(initial_q) > 1e-10
+                    or state.get("active_orders") or state.get("health_orders", 0)):
+                raise ValueError(
+                    "Flat requires a known flat initial account without pending ownership"
+                )
         risk_selection = ReplayRiskSelection(
             intervention=params.get("risk_selection_intervention"),
             sink=params.get("_risk_selection_opportunity_sink"),
             max_rows=int(params.get("risk_selection_opportunity_max_rows", 0)),
             mode=risk_selection_mode,
             policy=params.get("risk_selection_policy"),
+            control=risk_selection_control,
+            random_rates=params.get("risk_selection_random_rates"),
+            random_seed=params.get("risk_selection_random_seed"),
+            random_scope=params.get("risk_selection_random_scope", ""),
         )
     elif (params.get("risk_selection_intervention") is not None
           or params.get("_risk_selection_opportunity_sink") is not None):
@@ -35860,7 +35873,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             or params.get("risk_selection_intervention") is not None
             or params.get("_risk_selection_opportunity_sink") is not None
             or params.get("risk_selection_policy") is not None
-            or params.get("risk_selection_mode", "B") != "B"):
+            or params.get("risk_selection_mode", "B") != "B"
+            or params.get("risk_selection_control", "learned") != "learned"):
         raise NotImplementedError("E/C opportunity replay is Python-authoritative")
     if runtime_compute_sample_rows(params):
         raise ValueError("path-conditioned runtime compute continuation is Python-only")

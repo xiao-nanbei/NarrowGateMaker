@@ -2074,7 +2074,9 @@ def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smoke.SmokeArm]:
     """Reuse one baseline; every other arm may change exactly one E/C opportunity."""
-    if any(arm.overrides.get("risk_selection_mode", "B") != "B" for arm in arms):
+    if any(arm.overrides.get("risk_selection_mode", "B") != "B"
+           or arm.overrides.get("risk_selection_control", "learned") != "learned"
+           for arm in arms):
         raise ValueError("single-intervention labels require baseline mode B in every arm")
     window_fields = {"replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms"}
     if any(window_fields.intersection(arm.overrides) for arm in arms):
@@ -2098,28 +2100,44 @@ def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smok
 def _load_risk_policy_for_arms(
     path: Path | None, arms: list[smoke.SmokeArm], *, engine: str, paired: bool = False,
 ) -> dict[str, Any] | None:
-    """Read one frozen offline policy, shared by B/E/C/EC arms, before loading data.
+    """Validate controls and read one shared policy before loading market data.
 
     A single-intervention label is not a complete learned-policy trajectory.
     The artifact bytes are read once here; workers receive the JSON payload.
     """
     modes = [arm.overrides.get("risk_selection_mode", "B") for arm in arms]
+    controls = [arm.overrides.get("risk_selection_control", "learned") for arm in arms]
     if any(not isinstance(mode, str) or mode not in {"B", "E", "C", "EC"}
            for mode in modes):
         raise ValueError("risk_selection_mode must be B, E, C or EC")
+    if any(not isinstance(control, str) or control not in {"learned", "random", "flat"}
+           for control in controls):
+        raise ValueError("risk_selection_control must be learned, random, or flat")
     if any("risk_selection_policy" in arm.overrides for arm in arms):
         raise ValueError("load the shared policy with --risk-selection-policy, not arm overrides")
-    active = any(mode != "B" for mode in modes)
-    if path is None:
-        if active:
-            raise ValueError("E/C/EC arms require --risk-selection-policy")
-        return None
-    if engine != "python":
-        raise ValueError("learned E/C policy replay currently requires --engine python")
-    if paired or any(arm.overrides.get("risk_selection_intervention") for arm in arms):
+    active = any(mode != "B" or control != "learned"
+                 for mode, control in zip(modes, controls, strict=True))
+    if path is None and any(mode != "B" and control != "flat"
+                            for mode, control in zip(modes, controls, strict=True)):
+        raise ValueError("learned and random E/C/EC arms require --risk-selection-policy")
+    if engine != "python" and (active or path is not None):
+        raise ValueError("E/C policy and control replay currently requires --engine python")
+    if (active or path is not None) and (
+        paired or any(arm.overrides.get("risk_selection_intervention") for arm in arms)
+    ):
         raise ValueError("learned policy replay cannot be combined with single-intervention labels")
-    payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
-    RiskSelectionPolicy.from_dict(payload)
+    payload = json.loads(path.expanduser().read_text(encoding="utf-8")) if path else None
+    parsed_policy = RiskSelectionPolicy.from_dict(payload) if path else None
+    for arm in arms:
+        params = arm.overrides
+        ReplayRiskSelection(
+            intervention=params.get("risk_selection_intervention"),
+            mode=params.get("risk_selection_mode", "B"), policy=parsed_policy,
+            control=params.get("risk_selection_control", "learned"),
+            random_rates=params.get("risk_selection_random_rates"),
+            random_seed=params.get("risk_selection_random_seed"),
+            random_scope=params.get("risk_selection_random_scope", ""),
+        )
     return payload
 
 
@@ -2175,13 +2193,15 @@ def _run_day_campaign_audit(
     source_days = continuous_days or [day]
     policy_active = any(
         arm.overrides.get("risk_selection_mode", base.get("risk_selection_mode", "B")) != "B"
+        or arm.overrides.get("risk_selection_control", base.get("risk_selection_control", "learned"))
+        != "learned"
         for arm in arms
     )
     if policy_active:
         if engine != "python":
-            raise ValueError("learned E/C policy replay currently requires --engine python")
+            raise ValueError("E/C policy and control replay currently requires --engine python")
         if any(arm.overrides.get("risk_selection_collect_opportunities") is False for arm in arms):
-            raise ValueError("learned policy arms cannot disable their opportunity denominator")
+            raise ValueError("policy/control arms cannot disable their opportunity denominator")
         base = {**base, "risk_selection_collect_opportunities": True}
     if continuous_days:
         if day != continuous_days[0] or historical_global_flow_root:
@@ -2223,7 +2243,8 @@ def _run_day_campaign_audit(
         base.setdefault("replay_event_clock_start_ts_ms", start_ms)
         base.setdefault("replay_event_clock_end_ts_ms", start_ms + 86_400_000 - 1)
     if risk_pair_baseline_arm:
-        if base.get("risk_selection_mode", "B") != "B":
+        if (base.get("risk_selection_mode", "B") != "B"
+                or base.get("risk_selection_control", "learned") != "learned"):
             raise ValueError("single-intervention labels require baseline mode B")
         arms = _risk_pair_arms(arms, risk_pair_baseline_arm)
         if engine != "python" or funding_events is None:
@@ -2615,7 +2636,7 @@ def _run_day_campaign_audit(
                     "terminal_liquidation_applied", "terminal_mark_price", "final_inventory",
                     "cash_before_terminal", "pnl",
                     "risk_selection_start_ts_ms", "risk_selection_end_ts_ms",
-                    "risk_selection_mode",
+                    "risk_selection_mode", "risk_selection_control",
                 }}
                 paired_baseline_funding = funding_value
             else:
@@ -2661,6 +2682,19 @@ def _run_day_campaign_audit(
                 daily["risk_selection_fallback_counts"] = json.dumps(
                     result["risk_selection_policy_fallback_counts"], sort_keys=True,
                 )
+                if params.get("risk_selection_control", "learned") != "learned":
+                    for field in (
+                        "control", "control_decision_count", "control_change_count",
+                        "reference_evaluation_count", "reference_policy_id",
+                        "random_seed", "random_scope",
+                    ):
+                        daily[f"risk_selection_{field}"] = result[f"risk_selection_{field}"]
+                    for action, count in result["risk_selection_control_action_counts"].items():
+                        daily[f"risk_selection_control_{action.lower()}_count"] = count
+                    for field in ("control_fallback_counts", "random_rates"):
+                        daily[f"risk_selection_{field}"] = json.dumps(
+                            result[f"risk_selection_{field}"], sort_keys=True,
+                        )
         funding_trace_rows.extend(
             {"day": day, "arm": arm.name, **row} for row in arm_funding_trace
         )
@@ -2820,9 +2854,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--risk-selection-policy", type=Path,
         help=(
-            "Frozen shared E/C value policy JSON. Set risk_selection_mode=B/E/C/EC in "
-            "arm overrides to run independent complete strategy paths. Python diagnostic "
-            "only; not single-intervention labels or live deployment."
+            "Frozen shared E/C value policy JSON, also used for random-control support. "
+            "Arm overrides select risk_selection_mode=B/E/C/EC and "
+            "risk_selection_control=learned/random/flat (Flat needs no policy). "
+            "Python diagnostic only; not single-intervention labels or live deployment."
         ),
     )
     parser.add_argument(
@@ -3242,14 +3277,6 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
-    if args.risk_selection_policy is not None:
-        if args.replay_purpose != "diagnostic":
-            raise SystemExit("learned E/C policy replay currently requires diagnostic purpose")
-        if not args.continuous or args.funding_history is None:
-            raise SystemExit(
-                "learned E/C policy replay requires --continuous and --funding-history"
-            )
-        args.save_risk_opportunities = True
     if args.replay_end_ts_ms is not None and not args.continuous:
         raise SystemExit("--replay-end-ts-ms requires --continuous")
     if args.risk_pair_baseline_arm:
@@ -3426,6 +3453,18 @@ def main(argv: list[str] | None = None) -> None:
     if not requested:
         raise SystemExit("Provide --arms and/or --fill-cooldown-grid")
     arms = [arms_by_name[name] for name in requested]
+    if args.risk_selection_policy is not None or any(
+        arm.overrides.get("risk_selection_mode", "B") != "B"
+        or arm.overrides.get("risk_selection_control", "learned") != "learned"
+        for arm in arms
+    ):
+        if args.replay_purpose != "diagnostic":
+            raise SystemExit("E/C policy and control replay currently requires diagnostic purpose")
+        if not args.continuous or args.funding_history is None:
+            raise SystemExit(
+                "E/C policy and control replay requires --continuous and --funding-history"
+            )
+        args.save_risk_opportunities = True
     risk_selection_policy = _load_risk_policy_for_arms(
         args.risk_selection_policy, arms, engine=args.engine,
         paired=bool(args.risk_pair_baseline_arm),

@@ -41,11 +41,7 @@ Training means and scales use training rows only. Labels whose outcome reaches t
 
 ## Complete learned-policy replay
 
-After fitting, keep the existing frozen F01 baseline command and add
-`--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`.
-The command must use the Python diagnostic path, an explicit funding tape and
-`--continuous`; do not split consecutive days into fresh-start arms. Select B/E/C/EC
-through the existing arm-spec JSON, for example:
+After fitting, keep the existing frozen F01 baseline command and add `--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`. The command must use the Python diagnostic path, an explicit funding tape and `--continuous`; do not split consecutive days into fresh-start arms. Select B/E/C/EC through the existing arm-spec JSON, for example:
 
 ```json
 [
@@ -55,19 +51,21 @@ through the existing arm-spec JSON, for example:
 ]
 ```
 
-Select these names alongside `baseline` using `--arms`. The policy file is read once
-before market loading; all arms share its payload and the same immutable inputs but
-own their orders, budgets, inventory and future actions. B remains the default and
-does not score. E/C/EC score both sides from one visible snapshot before reserving
-submission budget. WAIT adds no cooldown; C uses normal cancel/ACK/terminal handling.
+Select these names alongside `baseline` using `--arms`. The policy file is read once before market loading; all arms share its payload and the same immutable inputs but own their orders, budgets, inventory and future actions. B remains the default and does not score. E/C/EC score both sides from one visible snapshot before reserving submission budget. WAIT adds no cooldown; C uses normal cancel/ACK/terminal handling.
 
-This mode automatically retains the complete opportunity table with policy ID,
-predicted USDC difference and reason. The economic rows report selected actions,
-changes and fallback counts alongside net PnL and funding. A missing surface remains
-baseline, not a hidden transfer from the opposite side. Do not combine this mode
-with `--risk-pair-baseline-arm`: overlapping intervention labels are not full-policy
-returns. C++ execution and live deployment are not enabled by this switch. Random
-participation and Flat controls still need their own frozen comparison design.
+This mode automatically retains the complete opportunity table with policy ID, predicted USDC difference and reason. The economic rows report selected actions, changes and fallback counts alongside net PnL and funding. A missing surface remains baseline, not a hidden transfer from the opposite side. Do not combine this mode with `--risk-pair-baseline-arm`: overlapping intervention labels are not full-policy returns. C++ execution and live deployment are not enabled by this switch.
+
+## Random participation and Flat controls
+
+The same F01 arm overrides select `risk_selection_control=learned` (the default), `random`, or `flat`. These controls use the existing opportunity collector and normal order path; the older random-passive cadence/quote-geometry arms are not matched-participation controls. Freeze the comparison design before evaluation outcomes; the implementation does not supply scientifically calibrated veto rates.
+
+For R, use mode E, C or EC, the same `--risk-selection-policy` reference artifact, `risk_selection_random_rates` mapping surfaces such as `E:BUY` and `C:SELL` to WAIT/CANCEL probabilities in `[0,1]`, an explicit integer `risk_selection_random_seed`, and a nonempty `risk_selection_random_scope`. Estimate rates only from the frozen training period and keep seed, scope and rates fixed during evaluation. The reference scorer is actually evaluated to retain exactly its model/feature support, but its value does not select the random action. Missing model inputs, models or veto rates preserve baseline and are counted explicitly; a partially covered R arm must not be described as a complete four-surface matched control.
+
+Random draws are keyed by seed, scope and opportunity identity and do not advance market, execution or latency random-number generators. Matching a training veto probability does not guarantee equal realized participation after paths diverge. Report actual decisions, vetoes, fallback mass and activity by side and E/C surface; do not retune the probability to the evaluation path.
+
+For Flat, set `risk_selection_control=flat` and `risk_selection_mode=E`. Start from the same known flat, no-pending-order segment state and WAIT at every eligible E opportunity throughout the segment. Flat does not merely skip the first submission, reset an existing account or force liquidation. Nonflat or pending initial ownership is unsupported. It does not use the value model, including when other arms share a policy artifact.
+
+Both controls require the Python diagnostic path, `--continuous` and explicit funding, automatically retain complete opportunities, and cannot share single-intervention labels. Opportunity values are null and reasons identify the control. Daily `risk_selection_control_*` counters are separate from the zero `risk_selection_policy_*` action/decision counters; `risk_selection_reference_evaluation_count` and `risk_selection_reference_policy_id` disclose R's actual reference-model work and are zero/empty for Flat. R's null value is not a claim that no model was computed. Neither control changes price, size, cadence, quantity-role safety checks, budget ownership or cancel terminal handling. Flat and other zero-activity controls cannot establish selective-execution success.
 
 ## Remaining scope
 
