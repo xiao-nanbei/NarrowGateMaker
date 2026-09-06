@@ -16,7 +16,7 @@ The canonical prediction output is `expected_maker_markout_bps_per_opportunity_3
 
 The root files own Quote-EV modeling and training; `audit/` owns order-level denominators, nulls, toxicity, and selection scoring. The production scorer adapter remains under `strategy/`. Shared dependencies: D, R, S.
 
-## E/C execution plumbing (untrained, not deployed)
+## E/C execution plumbing (no bundled model, not deployed)
 
 [`strategy/risk_selection.py`](../../../strategy/risk_selection.py) supplies immutable
 observations, quantity-aware `candidate_role()`, and the pure batch
@@ -47,8 +47,11 @@ POST-minus-WAIT / KEEP-minus-CANCEL label per intervention at a common terminal 
 including fees and funding. The [minimal training guide](docs/risk_selection_training.md)
 ([中文](docs/risk_selection_training.zh-CN.md)) describes the separate chronological
 Ridge entrypoint. These are implementation capabilities, not a positive study result.
-Complete checkpoint/copy-on-write branching, full-path learned-policy evaluation,
-and the live adapter remain unfinished. No new research family or economic/deployment
+The same F01 Python runner now accepts a frozen `--risk-selection-policy` and
+`risk_selection_mode=B/E/C/EC` arm overrides for complete independent policy paths.
+This is separate from single-intervention label generation; a model fit still does
+not establish economic value. Complete checkpoint/copy-on-write branching and the
+live adapter remain unfinished. No new research family or economic/deployment
 claim is introduced. Historical results below are not results for this interface.
 
 ## Historical research results

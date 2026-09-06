@@ -1,15 +1,22 @@
-"""Complete offline E/C opportunities and one deterministic intervention.
+"""Complete offline E/C opportunities, one intervention, or a frozen policy.
 
-This collector owns no simulator state and does not score or authorize live
-actions. Re-running the same prefix locates one opportunity before its request
-is changed; the existing replay then simulates the branch's complete future.
+This collector owns no simulator state and authorizes no live actions. The
+existing replay applies each selected action through its normal order path.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+from strategy.risk_selection import (
+    PendingExposure,
+    RiskSelectionCandidate,
+    RiskSelectionObservation,
+    RiskSelectionPolicy,
+    evaluate_risk_selection,
+)
 
 
 def opportunity_id(symbol: str, ts_ms: int, decision_sequence: int,
@@ -40,7 +47,10 @@ class ReplayRiskSelection:
 
     def __init__(self, *, intervention: Mapping[str, Any] | None = None,
                  sink: Callable[[dict[str, Any]], None] | None = None,
-                 max_rows: int = 0) -> None:
+                 max_rows: int = 0, mode: str = "B",
+                 policy: RiskSelectionPolicy | Mapping[str, Any] | None = None) -> None:
+        if not isinstance(mode, str) or mode not in {"B", "E", "C", "EC"}:
+            raise ValueError("risk_selection_mode must be B, E, C, or EC")
         self.target = dict(intervention or {})
         if self.target and (
             set(self.target) != {"opportunity_id", "action"}
@@ -48,6 +58,12 @@ class ReplayRiskSelection:
             or self.target["action"] not in {"WAIT", "CANCEL"}
         ):
             raise ValueError("risk_selection_intervention requires opportunity_id and WAIT/CANCEL")
+        if self.target and mode != "B":
+            raise ValueError("risk-selection policy cannot share a single intervention")
+        if isinstance(policy, Mapping):
+            policy = RiskSelectionPolicy.from_dict(policy)
+        if policy is not None and not isinstance(policy, RiskSelectionPolicy):
+            raise ValueError("risk_selection_policy requires a parsed policy or JSON object")
         if sink is not None and not callable(sink):
             raise ValueError("risk-selection opportunity sink must be callable")
         if max_rows < 0:
@@ -57,14 +73,68 @@ class ReplayRiskSelection:
         self.rows: list[dict[str, Any]] = []
         self.counts = {"E": 0, "C": 0}
         self.intervention_count = 0
-
-    def targets(self, identity: str, action: str) -> bool:
-        return self.target == {"opportunity_id": identity, "action": action}
+        self.mode = mode
+        self.policy = policy
+        self.policy_action_counts = {action: 0 for action in ("POST", "WAIT", "KEEP", "CANCEL")}
+        self.policy_fallback_counts: dict[str, int] = {}
+        self.policy_change_count = 0
 
     def observe(self, row: dict[str, Any]) -> str:
+        return self.observe_batch([row])[0]
+
+    def observe_batch(self, rows: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+        """Score both sides before any reservation or execution-side mutation."""
+        if not rows:
+            return ()
+        decisions = {}
+        if self.mode != "B":
+            first = rows[0]
+            shared = ("decision_ts_ns", "feature_ready_ts_ns", "inventory_btc", "pending_orders")
+            if any(any(row[field] != first[field] for field in shared) for row in rows):
+                raise ValueError("risk-selection batch must share one visible observation")
+            observation = RiskSelectionObservation(
+                decision_ts_ns=int(first["decision_ts_ns"]),
+                feature_ready_ts_ns=int(first["feature_ready_ts_ns"]),
+                inventory_btc=float(first["inventory_btc"]),
+                pending_orders=tuple(PendingExposure(**order) for order in first["pending_orders"]),
+            )
+            candidates = tuple(
+                RiskSelectionCandidate(
+                    opportunity_id=row["opportunity_id"], kind=row["kind"], side=row["side"],
+                    quantity_btc=row["quantity_btc"], baseline_action=row["baseline_action"],
+                    baseline_allowed=row["baseline_allowed"], order_id=row["order_id"],
+                    features=row["features"],
+                )
+                for row in rows if row["kind"] in self.mode
+            )
+            decisions = {decision.opportunity_id: decision for decision in
+                         evaluate_risk_selection(observation, candidates, self.policy)}
+        actions = []
+        for row in rows:
+            decision = decisions.get(row["opportunity_id"])
+            if self.mode != "B":
+                row.update(
+                    policy_mode=self.mode,
+                    policy_id=self.policy.policy_id if self.policy else "",
+                    value_delta_usdc=decision.value_delta_usdc if decision else None,
+                    policy_reason=decision.reason if decision else "mode_disabled",
+                )
+            baseline_action = row["baseline_action"]
+            action = self._observe(row, decision.action if decision else None)
+            if decision is not None:
+                self.policy_action_counts[action] += 1
+                self.policy_change_count += int(action != baseline_action)
+                if decision.out_of_scope:
+                    self.policy_fallback_counts[decision.reason] = (
+                        self.policy_fallback_counts.get(decision.reason, 0) + 1
+                    )
+            actions.append(action)
+        return tuple(actions)
+
+    def _observe(self, row: dict[str, Any], policy_action: str | None) -> str:
         if self.max_rows and sum(self.counts.values()) >= self.max_rows:
             raise RuntimeError("complete risk-selection opportunity collector exceeded max_rows")
-        action = str(row["baseline_action"])
+        action = str(row["baseline_action"]) if policy_action is None else policy_action
         if self.target.get("opportunity_id") == row["opportunity_id"]:
             expected = "WAIT" if row["kind"] == "E" else "CANCEL"
             if self.target["action"] != expected:
@@ -91,6 +161,12 @@ class ReplayRiskSelection:
             "risk_selection_opportunity_counts": dict(self.counts),
             "risk_selection_intervention_count": self.intervention_count,
             "risk_selection_opportunities_streamed": self.sink is not None,
+            "risk_selection_mode": self.mode,
+            "risk_selection_policy_id": self.policy.policy_id if self.policy else "",
+            "risk_selection_policy_decision_count": sum(self.policy_action_counts.values()),
+            "risk_selection_policy_action_counts": dict(self.policy_action_counts),
+            "risk_selection_policy_change_count": self.policy_change_count,
+            "risk_selection_policy_fallback_counts": dict(self.policy_fallback_counts),
         }
 
 
@@ -115,6 +191,8 @@ def assemble_paired_label(
     for result, expected_count, funding in (
         (baseline, 0, baseline_funding_usdc), (alternative, 1, alternative_funding_usdc),
     ):
+        if result.get("risk_selection_mode", "B") != "B":
+            raise ValueError("single-intervention labels cannot contain a full-path learned policy")
         if (result["risk_selection_start_ts_ms"] != start_ts_ms
                 or result["risk_selection_end_ts_ms"] != end_ts_ms):
             raise ValueError("paired replay did not execute the complete common window")

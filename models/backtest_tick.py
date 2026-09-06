@@ -3708,6 +3708,24 @@ def _configured_cooldown_evaluator(params):
     return evaluator
 
 
+def _baseline_quote_action(*, route_due, forced_cancel, cancel_first,
+                           pending_coalesce, enabled, updated, active):
+    """The normal quote intention, before any optional E/C veto."""
+    if not route_due:
+        return "none"
+    if forced_cancel:
+        return "cancel"
+    if cancel_first:
+        return "cancel_first"
+    if pending_coalesce:
+        return "pending_coalesce"
+    if enabled and updated:
+        return "replace" if active else "place"
+    if not enabled:
+        return "pause"
+    return "keep" if not updated and active else "none"
+
+
 def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                   ml_data=None, bbo_data=None, l2_data=None,
                   var_ti=None, var_retsq=None, reference_event_tapes=None,
@@ -3745,11 +3763,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="python")
     risk_selection = None
-    if bool(params.get("risk_selection_collect_opportunities", False)):
+    risk_selection_mode = params.get("risk_selection_mode", "B")
+    if (bool(params.get("risk_selection_collect_opportunities", False))
+            or risk_selection_mode != "B"):
         risk_selection = ReplayRiskSelection(
             intervention=params.get("risk_selection_intervention"),
             sink=params.get("_risk_selection_opportunity_sink"),
             max_rows=int(params.get("risk_selection_opportunity_max_rows", 0)),
+            mode=risk_selection_mode,
+            policy=params.get("risk_selection_policy"),
         )
     elif (params.get("risk_selection_intervention") is not None
           or params.get("_risk_selection_opportunity_sink") is not None):
@@ -30815,95 +30837,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             ask_cancel_first = _should_cancel_first_replace("SELL", q, ask_ref_order, ask_updated, ha_new)
 
             risk_selection_wait_sides = set()
-            if risk_selection is not None and abs(float(q)) <= 1e-10:
-                for side, orders, route_due, can_new, updated, cancel_first, coalesce in (
-                    ("BUY", bid_orders, bid_route_due, hb_new, bid_updated,
-                     bid_cancel_first, bid_pending_coalesce),
-                    ("SELL", ask_orders, ask_route_due, ha_new, ask_updated,
-                     ask_cancel_first, ask_pending_coalesce),
-                ):
-                    if (not orders and route_due and can_new and updated
-                            and not cancel_first and not coalesce
-                            and risk_selection.targets(
-                                opportunity_id(SYMBOL, int(t), int(nrq), side, "E"), "WAIT"
-                            )):
-                        risk_selection_wait_sides.add(side)
-
-            if (
-                hb_new
-                and bid_updated
-                and not bid_cancel_first
-                and not bid_pending_coalesce
-            ):
-                bid_budget_allowed, bid_budget_reason = (
-                    _post_cooldown_budget_prepare_submission(
-                        "BUY",
-                        quantity_btc=float(bid_sz),
-                        exposure_increasing=bool(q >= 0.0),
-                        side_ctx=quote_context["BUY"],
-                        reserve="BUY" not in risk_selection_wait_sides,
-                    )
-                )
-                if not bid_budget_allowed:
-                    hb_new = False
-                    bid_block_reasons.append(bid_budget_reason)
-                    quote_context["BUY"][
-                        "post_cooldown_inventory_budget_block"
-                    ] = True
-            if (
-                ha_new
-                and ask_updated
-                and not ask_cancel_first
-                and not ask_pending_coalesce
-            ):
-                ask_budget_allowed, ask_budget_reason = (
-                    _post_cooldown_budget_prepare_submission(
-                        "SELL",
-                        quantity_btc=float(ask_sz),
-                        exposure_increasing=bool(q <= 0.0),
-                        side_ctx=quote_context["SELL"],
-                        reserve="SELL" not in risk_selection_wait_sides,
-                    )
-                )
-                if not ask_budget_allowed:
-                    ha_new = False
-                    ask_block_reasons.append(ask_budget_reason)
-                    quote_context["SELL"][
-                        "post_cooldown_inventory_budget_block"
-                    ] = True
-
-            bid_action = "none"
-            if ranked_guard_bid_cancel_order_id:
-                bid_action = "cancel"
-            elif bid_cancel_first:
-                bid_action = "cancel_first"
-            elif bid_pending_coalesce:
-                bid_action = "pending_coalesce"
-            elif hb_new and bid_updated:
-                bid_action = "replace" if bid_active_before else "place"
-            elif not hb_new:
-                bid_action = "pause"
-            elif not bid_updated and bid_active_before:
-                bid_action = "keep"
-            ask_action = "none"
-            if ranked_guard_ask_cancel_order_id:
-                ask_action = "cancel"
-            elif ask_cancel_first:
-                ask_action = "cancel_first"
-            elif ask_pending_coalesce:
-                ask_action = "pending_coalesce"
-            elif ha_new and ask_updated:
-                ask_action = "replace" if ask_active_before else "place"
-            elif not ha_new:
-                ask_action = "pause"
-            elif not ask_updated and ask_active_before:
-                ask_action = "keep"
-            if not bid_route_due:
-                bid_action = "none"
-            if not ask_route_due:
-                ask_action = "none"
             risk_selection_cancel_sides = set()
             if risk_selection is not None:
+                bid_action = _baseline_quote_action(
+                    route_due=bid_route_due, forced_cancel=ranked_guard_bid_cancel_order_id,
+                    cancel_first=bid_cancel_first, pending_coalesce=bid_pending_coalesce,
+                    enabled=hb_new, updated=bid_updated, active=bid_active_before,
+                )
+                ask_action = _baseline_quote_action(
+                    route_due=ask_route_due, forced_cancel=ranked_guard_ask_cancel_order_id,
+                    cancel_first=ask_cancel_first, pending_coalesce=ask_pending_coalesce,
+                    enabled=ha_new, updated=ask_updated, active=ask_active_before,
+                )
+                risk_selection_rows = []
                 risk_selection_pending = tuple(
                     PendingExposure(_ranked_guard_order_id(order), str(order["side"]),
                                     float(order["remaining"]))
@@ -30944,6 +30890,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         kind == "C" and role not in {"opener", "add", "opener_or_add"}
                     ):
                         continue
+                    if kind == "E":
+                        # Establish baseline admission without reserving budget.
+                        # Both sides are scored before either can mutate it.
+                        budget_allowed, _ = _post_cooldown_budget_prepare_submission(
+                            side, quantity_btc=float(quantity), exposure_increasing=True,
+                            side_ctx=side_ctx, reserve=False,
+                        )
+                        if not budget_allowed:
+                            continue
                     # Explicit policy-visible fields only. In particular never
                     # expose exchange_inventory, exchange_remaining, queue_left,
                     # native scheduler cursors, or future markout labels here.
@@ -30978,7 +30933,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     feature_ready_ts_ns = feature_ready_time(
                         source_ready_ts_ns, prediction_ready_ts_ns, int(t) * 1_000_000,
                     )
-                    chosen = risk_selection.observe({
+                    risk_selection_rows.append({
                         "opportunity_id": identity, "role": role,
                         "kind": kind, "side": side, "order_id": target_order_id,
                         "decision_ts_ns": int(t) * 1_000_000,
@@ -31009,19 +30964,54 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             "scheduled_requote": bool(scheduled_requote_due),
                         },
                     })
+                risk_selection_sides = tuple(row["side"] for row in risk_selection_rows)
+                for side, chosen in zip(
+                    risk_selection_sides, risk_selection.observe_batch(risk_selection_rows), strict=True,
+                ):
                     if chosen == "WAIT":
-                        if side == "BUY":
-                            hb_new, bid_updated, bid_action = False, False, "pause"
-                            bid_block_reasons.append("risk_selection_wait")
-                        else:
-                            ha_new, ask_updated, ask_action = False, False, "pause"
-                            ask_block_reasons.append("risk_selection_wait")
+                        risk_selection_wait_sides.add(side)
                     elif chosen == "CANCEL":
                         risk_selection_cancel_sides.add(side)
-                        if side == "BUY":
-                            hb_new, bid_updated, bid_action = False, True, "cancel"
-                        else:
-                            ha_new, ask_updated, ask_action = False, True, "cancel"
+
+            if hb_new and bid_updated and not bid_cancel_first and not bid_pending_coalesce:
+                bid_budget_allowed, bid_budget_reason = _post_cooldown_budget_prepare_submission(
+                    "BUY", quantity_btc=float(bid_sz), exposure_increasing=bool(q >= 0.0),
+                    side_ctx=quote_context["BUY"], reserve="BUY" not in risk_selection_wait_sides,
+                )
+                if not bid_budget_allowed:
+                    hb_new = False
+                    bid_block_reasons.append(bid_budget_reason)
+                    quote_context["BUY"]["post_cooldown_inventory_budget_block"] = True
+            if ha_new and ask_updated and not ask_cancel_first and not ask_pending_coalesce:
+                ask_budget_allowed, ask_budget_reason = _post_cooldown_budget_prepare_submission(
+                    "SELL", quantity_btc=float(ask_sz), exposure_increasing=bool(q <= 0.0),
+                    side_ctx=quote_context["SELL"], reserve="SELL" not in risk_selection_wait_sides,
+                )
+                if not ask_budget_allowed:
+                    ha_new = False
+                    ask_block_reasons.append(ask_budget_reason)
+                    quote_context["SELL"]["post_cooldown_inventory_budget_block"] = True
+
+            bid_action = _baseline_quote_action(
+                route_due=bid_route_due, forced_cancel=ranked_guard_bid_cancel_order_id,
+                cancel_first=bid_cancel_first, pending_coalesce=bid_pending_coalesce,
+                enabled=hb_new, updated=bid_updated, active=bid_active_before,
+            )
+            ask_action = _baseline_quote_action(
+                route_due=ask_route_due, forced_cancel=ranked_guard_ask_cancel_order_id,
+                cancel_first=ask_cancel_first, pending_coalesce=ask_pending_coalesce,
+                enabled=ha_new, updated=ask_updated, active=ask_active_before,
+            )
+            if "BUY" in risk_selection_wait_sides:
+                hb_new, bid_updated, bid_action = False, False, "pause"
+                bid_block_reasons.append("risk_selection_wait")
+            if "SELL" in risk_selection_wait_sides:
+                ha_new, ask_updated, ask_action = False, False, "pause"
+                ask_block_reasons.append("risk_selection_wait")
+            if "BUY" in risk_selection_cancel_sides:
+                hb_new, bid_updated, bid_action = False, True, "cancel"
+            if "SELL" in risk_selection_cancel_sides:
+                ha_new, ask_updated, ask_action = False, True, "cancel"
             bid_update_cancel_reason = (
                 "risk_selection_cancel" if "BUY" in risk_selection_cancel_sides
                 else "requote_replace" if hb_new else "side_disabled"
@@ -35868,7 +35858,9 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
     if (params.get("risk_selection_collect_opportunities", False)
             or params.get("risk_selection_intervention") is not None
-            or params.get("_risk_selection_opportunity_sink") is not None):
+            or params.get("_risk_selection_opportunity_sink") is not None
+            or params.get("risk_selection_policy") is not None
+            or params.get("risk_selection_mode", "B") != "B"):
         raise NotImplementedError("E/C opportunity replay is Python-authoritative")
     if runtime_compute_sample_rows(params):
         raise ValueError("path-conditioned runtime compute continuation is Python-only")

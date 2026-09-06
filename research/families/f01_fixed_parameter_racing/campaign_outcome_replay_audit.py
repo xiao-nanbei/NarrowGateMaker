@@ -27,7 +27,7 @@ import random
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,7 @@ from research.system_engineering.audit.rest_latency_calibration import (  # noqa
     runtime_compute_overrides,
 )
 from strategy.campaign_repair import CampaignRepairModel  # noqa: E402
+from strategy.risk_selection import RiskSelectionPolicy  # noqa: E402
 
 
 def _normalize_days(days: list[str]) -> list[str]:
@@ -786,7 +787,7 @@ def _integrity_diagnostic_arms() -> list[smoke.SmokeArm]:
 
 
 def _day_start_ts(day: str) -> float:
-    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
 
 
 def _signed_qty(side: str, qty: float) -> float:
@@ -2073,6 +2074,8 @@ def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smoke.SmokeArm]:
     """Reuse one baseline; every other arm may change exactly one E/C opportunity."""
+    if any(arm.overrides.get("risk_selection_mode", "B") != "B" for arm in arms):
+        raise ValueError("single-intervention labels require baseline mode B in every arm")
     window_fields = {"replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms"}
     if any(window_fields.intersection(arm.overrides) for arm in arms):
         raise ValueError("risk pair arms cannot override the common replay window")
@@ -2090,6 +2093,34 @@ def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smok
             raise ValueError("risk pair arms may differ only by one risk_selection_intervention")
         ReplayRiskSelection(intervention=intervention)
     return [baseline, *alternatives]
+
+
+def _load_risk_policy_for_arms(
+    path: Path | None, arms: list[smoke.SmokeArm], *, engine: str, paired: bool = False,
+) -> dict[str, Any] | None:
+    """Read one frozen offline policy, shared by B/E/C/EC arms, before loading data.
+
+    A single-intervention label is not a complete learned-policy trajectory.
+    The artifact bytes are read once here; workers receive the JSON payload.
+    """
+    modes = [arm.overrides.get("risk_selection_mode", "B") for arm in arms]
+    if any(not isinstance(mode, str) or mode not in {"B", "E", "C", "EC"}
+           for mode in modes):
+        raise ValueError("risk_selection_mode must be B, E, C or EC")
+    if any("risk_selection_policy" in arm.overrides for arm in arms):
+        raise ValueError("load the shared policy with --risk-selection-policy, not arm overrides")
+    active = any(mode != "B" for mode in modes)
+    if path is None:
+        if active:
+            raise ValueError("E/C/EC arms require --risk-selection-policy")
+        return None
+    if engine != "python":
+        raise ValueError("learned E/C policy replay currently requires --engine python")
+    if paired or any(arm.overrides.get("risk_selection_intervention") for arm in arms):
+        raise ValueError("learned policy replay cannot be combined with single-intervention labels")
+    payload = json.loads(path.expanduser().read_text(encoding="utf-8"))
+    RiskSelectionPolicy.from_dict(payload)
+    return payload
 
 
 def _continuous_replay_bounds(days: list[str], end_ts_ms: int) -> tuple[int, int]:
@@ -2142,6 +2173,16 @@ def _run_day_campaign_audit(
     arm 并行更少重复读 cache/parquet，也更容易保持 daily fresh-start 语义。
     """
     source_days = continuous_days or [day]
+    policy_active = any(
+        arm.overrides.get("risk_selection_mode", base.get("risk_selection_mode", "B")) != "B"
+        for arm in arms
+    )
+    if policy_active:
+        if engine != "python":
+            raise ValueError("learned E/C policy replay currently requires --engine python")
+        if any(arm.overrides.get("risk_selection_collect_opportunities") is False for arm in arms):
+            raise ValueError("learned policy arms cannot disable their opportunity denominator")
+        base = {**base, "risk_selection_collect_opportunities": True}
     if continuous_days:
         if day != continuous_days[0] or historical_global_flow_root:
             raise ValueError("continuous segment needs its first day and no unmerged flow input")
@@ -2182,6 +2223,8 @@ def _run_day_campaign_audit(
         base.setdefault("replay_event_clock_start_ts_ms", start_ms)
         base.setdefault("replay_event_clock_end_ts_ms", start_ms + 86_400_000 - 1)
     if risk_pair_baseline_arm:
+        if base.get("risk_selection_mode", "B") != "B":
+            raise ValueError("single-intervention labels require baseline mode B")
         arms = _risk_pair_arms(arms, risk_pair_baseline_arm)
         if engine != "python" or funding_events is None:
             raise ValueError("risk pairs require Python replay and an explicit frozen funding tape")
@@ -2511,7 +2554,7 @@ def _run_day_campaign_audit(
             {
                 **row, "segment_start_day": day,
                 "day": datetime.fromtimestamp(
-                    int(row["decision_ts_ns"]) // 1_000_000_000, tz=timezone.utc,
+                    int(row["decision_ts_ns"]) // 1_000_000_000, tz=UTC,
                 ).strftime("%Y-%m-%d"),
                 "arm": arm.name, "group": arm.group,
             }
@@ -2572,6 +2615,7 @@ def _run_day_campaign_audit(
                     "terminal_liquidation_applied", "terminal_mark_price", "final_inventory",
                     "cash_before_terminal", "pnl",
                     "risk_selection_start_ts_ms", "risk_selection_end_ts_ms",
+                    "risk_selection_mode",
                 }}
                 paired_baseline_funding = funding_value
             else:
@@ -2609,6 +2653,14 @@ def _run_day_campaign_audit(
                 ),
                 "risk_selection_intervention_count": result["risk_selection_intervention_count"],
             })
+            if params.get("risk_selection_mode", "B") != "B":
+                for field in ("mode", "policy_id", "policy_decision_count", "policy_change_count"):
+                    daily[f"risk_selection_{field}"] = result[f"risk_selection_{field}"]
+                for action, count in result["risk_selection_policy_action_counts"].items():
+                    daily[f"risk_selection_{action.lower()}_count"] = count
+                daily["risk_selection_fallback_counts"] = json.dumps(
+                    result["risk_selection_policy_fallback_counts"], sort_keys=True,
+                )
         funding_trace_rows.extend(
             {"day": day, "arm": arm.name, **row} for row in arm_funding_trace
         )
@@ -2763,6 +2815,14 @@ def main(argv: list[str] | None = None) -> None:
             "Save all eligible E POST / C KEEP opportunities as JSONL, including unfilled "
             "orders. Single-opportunity WAIT/CANCEL experiments use arm-spec overrides; "
             "this is modeled counterfactual research, not live authority. Python only."
+        ),
+    )
+    parser.add_argument(
+        "--risk-selection-policy", type=Path,
+        help=(
+            "Frozen shared E/C value policy JSON. Set risk_selection_mode=B/E/C/EC in "
+            "arm overrides to run independent complete strategy paths. Python diagnostic "
+            "only; not single-intervention labels or live deployment."
         ),
     )
     parser.add_argument(
@@ -3182,6 +3242,14 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.risk_selection_policy is not None:
+        if args.replay_purpose != "diagnostic":
+            raise SystemExit("learned E/C policy replay currently requires diagnostic purpose")
+        if not args.continuous or args.funding_history is None:
+            raise SystemExit(
+                "learned E/C policy replay requires --continuous and --funding-history"
+            )
+        args.save_risk_opportunities = True
     if args.replay_end_ts_ms is not None and not args.continuous:
         raise SystemExit("--replay-end-ts-ms requires --continuous")
     if args.risk_pair_baseline_arm:
@@ -3358,6 +3426,10 @@ def main(argv: list[str] | None = None) -> None:
     if not requested:
         raise SystemExit("Provide --arms and/or --fill-cooldown-grid")
     arms = [arms_by_name[name] for name in requested]
+    risk_selection_policy = _load_risk_policy_for_arms(
+        args.risk_selection_policy, arms, engine=args.engine,
+        paired=bool(args.risk_pair_baseline_arm),
+    )
     if args.risk_pair_baseline_arm:
         arms = _risk_pair_arms(arms, args.risk_pair_baseline_arm)
     if args.replay_locator_projection is not None:
@@ -3400,6 +3472,8 @@ def main(argv: list[str] | None = None) -> None:
     base["trace_queue_events_max"] = 0
     if args.save_risk_opportunities:
         base["risk_selection_collect_opportunities"] = True
+    if risk_selection_policy is not None:
+        base["risk_selection_policy"] = risk_selection_policy
     base["trace_fills_max"] = int(args.trace_fills_max)
     base["execution_trade_source"] = str(args.execution_trade_source)
     if args.individual_trades_manifest_path is not None:

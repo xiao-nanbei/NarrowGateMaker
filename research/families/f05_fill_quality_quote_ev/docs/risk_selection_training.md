@@ -1,6 +1,8 @@
 # E/C paired-label training
 
-Last materially modified: 2026-09-06 Last materially synchronized: 2026-09-06
+Last materially modified: 2026-09-06
+
+Last materially synchronized: 2026-09-06
 
 [中文说明](risk_selection_training.zh-CN.md)
 
@@ -36,6 +38,36 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 Training means and scales use training rows only. Labels whose outcome reaches the validation boundary are purged. The same order cannot occur in both sets. No random row split is provided: many opportunities can share one market path and terminal value. A one-window pilot can verify fitting but cannot supply an independent validation period.
 
 `policy.json` is loadable by `strategy.risk_selection.RiskSelectionPolicy`. `training_report.json` records exclusions, per-surface support, prediction MSE against a past-only intercept, and whether a surface is training-only. Unsupported surfaces are absent from the policy, not silently pooled with another side. The output directory is new and private; existing artifacts are not overwritten.
+
+## Complete learned-policy replay
+
+After fitting, keep the existing frozen F01 baseline command and add
+`--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`.
+The command must use the Python diagnostic path, an explicit funding tape and
+`--continuous`; do not split consecutive days into fresh-start arms. Select B/E/C/EC
+through the existing arm-spec JSON, for example:
+
+```json
+[
+  {"name": "E", "group": "risk_selection", "overrides": {"risk_selection_mode": "E"}},
+  {"name": "C", "group": "risk_selection", "overrides": {"risk_selection_mode": "C"}},
+  {"name": "EC", "group": "risk_selection", "overrides": {"risk_selection_mode": "EC"}}
+]
+```
+
+Select these names alongside `baseline` using `--arms`. The policy file is read once
+before market loading; all arms share its payload and the same immutable inputs but
+own their orders, budgets, inventory and future actions. B remains the default and
+does not score. E/C/EC score both sides from one visible snapshot before reserving
+submission budget. WAIT adds no cooldown; C uses normal cancel/ACK/terminal handling.
+
+This mode automatically retains the complete opportunity table with policy ID,
+predicted USDC difference and reason. The economic rows report selected actions,
+changes and fallback counts alongside net PnL and funding. A missing surface remains
+baseline, not a hidden transfer from the opposite side. Do not combine this mode
+with `--risk-pair-baseline-arm`: overlapping intervention labels are not full-policy
+returns. C++ execution and live deployment are not enabled by this switch. Random
+participation and Flat controls still need their own frozen comparison design.
 
 ## Remaining scope
 

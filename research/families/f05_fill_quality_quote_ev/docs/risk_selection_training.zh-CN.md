@@ -1,6 +1,8 @@
 # E/C 配对标签训练
 
-最后实质更新：2026-09-06 Last materially synchronized: 2026-09-06
+最后实质更新：2026-09-06
+
+Last materially synchronized: 2026-09-06
 
 [English](risk_selection_training.md)
 
@@ -36,6 +38,25 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 均值和尺度仅使用训练行。标签结果区间延伸到验证边界的训练行会剔除，同一订单不允许分到两侧。不提供随机行切分：许多机会共享同一行情路径和终点。单窗口小批可验证拟合流程，不能提供独立验证区间。
 
 `policy.json` 可由 `strategy.risk_selection.RiskSelectionPolicy` 加载。 `training_report.json` 记录排除原因、各侧支持量、相对仅用过去均值的预测 MSE，以及是否仅为训练结果。支持不足的模型不写入 policy，不与另一侧混合补足。输出使用新的私有目录，不覆盖既有产物。
+
+## 完整学习策略回放
+
+拟合后，保留已有冻结的 F01 baseline 命令，增加
+`--risk-selection-policy "$NARROWGATE_RESULTS_DIR/training/policy.json"`。
+此入口使用 Python diagnostic、明确的资金费记录和 `--continuous`；不能把连续日期拆成每天清零的实验臂。
+通过原有 arm-spec JSON 选择 B/E/C/EC，例如：
+
+```json
+[
+  {"name": "E", "group": "risk_selection", "overrides": {"risk_selection_mode": "E"}},
+  {"name": "C", "group": "risk_selection", "overrides": {"risk_selection_mode": "C"}},
+  {"name": "EC", "group": "risk_selection", "overrides": {"risk_selection_mode": "EC"}}
+]
+```
+
+在 `--arms` 中选取这些名称及 `baseline`。加载行情前只读取一次策略文件；各臂共享其参数和不可变输入，但独立维护订单、预算、库存及后续动作。默认 B 不评分；E/C/EC 在预算 reservation 前，用同一可见快照批量判断两侧。WAIT 不增加冷却，C 继续走正常撤单、ACK 和终态流程。
+
+此模式自动保留完整机会表，含 policy ID、预测 USDC 价值差和原因。经济结果行同时记录动作数、变化数和回退数，以及净 PnL 和资金费。缺少某个侧模型时保留基线，不借用另一侧。不能与 `--risk-pair-baseline-arm` 混用：重叠的单次干预标签不是完整策略收益。这个开关没有启用 C++ 执行或 live 部署；随机参与和 Flat 对照仍需各自冻结比较设计。
 
 ## 尚未覆盖
 
