@@ -1017,6 +1017,12 @@ def create_app(
 
         return quality_export(store.root, start_day, end_day, dataset_id, node)
 
+    @app.post("/api/data-quality/refresh")
+    async def data_quality_refresh(request: WebRequest):
+        from narrowgate.studio_quality import refresh_quality
+
+        return await asyncio.to_thread(refresh_quality, store.root, await body(request))
+
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
         store.expire()

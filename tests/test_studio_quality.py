@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from narrowgate import studio_quality as quality
 from narrowgate.studio_quality import (
     import_quality,
     quality_catalog,
@@ -97,6 +98,7 @@ def test_offline_node_does_not_erase_canonical_quality(tmp_path):
         "status": "unknown",
         "last_checked_at": None,
         "node_status": "offline",
+        "observation_reason": "remote_replica_not_observed",
     }
 
 
@@ -284,3 +286,224 @@ def test_missing_local_copy_with_verified_remote_uses_sync(tmp_path):
         "Synchronize"
         in quality_export(root, "2026-08-01", "2026-08-01")["items"][0]["recommended_action"]
     )
+
+
+@pytest.fixture
+def registered(tmp_path):
+    data = tmp_path / "processed"
+    data.mkdir()
+    output = data / "book.parquet"
+    output.write_bytes(b"recorded processed output")
+    audit = tmp_path / "quality.csv"
+    audit.write_text("day,ok,feature,modeled,strict\n2026-08-02,true,true,true,false\n")
+    source = {
+        "id": "provider-book",
+        "source": "recorded-provider",
+        "exchange": "exchange",
+        "market": "perpetual",
+        "symbol": "BTCUSDC",
+        "data_type": "normalized_book",
+        "version": "selected-v1",
+        "label": "Provider-normalized candidate",
+        "stage": "processed",
+        "audit": {
+            "path": str(audit),
+            "check_column": "ok",
+            "checked_at": "2026-08-03T00:00:00Z",
+            "scope": "Provider-normalized candidate, not native queue or current B0 inputs",
+            "label": "Existing processed content audit",
+            "task_columns": {
+                "feature_input": "feature",
+                "modeled_replay": "modeled",
+                "strict_replay": "strict",
+            },
+            "task_reasons": {"strict_replay": "Native U/u/pu sequence was not recorded"},
+            "not_applicable_tasks": ["funding_pnl"],
+        },
+        "inventories": [
+            {
+                "node": "local",
+                "directory": str(data),
+                "canonical": True,
+                "audit_version": "selected-v1",
+                "files_by_day": {
+                    "2026-08-02": [{"path": str(output), "size_bytes": output.stat().st_size}]
+                },
+            }
+        ],
+    }
+    manifest = tmp_path / "owner.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "start_day": "2026-08-01",
+                "end_day": "2026-08-04",
+                "nodes": [{"id": "local", "status": "online"}, {"id": "lan", "status": "offline"}],
+                "datasets": [source],
+            }
+        )
+    )
+    state = tmp_path / "state"
+    quality.import_quality(state, manifest)
+    return state, manifest, output
+
+
+def request(node="local", **kwargs):
+    return {
+        "start_day": "2026-08-02",
+        "end_day": "2026-08-02",
+        "dataset_id": "provider-book",
+        "node": node,
+        **kwargs,
+    }
+
+
+def row(state, node="local"):
+    return quality.quality_days(state, **request(node))["items"][0]["sources"][0]
+
+
+def test_existing_processed_audit_size_association_is_not_a_new_sha_or_strict_pass(registered):
+    state, _, _ = registered
+    source = row(state)
+    assert source["audit_applicability"]["status"] == "recorded_content_audit_current_size_matched"
+    assert source["current_task_usability"]["feature_input"] == "passed"
+    assert source["current_task_usability"]["modeled_replay"] == "passed"
+    assert source["current_task_usability"]["strict_replay"] == "failed"
+    assert source["task_reasons"]["strict_replay"] == "Native U/u/pu sequence was not recorded"
+    assert source["replica"]["status"] == "present_unverified"
+    assert source["stage"] == "processed" and source["observed_at"]
+
+
+def test_selected_remote_replica_does_not_erase_confirmed_canonical_quality(registered):
+    state, _, _ = registered
+    local, remote = row(state), row(state, "lan")
+    assert remote["current_task_usability"] == local["current_task_usability"]
+    assert remote["observed_at"] == local["observed_at"]
+    assert remote["replica"]["status"] == "unknown"
+    assert remote["replica"]["last_checked_at"] is None
+    result = quality.refresh_quality(state, request("lan"))
+    assert result["refresh"]["reason"] == "remote_replica_not_observed"
+    assert row(state, "lan")["replica"]["last_checked_at"] is None
+    assert row(state)["current_task_usability"]["feature_input"] == "passed"
+
+
+def test_refresh_only_stats_registered_files_never_reads_contents_or_audit(registered, monkeypatch):
+    state, manifest, output = registered
+    audit = Path(json.loads(manifest.read_text())["datasets"][0]["audit"]["path"])
+    original = Path.open
+
+    def guarded(self, *args, **kwargs):
+        if self in {manifest, output, audit}:
+            pytest.fail("refresh read source/audit instead of frozen metadata registration")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded)
+    result = quality.refresh_quality(state, request())
+    assert result["refresh"]["status"] == "refreshed"
+    assert result["items"][0]["sources"][0]["current_task_usability"]["feature_input"] == "passed"
+    assert str(output.parent) not in json.dumps(result)
+    assert (state / quality.SOURCE_NAME).stat().st_mode & 0o077 == 0
+
+
+def test_changed_processed_file_retains_history_but_revokes_current_applicability(registered):
+    state, _, output = registered
+    output.write_bytes(b"new replacement with a different size")
+    quality.refresh_quality(state, request())
+    source = row(state)
+    assert source["check_status"] == source["task_usability"]["modeled_replay"] == "passed"
+    assert source["audit_applicability"]["status"] == "changed_since_observation"
+    assert source["current_task_usability"]["modeled_replay"] == "unknown"
+    assert source["task_reasons"]["modeled_replay"] == "local_files_changed_since_observation"
+    # A second button click cannot adopt the new file as the old audit's baseline.
+    quality.refresh_quality(state, request())
+    assert row(state)["current_task_usability"]["modeled_replay"] == "unknown"
+
+
+def test_same_size_replacement_is_detected_by_stat_not_rehashed(registered):
+    state, _, output = registered
+    replacement = output.with_suffix(".replacement")
+    replacement.write_bytes(b"x" * output.stat().st_size)
+    replacement.replace(output)
+    quality.refresh_quality(state, request())
+    assert row(state)["audit_applicability"]["status"] == "changed_since_observation"
+
+
+def test_missing_and_unmounted_are_distinct_and_do_not_reuse_old_pass(registered):
+    state, _, output = registered
+    output.unlink()
+    quality.refresh_quality(state, request())
+    assert row(state)["replica"]["status"] == "missing"
+    output.parent.rmdir()
+    quality.refresh_quality(state, request())
+    assert row(state)["replica"]["status"] == "unknown"
+    assert row(state)["replica"]["observation_reason"] == "local_inventory_root_unavailable"
+    assert row(state)["current_task_usability"]["modeled_replay"] == "unknown"
+
+
+@pytest.mark.parametrize("defect", ["size", "version", "no_binding"])
+def test_explicit_binding_mismatch_or_absence_stays_historical(registered, defect):
+    state, manifest, _ = registered
+    data = json.loads(manifest.read_text())
+    inventory = data["datasets"][0]["inventories"][0]
+    if defect == "size":
+        inventory["files_by_day"]["2026-08-02"][0]["size_bytes"] += 1
+    elif defect == "version":
+        inventory["audit_version"] = "other-version"
+    else:
+        inventory.pop("audit_version")
+    manifest.write_text(json.dumps(data))
+    quality.import_quality(state, manifest)
+    assert row(state)["check_status"] == "passed"
+    assert row(state)["current_task_usability"]["modeled_replay"] == "unknown"
+
+
+def test_not_applicable_scope_remains_na_without_an_audit_row(registered):
+    state, _, _ = registered
+    source = quality.quality_days(state, "2026-08-01", "2026-08-01")["items"][0]["sources"][0]
+    assert source["current_task_usability"]["funding_pnl"] == "not_applicable"
+    assert source["current_task_usability"]["feature_input"] == "unknown"
+    assert source["audit_applicability"]["status"] == "no_audit"
+
+
+def test_import_calendar_can_exceed_http_page_bound(registered):
+    state, manifest, _ = registered
+    data = json.loads(manifest.read_text())
+    data.update(start_day="2025-08-01", end_day="2026-09-05")
+    manifest.write_text(json.dumps(data))
+    quality.import_quality(state, manifest)
+    assert len(json.loads((state / quality.NAME).read_text())["records"]["provider-book"]) == 401
+    with pytest.raises(ValueError, match="366 days"):
+        quality.quality_days(state, "2025-08-01", "2026-09-05")
+
+
+def test_refresh_endpoint_rejects_paths_commands_and_unknown_ids(registered):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from narrowgate.studio import create_app
+
+    state, _, _ = registered
+    client = TestClient(create_app(state))
+    assert client.post("/api/data-quality/refresh", json=request()).status_code == 200
+    for extra in ("path", "command", "manifest", "argv"):
+        assert (
+            client.post(
+                "/api/data-quality/refresh", json={**request(), extra: "/private/path"}
+            ).status_code
+            == 400
+        )
+    assert (
+        client.post("/api/data-quality/refresh", json=request(dataset_id="unknown")).status_code
+        == 404
+    )
+    assert client.post("/api/data-quality/refresh", json=request("unknown")).status_code == 404
+    assert (
+        client.post("/api/data-quality/refresh", json=request(start_day="2025-01-01")).status_code
+        == 400
+    )
+
+
+def test_unregistered_refresh_is_explicit_without_mutating_old_catalog(tmp_path):
+    result = quality.refresh_quality(tmp_path, request(dataset_id=""))
+    assert result["refresh"]["status"] == "not_registered"
+    assert not (tmp_path / quality.NAME).exists()

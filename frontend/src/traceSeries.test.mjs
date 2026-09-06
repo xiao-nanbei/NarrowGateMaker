@@ -12,8 +12,17 @@ import {
   visibleInventoryFills,
   filterQualityDays,
   selectFillLabels,
+  qualityAudit,
+  qualityReason,
+  qualityReplica,
+  qualityTask,
 } from "./traceSeries.ts";
-import { getMarketCandles, getMarketFills, getQualityReport } from "./api.ts";
+import {
+  getMarketCandles,
+  getMarketFills,
+  getQualityReport,
+  refreshQualityInventory,
+} from "./api.ts";
 
 test("public synthetic fixture plots only its three recorded post-fill inventories", () => {
   const path = new URL(
@@ -323,9 +332,134 @@ const qualityFixture = (changes = {}) => ({
   symbol: "BTCUSDC",
   availability: "present",
   check_status: "passed",
+  audit_applicability: {
+    status: "verified_snapshot",
+    reason: "Existing recorded audit snapshot",
+  },
   replica: { status: "verified" },
   intervals: [],
   ...changes,
+});
+
+test("historical audit success never becomes current task success without its current mapping", () => {
+  const historical = qualityFixture({
+    audit_applicability: undefined,
+    task_usability: { candles: "passed", strict_replay: "passed" },
+  });
+  assert.equal(qualityTask(historical, "candles").state, "unknown");
+  assert.equal(qualityTask(historical, "strict_replay").state, "unknown");
+  assert.match(qualityAudit(historical).reason, /历史检查/);
+  assert.equal(
+    filterQualityDays([{ day: "2026-07-24", sources: [historical] }], {
+      ...noQualityFilters,
+      problemOnly: true,
+    }).length,
+    1,
+  );
+});
+
+test("quality presentation keeps feature usability independent of native queue and funding scope", () => {
+  const source = qualityFixture({
+    stage: "processed",
+    audit_applicability: {
+      status: "recorded_content_audit_current_size_matched",
+      reason: "recorded_content_audit_current_size_matched",
+    },
+    current_task_usability: {
+      candles: "passed",
+      feature_input: "passed",
+      modeled_replay: "unknown",
+      strict_replay: "unknown",
+      funding_pnl: "not_applicable",
+    },
+    task_reasons: {
+      feature_input: "recorded_content_audit_current_size_matched",
+      strict_replay: "task_not_mapped_in_recorded_audit",
+      funding_pnl: "source_not_applicable",
+    },
+  });
+  assert.equal(qualityTask(source, "feature_input").state, "passed");
+  assert.equal(qualityTask(source, "strict_replay").state, "unknown");
+  assert.equal(qualityTask(source, "funding_pnl").state, "not_applicable");
+  assert.match(qualityTask(source, "funding_pnl").reason, /不是下载失败/);
+  assert.match(qualityAudit(source).label, /仅大小匹配/);
+  assert.match(qualityAudit(source).reason, /没有重新校验内容/);
+});
+
+test("quality unknown reasons distinguish unobserved node, inaccessible mount and unchecked contents", () => {
+  const remote = qualityFixture({
+    replica: {
+      status: "unknown",
+      observation_reason: "remote_replica_not_observed",
+    },
+  });
+  assert.match(qualityReplica(remote).label, /未观察/);
+  assert.match(qualityReplica(remote).reason, /不会更新远端/);
+  assert.match(
+    qualityReason("local_inventory_root_unavailable"),
+    /不据此判定文件缺失/,
+  );
+  assert.match(qualityReason("local_presence_only"), /待内容核验/);
+  assert.match(qualityReason("no_recorded_audit"), /处理后检查/);
+  assert.match(
+    qualityAudit(
+      qualityFixture({
+        audit_applicability: {
+          status: "changed_since_observation",
+          reason: "local_files_changed_since_observation",
+        },
+      }),
+    ).label,
+    /待复核/,
+  );
+});
+
+test("quality refresh sends only registered selectors, never paths or a replay instruction", async (t) => {
+  const requests = [];
+  const query = new URLSearchParams({
+    start_day: "2026-07-24",
+    end_day: "2026-07-24",
+    dataset_id: "recorded-bars",
+    node: "local",
+    path: "/not-transmitted",
+    command: "not-transmitted",
+  });
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({
+      url,
+      method: options.method,
+      body: JSON.parse(options.body),
+    });
+    return new Response(
+      JSON.stringify({
+        start_day: "2026-07-24",
+        end_day: "2026-07-24",
+        node: "local",
+        items: [{ day: "2026-07-24", sources: [] }],
+        limitations: [],
+        refresh: {
+          status: "refreshed",
+          observed_at: "2026-09-07T00:00:00Z",
+          scope: "registered_local_metadata_only",
+          reason: "local_presence_only",
+        },
+      }),
+    );
+  });
+  const result = await refreshQualityInventory(query);
+  assert.equal(result.refresh.status, "refreshed");
+  assert.deepEqual(requests, [
+    {
+      url: "/api/data-quality/refresh",
+      method: "POST",
+      body: {
+        start_day: "2026-07-24",
+        end_day: "2026-07-24",
+        dataset_id: "recorded-bars",
+        node: "local",
+      },
+    },
+  ]);
 });
 
 test("problem days are recalculated after source filters, excluding hidden failures", () => {
@@ -355,6 +489,25 @@ test("problem days are recalculated after source filters, excluding hidden failu
   assert.equal(visible[0].problem, false);
   assert.deepEqual(visible[0].sources, [good]);
   assert.equal(days[0].sources.length, 2);
+});
+
+test("purpose filtering does not confuse unusable queue or unobserved replica with usable bars", () => {
+  const source = qualityFixture({
+    replica: { status: "unknown" },
+    current_task_usability: {
+      candles: "passed",
+      strict_replay: "failed",
+      funding_pnl: "not_applicable",
+    },
+  });
+  const days = [{ day: "2026-07-24", sources: [source] }];
+  const check = (task) =>
+    filterQualityDays(days, { ...noQualityFilters, problemOnly: true, task });
+  assert.equal(check("candles").length, 0);
+  assert.equal(check("strict_replay").length, 1);
+  assert.equal(check("feature_input").length, 1);
+  assert.equal(check("funding_pnl").length, 0);
+  assert.equal(check("").length, 1);
 });
 
 test("unfiltered calendar retains empty dates but active source filters do not leave blank days", () => {

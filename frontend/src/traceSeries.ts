@@ -1,4 +1,10 @@
-import type { MarketFill, QualityDay, Row } from "./api";
+import type {
+  MarketFill,
+  QualityDay,
+  QualitySource,
+  QualityTask,
+  Row,
+} from "./api";
 
 export type RecordedPoint = {
   timestamp: number;
@@ -194,6 +200,102 @@ export function visibleInventoryFills(
 }
 
 /** A problem-day filter applies to visible sources, not hidden source failures. */
+export function qualityReason(reason: string | undefined): string {
+  if (!reason) return "尚未登记具体检查原因。";
+  return (
+    {
+      no_recorded_audit: "尚无该来源／日期的处理后检查记录。",
+      historical_audit_not_bound_to_current_files:
+        "有历史检查，但尚未关联当前文件；不能沿用历史通过结论。",
+      local_files_changed_since_observation:
+        "当前文件的元数据与上次观察不同，需要重新关联或检查。",
+      recorded_content_audit_current_size_matched:
+        "已关联登记版本的原检查，当前仅文件大小匹配；本次没有重新校验内容。",
+      inventory_snapshot_only: "仅观察到文件清单，尚未执行该产物的内容检查。",
+      remote_replica_not_observed:
+        "未观察所选远端的该版本副本；本机刷新不会更新远端核验时间。",
+      local_inventory_root_unavailable:
+        "登记数据目录当前不可访问，可能未挂载；不据此判定文件缺失。",
+      local_file_missing:
+        "登记目录可访问，但未找到此日对应文件；先用现有补数／同步流程处理。",
+      local_presence_only:
+        "本机已观察到文件，待内容核验；存在不等于可用于所有任务。",
+      task_not_mapped_in_recorded_audit:
+        "已有检查没有给出此用途的结论，需使用相应的处理后检查。",
+      source_not_applicable: "此数据源不承担该用途，不是下载失败。",
+      quality_refresh_source_not_registered:
+        "当前仅有已导入的目录记录，尚未登记可供本机刷新的文件清单。",
+    }[reason] ?? reason
+  );
+}
+
+export function qualityAudit(source: QualitySource): {
+  state: string;
+  label: string;
+  reason: string;
+} {
+  const applicability = source.audit_applicability;
+  if (!applicability)
+    return {
+      state: "unchecked",
+      label: "尚无当前文件复核",
+      reason: "旧目录仅保留历史检查；尚无当前文件与该检查的关联记录。",
+    };
+  const labels: Record<string, [string, string]> = {
+    no_audit: ["unchecked", "处理后检查尚未执行"],
+    historical_unbound: ["unchecked", "历史检查未关联当前文件"],
+    changed_since_observation: ["stale", "文件已变化，待复核"],
+    verified_snapshot: ["verified", "已有核验快照已关联"],
+    inventory_snapshot_only: ["unchecked", "已有清单，内容待检查"],
+    recorded_content_audit_current_size_matched: [
+      "partial",
+      "已有检查已关联 · 仅大小匹配",
+    ],
+  };
+  const [state, label] = labels[applicability.status] ?? [
+    "unchecked",
+    "检查关联范围未识别",
+  ];
+  return { state, label, reason: qualityReason(applicability.reason) };
+}
+
+export function qualityTask(source: QualitySource, task: QualityTask) {
+  const state = source.current_task_usability?.[task] ?? "unknown";
+  return {
+    state,
+    label: {
+      passed: "已有适用检查",
+      failed: "此用途未通过",
+      unknown: "此用途待复核",
+      not_applicable: "不适用此用途",
+    }[state],
+    reason: source.task_reasons?.[task]
+      ? qualityReason(source.task_reasons[task])
+      : state === "not_applicable"
+        ? "此源未被登记为该用途，不代表文件有质量错误。"
+        : "尚无当前用途的原因记录；历史结果不能自动代替当前结论。",
+  };
+}
+
+export function qualityReplica(source: QualitySource) {
+  const state = source.replica.status;
+  return {
+    state,
+    label: {
+      verified: "该版本副本已有核验记录",
+      present_unverified: "节点上已有文件，待审核",
+      missing: "此节点明确缺少副本",
+      unknown: "此节点副本未观察",
+      stale: "副本观察已过期",
+    }[state],
+    reason: source.replica.observation_reason
+      ? qualityReason(source.replica.observation_reason)
+      : state === "unknown"
+        ? "尚无所选节点副本的观察记录；不等于文件缺失。"
+        : "结论仅适用于此节点、此版本和已记录的核验时间。",
+  };
+}
+
 export function filterQualityDays(
   days: QualityDay[],
   filters: {
@@ -201,6 +303,7 @@ export function filterQualityDays(
     market: string;
     symbol: string;
     datasetId: string;
+    task?: QualityTask | "";
     problemOnly: boolean;
     missingReplicaOnly: boolean;
   },
@@ -221,16 +324,28 @@ export function filterQualityDays(
       return [];
     const problem =
       !sources.length ||
-      sources.some(
-        (source) =>
+      sources.some((source) => {
+        if (filters.task) {
+          const state = qualityTask(source, filters.task).state;
+          return state !== "passed" && state !== "not_applicable";
+        }
+        return (
           source.availability !== "present" ||
           source.check_status !== "passed" ||
+          ![
+            "verified_snapshot",
+            "recorded_content_audit_current_size_matched",
+          ].includes(source.audit_applicability?.status ?? "") ||
+          Object.values(source.current_task_usability ?? {}).some(
+            (state) => state === "failed",
+          ) ||
           source.replica.status !== "verified" ||
           source.intervals.some(
             (interval) =>
               interval.status === "gap" || interval.status === "invalid",
-          ),
-      );
+          )
+        );
+      });
     return filters.problemOnly && !problem
       ? []
       : [{ ...day, sources, problem }];

@@ -300,16 +300,38 @@ export type QualityDataset = {
   data_type: string;
   version: string;
   label: string;
+  stage?: "raw" | "processed" | "registered";
 };
+export type QualityTask =
+  | "candles"
+  | "feature_input"
+  | "modeled_replay"
+  | "strict_replay"
+  | "funding_pnl";
+export type QualityTaskState =
+  | "passed"
+  | "failed"
+  | "unknown"
+  | "not_applicable";
 export type QualitySource = Omit<QualityDataset, "id"> & {
   dataset_id: string;
   availability: "present" | "missing" | "unknown";
   check_status: "passed" | "failed" | "unchecked" | "partial";
   check_scope: string;
-  task_usability: Record<
-    "candles" | "modeled_replay" | "strict_replay" | "funding_pnl",
-    "passed" | "failed" | "unknown" | "not_applicable"
-  >;
+  task_usability: Record<QualityTask, QualityTaskState>;
+  current_task_usability?: Record<QualityTask, QualityTaskState>;
+  task_reasons?: Record<QualityTask, string>;
+  observed_at?: string | null;
+  audit_applicability?: {
+    status:
+      | "no_audit"
+      | "historical_unbound"
+      | "changed_since_observation"
+      | "verified_snapshot"
+      | "inventory_snapshot_only"
+      | "recorded_content_audit_current_size_matched";
+    reason: string;
+  };
   records: number | null;
   size_bytes: number | null;
   checked_at: string | null;
@@ -327,6 +349,7 @@ export type QualitySource = Omit<QualityDataset, "id"> & {
     status: "verified" | "present_unverified" | "missing" | "unknown" | "stale";
     last_checked_at: string | null;
     node_status: string;
+    observation_reason?: string;
   };
   evidence_label: string;
 };
@@ -347,6 +370,14 @@ export type QualityReport = {
   node: string;
   items: QualityDay[];
   limitations: string[];
+};
+export type QualityRefresh = QualityReport & {
+  refresh: {
+    status: "refreshed" | "not_registered";
+    observed_at: string | null;
+    scope: "registered_local_metadata_only";
+    reason: string;
+  };
 };
 export type QualityExport = {
   items: ({
@@ -373,6 +404,13 @@ export async function getQualityReport(
   signal?: AbortSignal,
 ): Promise<QualityReport> {
   const value = await api<QualityReport>(`/data-quality?${query}`, { signal });
+  return validateQualityReport(value, query);
+}
+
+function validateQualityReport<T extends QualityReport>(
+  value: T,
+  query: URLSearchParams,
+): T {
   const start = Date.parse(`${query.get("start_day")}T00:00:00Z`);
   const end = Date.parse(`${query.get("end_day")}T00:00:00Z`);
   if (
@@ -399,6 +437,13 @@ export async function getQualityReport(
                   state,
                 ),
             ) ||
+            (source.current_task_usability !== undefined &&
+              Object.values(source.current_task_usability).some(
+                (state) =>
+                  !["passed", "failed", "unknown", "not_applicable"].includes(
+                    state,
+                  ),
+              )) ||
             !["present", "missing", "unknown"].includes(source.availability) ||
             !["passed", "failed", "unchecked", "partial"].includes(
               source.check_status,
@@ -409,6 +454,31 @@ export async function getQualityReport(
     throw new Error("质量记录格式不受支持；不能将缺失字段视为通过。");
   }
   return value;
+}
+
+export async function refreshQualityInventory(
+  query: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<QualityRefresh> {
+  const value = await api<QualityRefresh>("/data-quality/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      start_day: query.get("start_day"),
+      end_day: query.get("end_day"),
+      dataset_id: query.get("dataset_id") || "",
+      node: query.get("node"),
+    }),
+    signal,
+  });
+  if (
+    !value.refresh ||
+    !["refreshed", "not_registered"].includes(value.refresh.status) ||
+    value.refresh.scope !== "registered_local_metadata_only" ||
+    typeof value.refresh.reason !== "string"
+  )
+    throw new Error("登记目录刷新结果格式不受支持。");
+  return validateQualityReport(value, query);
 }
 
 export type MarketSource = {
