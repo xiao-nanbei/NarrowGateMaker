@@ -18,7 +18,7 @@ NarrowGate is a maker-strategy research framework for studying passive quote sel
 2. [Bring one day of market data](docs/opensource/one_day_data_pipeline.md). Trades and bars support a limited diagnostic; missing order-book data is reported explicitly rather than presented as an exact queue replay.
 3. [Explore the research tools](research/README.md). A closed strategy experiment does not disable the reusable replay or analysis code, and working software is not a claim of trading profitability.
 
-Prefer a browser? The development [Replay Studio](docs/plans/remote_replay_studio.md) runs the same synthetic demo through a durable control service and independent workers. It includes order, inventory and event views, but does not yet submit real-market B0 or E/C research. This interface is not included in the older `v0.1.1` tag.
+Prefer a browser? The development [Replay Studio](docs/plans/remote_replay_studio.md) runs the same synthetic demo through a durable control service and independent workers. It includes order, inventory and event views, plus a separate read-only importer for completed owner-private B0 results. It does not submit real-market B0 or E/C research. This interface is not included in the older `v0.1.1` tag.
 
 The source code is publicly available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Because that license limits licensed use to permitted noncommercial purposes, NarrowGate is **source-available**, not open source in the unrestricted-use sense. Commercial use requires separate written permission from the licensor.
 

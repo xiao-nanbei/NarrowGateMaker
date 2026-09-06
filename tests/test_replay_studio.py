@@ -1,5 +1,6 @@
 """Control/worker boundaries, using the existing synthetic replay artifacts only."""
 
+import csv
 import json
 import subprocess
 import sys
@@ -191,6 +192,222 @@ def test_api_optional_bearer_authentication(store):
         client.get("/api/jobs", headers={"Authorization": "Bearer test-only-token"}).status_code
         == 200
     )
+
+
+@pytest.fixture
+def b0_source(tmp_path):
+    """Small input-schema fixture, not real research data or a replica execution."""
+    root = tmp_path / "private-source"
+    output = root / "local_fixture"
+    output.mkdir(parents=True)
+    days = ["2025-01-01", "2025-01-02"]
+    segment_id = "2025-01-01_2025-01-02"
+    amounts = {
+        "trading_pnl_after_fees_usdc": -2.0,
+        "funding_cashflow_usdc": 0.25,
+        "net_pnl_usdc": -1.75,
+        "fill_fee_cost_usdc": 0.1,
+        "fills": 4,
+        "campaigns": 2,
+        "buy_fills": 2,
+        "sell_fills": 2,
+        "closed_campaigns": 1,
+        "open_campaigns": 1,
+    }
+    verification = {
+        "all_segments_complete": True,
+        "full_fill_trace_reconciled": True,
+        "funding_cashflows_reconciled": True,
+        "campaign_values_reconciled_with_csv_rounding": True,
+        "queue_lookup_count": 4,
+        "queue_exact_count": 2,
+        "queue_known_zero_count": 1,
+        "queue_missing_count": 1,
+        "native_events_consumed": 12,
+        "native_events_rejected": 2,
+        "native_gap_invalid_sequence_time_reversal_counts": 0,
+        "host_comparison_days": days,
+    }
+    source = {
+        "visibility": "local_only_do_not_publish",
+        "arm": "baseline",
+        "source_commit": "fixture",
+        "unique_utc_days": 2,
+        "continuous_segments": 1,
+        "dates": days,
+        "strategy": {"config_sha256": "fixture"},
+        "verification": verification,
+        "totals": amounts,
+        "segments": [
+            {**amounts, "segment": segment_id, "days": 2, "selected_output": "local_fixture/result"}
+        ],
+        "accounting_basis": str(root / "must-not-appear-in-api"),
+        "limitations": [str(root / "must-not-appear-in-api")],
+    }
+    summary = root / "baseline_summary.json"
+    summary.write_text(json.dumps(source))
+    (root / "input_plan.json").write_text(
+        json.dumps(
+            {
+                "days": days,
+                "source_commit": "fixture",
+                "phase": "baseline_and_mechanics_development",
+                "economic_release": False,
+                "live_actions": False,
+                "candidate_training_started": False,
+                "segments": [{"id": segment_id, "days": days, "preferred_host": "azure"}],
+            }
+        )
+    )
+    (output / "result.json").write_text(
+        json.dumps(
+            {
+                "days": days,
+                "arms": ["baseline"],
+                "config_sha256": "fixture",
+                "accounting_window": "continuous_segment",
+                "native_exchange_book_mode": "strict",
+                "native_exchange_book_warmup_hours": 24,
+                "native_exchange_book_root": str(root),
+                "native_exchange_book_identities": {days[0]: {"strict_complete": True}},
+            }
+        )
+    )
+    daily = {
+        "arm": "baseline",
+        "day": days[0],
+        "window_end_day": days[-1],
+        "window_day_count": 2,
+        "accounting_window": "continuous_segment",
+        "economic_pnl_complete": True,
+        "exchange_book_queue_mode": "strict",
+        "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+        "queue_l2_cancel_ahead_enabled": False,
+        "exchange_book_events_consumed": 12,
+        "exchange_book_events_accepted": 10,
+        "exchange_book_events_rejected": 2,
+        "exchange_book_queue_lookup_count": 4,
+        "exchange_book_queue_exact_count": 2,
+        "exchange_book_queue_known_zero_count": 1,
+        "exchange_book_queue_missing_count": 1,
+        "exchange_book_source_gap_events": 0,
+        "exchange_book_invalid_sequence_messages": 0,
+        "exchange_book_sequence_gaps": 0,
+        "exchange_book_message_time_reversals": 0,
+        "replay_pnl": -2,
+        "funding_cashflow_usdc": 0.25,
+        "replay_net_pnl": -1.75,
+        "fills_total": 4,
+        "campaigns": 2,
+        "fills_bid_buy": 2,
+        "fills_ask_sell": 2,
+        "closed_campaigns": 1,
+        "open_campaigns": 1,
+    }
+    with (output / "result.daily.csv").open("w") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(daily))
+        writer.writeheader()
+        writer.writerow(daily)
+    for suffix in ("campaign_labels", "fill_trace", "funding"):
+        (output / f"result.{suffix}.csv").write_text("fixture\n1\n")
+    # Unselected interrupted/duplicate outputs must never be discovered or imported.
+    (root / "unselected.partial").write_text("incomplete")
+    return summary
+
+
+def test_b0_import_is_private_idempotent_and_never_creates_or_executes_jobs(
+    store, b0_source, monkeypatch
+):
+    monkeypatch.setattr(studio.subprocess, "Popen", lambda *a, **k: pytest.fail("replay started"))
+    report = store.import_b0(b0_source)
+    assert studio.Store(store.root).import_b0(b0_source) == report
+    assert store.jobs() == []
+    assert report["summary"]["net_pnl"] == -1.75  # fees already deducted; funding added once
+    assert report["summary"]["fees_already_included"] is True
+    assert len(report["segments"]) == 1
+    assert report["segments"][0]["day_count"] == 2  # do not manufacture two daily PnL rows
+    assert report["segments"][0]["source"] == "local"  # actual selected source, not preferred host
+    assert report["verification"]["queue_missing_count"] == 1
+    assert str(b0_source.parent) not in json.dumps(report)
+    client = TestClient(studio.create_app(store.root))
+    assert client.get("/api/results").json()["items"][0]["id"] == report["id"]
+    assert client.get(f"/api/results/{report['id']}").json() == report
+    assert client.post("/api/results", json={"summary": str(b0_source)}).status_code == 405
+    assert client.get("/api/results/missing").status_code == 404
+    assert client.get("/api/runners").json()["items"][0]["id"] == "replay-demo"
+    locked = TestClient(studio.create_app(store.root, "test-only-token"))
+    assert locked.get("/api/results").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "defect", ["missing", "partial", "traversal", "overlap", "pnl", "nan", "incomplete"]
+)
+def test_b0_import_fails_closed_without_mutating_results(store, b0_source, defect):
+    source = json.loads(b0_source.read_text())
+    if defect == "missing":
+        (b0_source.parent / "local_fixture/result.fill_trace.csv").unlink()
+    elif defect in {"partial", "traversal"}:
+        source["segments"][0]["selected_output"] = (
+            "local_fixture/result.partial" if defect == "partial" else "local_fixture/../../result"
+        )
+    elif defect == "overlap":
+        source["segments"].append(source["segments"][0])
+        source["continuous_segments"] = 2
+    elif defect in {"pnl", "nan"}:
+        source["totals"]["net_pnl_usdc"] = 123 if defect == "pnl" else float("nan")
+    elif defect == "incomplete":
+        source["verification"]["all_segments_complete"] = False
+    b0_source.write_text(json.dumps(source))
+    with pytest.raises(ValueError):
+        store.import_b0(b0_source)
+    assert store.results() == []
+    assert store.jobs() == []
+
+
+def test_b0_import_does_not_hash_raw_files_or_gate_research_progress(store, b0_source, monkeypatch):
+    from pathlib import Path
+
+    plan_path = b0_source.parent / "input_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan.update(
+        phase="subsequent_training",
+        economic_release=True,
+        live_actions=True,
+        candidate_training_started=True,
+    )
+    plan_path.write_text(json.dumps(plan))
+    read_bytes, open_file = Path.read_bytes, Path.open
+    raw_suffixes = (".fill_trace.csv", ".campaign_labels.csv", ".funding.csv")
+
+    def no_raw_read(path, *args, **kwargs):
+        assert not str(path).endswith(raw_suffixes), "raw artifacts must not be read"
+        return read_bytes(path, *args, **kwargs)
+
+    def no_raw_open(path, *args, **kwargs):
+        assert not str(path).endswith(raw_suffixes), "raw artifacts must not be opened"
+        return open_file(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", no_raw_read)
+    monkeypatch.setattr(Path, "open", no_raw_open)
+    path = b0_source.parent / "local_fixture/result.daily.csv"
+    path.write_text(path.read_text().replace(",strict,", ",disabled,"))
+    report = store.import_b0(b0_source)
+    assert report["segments"][0]["queue_mode"] == "non_strict"
+    assert store.jobs() == []
+
+
+def test_b0_reimport_uses_summary_identity_and_requires_private_storage(store, b0_source):
+    report = store.import_b0(b0_source)
+    (b0_source.parent / "local_fixture/result.fill_trace.csv").write_text("fixture\n2\n")
+    assert store.import_b0(b0_source) == report  # not a second raw-artifact qualification
+    path = b0_source.parent / "local_fixture/result.daily.csv"
+    path.write_text(path.read_text().replace(",strict,", ",disabled,"))
+    with pytest.raises(studio.Conflict, match="display fields changed"):
+        store.import_b0(b0_source)
+    assert store.result(report["id"]) == report
+    store.root.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-only"):
+        store.import_b0(b0_source)
 
 
 def test_events_have_durable_order_and_do_not_leak_worker_session(store):

@@ -1,12 +1,13 @@
 # Replay Studio 前端
 
+Last materially modified: 2026-09-06
 Last materially synchronized: 2026-09-06
 
 [English（权威版本）](README.md)
 
-用于 Python 安装包内置 Studio 界面的 React + TypeScript 工作目录。当前只接入
-`replay-demo` 执行器和内置 `synthetic-demo` 数据集。界面不能提交真实 F01、
-current B0 或 E/C 研究，不能执行任意 shell，也不会创建云资源。
+用于 Python 安装包内置 Studio 界面的 React + TypeScript 工作目录。当前唯一可执行的 runner 是 `replay-demo`，使用内置 `synthetic-demo` 数据集。独立默认页展示通过 [owner 本地 CLI](../docs/plans/remote_replay_studio.zh-CN.md#只导入已完成-b0不重跑) 导入的已有私有 B0 摘要。界面不能提交真实 F01、current B0 或 E/C 研究，不能执行任意 shell，也不会创建云资源。
+
+真实结果使用只读 `/api/results` 接口，与合成任务、报告及比较保持分离。浏览器展示已保存金额和连续段覆盖，不制造每日 PnL 或 Sharpe；交易 PnL 已扣的手续费不再次扣除，资金费只加一次。Local/Azure 来源及既有跨主机核验描述历史出处，不代表当前云连接。队列缺失覆盖和模型证据限制仍明确显示。前端包不包含私有证据。
 
 ## 开发与构建
 

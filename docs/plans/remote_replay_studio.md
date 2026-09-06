@@ -9,9 +9,9 @@ Last materially synchronized: 2026-09-06
 
 Replay Studio now provides a browser workbench, a durable control service and an independent HTTP worker. The first adapter executes the existing [public synthetic replay](../../examples/replay_demo/README.md); it does not implement another matching engine. A submitted experiment survives a browser or SSH disconnect. Control state and published artifacts survive a control-process restart when its state directory is retained.
 
-This is a working first delivery, not the completed research platform. Real-market F01/F10 execution, the current private B0 and learned E/C candidates are not exposed by the service yet. The interface explicitly disables those choices. Creating two demo arms runs the same fixture twice with separate output directories; their names do not create different economic policies.
+This is a working first delivery, not the completed research platform. Completed owner-private B0 results can now be imported for read-only inspection, separately from synthetic jobs. Real-market F01/F10 execution and learned E/C candidates are still disabled. Creating two demo arms runs the same fixture twice with separate output directories; their names do not create different economic policies.
 
-The service never starts a maker, reads live credentials, imports a current-live pointer, creates cloud resources or promotes a strategy. It accepts only the built-in synthetic dataset. Do not upload private market, account or research artifacts through this demo adapter.
+The service never starts a maker, reads live credentials, imports a current-live pointer, creates cloud resources or promotes a strategy. Job submission accepts only the built-in synthetic dataset. Do not upload private market, account or research artifacts through this demo adapter. B0 result import is an owner-local CLI operation, not an HTTP upload or arbitrary-path endpoint.
 
 ## Run the closed loop
 
@@ -34,6 +34,20 @@ python -m narrowgate.studio worker \
 Open `http://127.0.0.1:8080`, create a demo experiment, and inspect its orders, event trace, campaign, ledger and original logs. A second independent worker uses a different worker ID and work directory. Each worker owns at most one unfinished job. Two workers can execute two independent arms concurrently; do not interpret this as permission to split continuous inventory paths into fresh-start UTC days.
 
 Frontend development and reproducible builds are described in [frontend/README.md](../../frontend/README.md). The public [one-day data tutorial](../opensource/one_day_data_pipeline.md) remains the route for real-data diagnostics outside Studio.
+
+## Import completed B0 results without replay
+
+The owner supplies an existing private `baseline_summary.json` beside its `input_plan.json` and selected final segment outputs. These are private evidence store inputs, not distributed with the public repository. Use the same owner-only state directory (mode `0700`) as the control service:
+
+```bash
+.venv/bin/python -m narrowgate.studio import-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json"
+```
+
+The importer follows only explicitly selected segment stems and reads the small summary, input plan, segment metadata and aggregate CSV. It checks coverage, completed baseline/config metadata and amount consistency. Raw fill, campaign and funding files are checked for existence only, not reread or rehashed. Missing, partial, overlapping and out-of-root sources are rejected. An allowlisted compact report is stored in the existing private SQLite database, without raw artifacts or source paths; one summary-derived ID makes repeat imports idempotent. Changes to subsequent research phase, training or execution-permission descriptions do not block viewing an existing B0. Import creates no job and starts no replay, worker, Azure synchronization or cloud resource.
+
+The separate “真实 B0” view uses read-only `/api/results` endpoints. It shows covered UTC days, continuous segments, accounting amounts, selected local/Azure execution origins and the source summary's existing cross-host verification statement. Origin is provenance, not current cloud liveness. Import consistency checks do not repeat the original fill/funding or cross-host qualification. `daily.csv` rows remain segment aggregates; the UI does not invent daily returns, Sharpe or an account equity curve. Trading PnL already includes fees and terminal MTM; funding is added exactly once. Missing native queue coverage and modeled-runtime limitations remain visible. Synthetic demo jobs and their workers stay separate.
 
 ## One remote host first, then more workers
 
@@ -124,7 +138,7 @@ Real-market adapters must preserve these boundaries before being enabled:
 | --- | --- |
 | Public onboarding | Product-first no-account demo; worked order example; data-state table; research status separated from tooling availability. |
 | Remote execution foundation | Implemented for synthetic demo: durable queue, independent workers, cancel/lost states, output publication and browser result inspection. |
-| Current B0 integration | Not yet enabled. First adapt completed canonical F01/F10 results, exact data/runtime/latency identity and segment accounting without changing the running frozen baseline. |
+| Current B0 integration | Completed private B0 summaries are importable for read-only viewing with segment accounting and import consistency checks. Real-market job execution remains disabled. |
 | E/C research | The separate research branch collects complete E/C opportunities and assembles single-intervention paired labels. This does not yet constitute a trained or validated selection policy. |
 | Real dataset registry | Required before market-run submission: explicit Development/Validation/holdout roles, immutable logical dataset mapping, source coverage and no silent backend/feed substitution. |
 | Bounded real execution | Add an allowlisted canonical runner adapter, CPU/RSS/disk budgets and artifact streaming. Never accept arbitrary shell commands from the browser. |

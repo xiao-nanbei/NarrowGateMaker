@@ -11,6 +11,8 @@ import {
   api,
   display,
   field,
+  getBaselineReport,
+  getBaselineResults,
   getReport,
   isCompleted,
   record,
@@ -18,7 +20,16 @@ import {
   setSessionToken,
   stamp,
 } from "./api";
-import type { Job, Logs, Report, Row, Runner, Worker } from "./api";
+import type {
+  BaselineReport,
+  BaselineResult,
+  Job,
+  Logs,
+  Report,
+  Row,
+  Runner,
+  Worker,
+} from "./api";
 import "./style.css";
 
 const STATUS: Record<string, string> = {
@@ -96,6 +107,223 @@ function Metrics({ summary }: { summary: Row }) {
   );
 }
 
+function BaselineView({
+  result,
+  report,
+  loading,
+  error,
+}: {
+  result?: BaselineResult;
+  report: BaselineReport | null;
+  loading: boolean;
+  error: string;
+}) {
+  const amount = (value: number) =>
+    value.toLocaleString("en-US", {
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 8,
+    });
+  if (error)
+    return (
+      <Notice error>
+        真实结果读取失败：{error}。请刷新重试；不会用合成结果替代。
+      </Notice>
+    );
+  if (!report)
+    return (
+      <section className="panel">
+        <Empty
+          title={loading ? "正在读取真实 B0 结果" : "尚无已导入的真实 B0 结果"}
+        >
+          {loading
+            ? "读取服务端已保存的只读摘要；不启动回放，也不重新计算损益。"
+            : "此处仅展示通过本地导入流程登记的结果。页面不提供导入、研究执行或云资源操作。"}
+        </Empty>
+      </section>
+    );
+  const { summary, verification } = report;
+  return (
+    <section className="panel baseline-panel">
+      <div className="result-header">
+        <div>
+          <span className="eyebrow">REAL MARKET BASELINE / READ ONLY</span>
+          <h2>{report.name}</h2>
+          <span className="muted">
+            历史回放结果 · 导入时间 {stamp(result?.imported_at, true)} UTC
+          </span>
+        </div>
+        <span className="tag real-tag">真实行情 B0 · 只读</span>
+      </div>
+      <div className="result-body">
+        <Notice>
+          交易 PnL 已包含手续费；净 PnL = 交易 PnL + 资金费
+          PnL，资金费只计入一次。
+          下方手续费成本仅作披露，不再次扣除。全部金额单位为
+          USDC，直接读取已保存摘要。
+        </Notice>
+        <div className="metrics baseline-metrics">
+          {[
+            ["交易 PnL", summary.trading_pnl, "已计手续费 · 未加资金费"],
+            ["资金费 PnL", summary.funding_pnl, "仅在净 PnL 中相加一次"],
+            ["净 PnL", summary.net_pnl, "已计手续费与一次资金费"],
+            ["已计手续费成本", summary.fee_cost, "披露项 · 不再次扣除"],
+          ].map(([label, value, note]) => (
+            <div className="metric" key={label}>
+              <span>{label}</span>
+              <strong>{amount(value as number)}</strong>
+              <small>USDC · {note}</small>
+            </div>
+          ))}
+        </div>
+        <div className="summary-grid baseline-facts">
+          <section>
+            <h3>覆盖与模拟成交</h3>
+            <dl>
+              {[
+                [
+                  "覆盖 / 连续分段",
+                  `${summary.coverage_days} 日 / ${summary.segment_count} 段`,
+                ],
+                ["模拟 fills（成交事件）", summary.filled_orders],
+                [
+                  "BUY / SELL fills",
+                  `${summary.buy_fills} / ${summary.sell_fills}`,
+                ],
+                ["Campaign 总数", summary.campaign_count],
+                [
+                  "已关闭 / 未关闭 Campaign",
+                  `${summary.closed_campaigns} / ${summary.open_campaigns}`,
+                ],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+          <section>
+            <h3>既有本地 / Azure 核验</h3>
+            <p className="baseline-verification">
+              <span
+                className={`status ${verification.passed ? "status-completed" : "status-failed"}`}
+              >
+                <i />
+                {verification.passed ? "源摘要声明通过" : "源摘要未通过"}
+              </span>
+              {verification.description}
+            </p>
+            <div className="coverage-dates" aria-label="既有核验重叠日期 / UTC">
+              {verification.overlap_days.map((day) => (
+                <span className="small-tag mono" key={day}>
+                  {day}
+                </span>
+              ))}
+            </div>
+            <p className="muted">
+              仅显示来源已记录的核验；本次导入不重新跨主机计算，不证明当前 Azure
+              节点在线。
+            </p>
+          </section>
+        </div>
+        <div className="baseline-section-heading">
+          <h3>连续分段结果与日期覆盖</h3>
+          <span className="muted">
+            UTC 日期 · 每行是一段连续回放，不是独立逐日回放
+          </span>
+        </div>
+        <div
+          className="table-scroll baseline-segments"
+          tabIndex={0}
+          role="region"
+          aria-label="连续分段结果表，可横向滚动"
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>段</th>
+                <th>日期覆盖 / UTC</th>
+                <th>天数</th>
+                <th>结果来源</th>
+                <th>
+                  交易 PnL / USDC
+                  <br />
+                  已计手续费
+                </th>
+                <th>资金费 PnL / USDC</th>
+                <th>
+                  净 PnL / USDC
+                  <br />
+                  资金费已加一次
+                </th>
+                <th>模拟 fills</th>
+                <th>Campaign</th>
+                <th>源结果队列模式</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.segments.map((segment) => (
+                <tr key={segment.index}>
+                  <td className="mono">{segment.index}</td>
+                  <td className="mono">
+                    {segment.start_day} → {segment.end_day}
+                  </td>
+                  <td>{segment.day_count}</td>
+                  <td>{segment.source === "azure" ? "Azure" : "本地"}</td>
+                  <td className="mono">{amount(segment.trading_pnl)}</td>
+                  <td className="mono">{amount(segment.funding_pnl)}</td>
+                  <td className="mono">{amount(segment.net_pnl)}</td>
+                  <td>{segment.filled_orders}</td>
+                  <td>{segment.campaign_count}</td>
+                  <td>
+                    <span className="status status-completed">
+                      <i />
+                      {segment.queue_mode === "strict" ? "strict" : "非 strict"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="baseline-table-note">
+          不将连续段收益拆分成逐日 PnL，不计算逐日 Sharpe；分段来源不是当前
+          worker 或云任务状态。源结果的 strict 模式不等于 exact
+          queue；本次仅展示已有记录。
+        </p>
+        <details className="baseline-audit">
+          <summary>查看已保存的 Scheduler / queue 审计计数</summary>
+          <dl>
+            {[
+              ["Queue lookup", verification.queue_lookup_count],
+              ["Exact", verification.queue_exact_count],
+              ["Known zero", verification.queue_known_zero_count],
+              ["Missing", verification.queue_missing_count],
+              ["Native events consumed", verification.native_events_consumed],
+              ["Native events rejected", verification.native_events_rejected],
+              [
+                "Gap / invalid sequence / time reversal",
+                verification.native_gap_invalid_sequence_time_reversal_counts,
+              ],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+        <h3 className="baseline-limitations-heading">证据边界</h3>
+        <ul className="limitations">
+          {report.limitations.map((item, index) => (
+            <li key={index}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function CreateExperiment({
   runner,
   onCreated,
@@ -156,7 +384,7 @@ function CreateExperiment({
         <header>
           <div>
             <span className="eyebrow">NEW EXPERIMENT</span>
-            <h2 id="create-title">新建回放实验</h2>
+            <h2 id="create-title">新建合成回放实验</h2>
           </div>
           <button
             className="icon-button"
@@ -205,12 +433,12 @@ function CreateExperiment({
             fixture，不代表真实基线、候选策略或经济增益。
           </Notice>
           <div className="disabled-adapters">
-            <span>尚未接入</span>
+            <span>执行尚未接入</span>
             <button type="button" disabled>
               真实 F01
             </button>
             <button type="button" disabled>
-              current B0
+              真实 B0 重跑
             </button>
             <button type="button" disabled>
               E / C 标签研究
@@ -876,6 +1104,14 @@ function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
+  const [results, setResults] = useState<BaselineResult[]>([]);
+  const [selectedResultId, setSelectedResultId] = useState("");
+  const [baselineReport, setBaselineReport] = useState<BaselineReport | null>(
+    null,
+  );
+  const [resultsError, setResultsError] = useState("");
+  const [baselineError, setBaselineError] = useState("");
+  const [loadingBaseline, setLoadingBaseline] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [logs, setLogs] = useState<Logs | null>(null);
@@ -884,7 +1120,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [loadingReport, setLoadingReport] = useState(false);
   const [create, setCreate] = useState(false);
-  const [section, setSection] = useState("runs");
+  const [section, setSection] = useState("results");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [connected, setConnected] = useState(false);
@@ -894,6 +1130,9 @@ function App() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const refreshBusy = useRef(false);
   const selected = jobs.find((job) => job.id === selectedId) ?? null;
+  const selectedResult = results.find(
+    (result) => result.id === selectedResultId,
+  );
   const refresh = useCallback(async () => {
     if (refreshBusy.current) return;
     refreshBusy.current = true;
@@ -902,6 +1141,20 @@ function App() {
         api<{ items: Job[] }>("/jobs"),
         api<{ items: Worker[] }>("/nodes"),
         api<{ items: Runner[] }>("/runners"),
+        getBaselineResults()
+          .then((items) => {
+            setResults(items);
+            setResultsError("");
+            setSelectedResultId((current) =>
+              items.some((item) => item.id === current)
+                ? current
+                : (items[0]?.id ?? ""),
+            );
+          })
+          .catch((e) => {
+            setResults([]);
+            setResultsError(errorText(e));
+          }),
       ]);
       setJobs(j.items);
       setWorkers(n.items);
@@ -932,6 +1185,38 @@ function App() {
       events.close();
     };
   }, [refresh, authVersion, authenticated]);
+  useEffect(() => {
+    if (!selectedResult) {
+      setBaselineReport(null);
+      setBaselineError("");
+      setLoadingBaseline(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLoadingBaseline(true);
+    getBaselineReport(selectedResult.id, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          setBaselineReport(value);
+          setBaselineError("");
+        }
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) {
+          setBaselineReport(null);
+          setBaselineError(errorText(e));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingBaseline(false);
+      });
+    return () => controller.abort();
+  }, [
+    selectedResult?.id,
+    selectedResult?.imported_at,
+    authVersion,
+    lastRefresh,
+  ]);
   useEffect(() => {
     if (!selectedId && jobs.length) setSelectedId(jobs[0].id);
   }, [jobs, selectedId]);
@@ -1000,8 +1285,9 @@ function App() {
         <div className="workspace-label">RESEARCH WORKSPACE</div>
         <nav>
           {[
-            ["runs", "▤", "回放任务"],
-            ["compare", "⇄", "结果比较"],
+            ["results", "▥", "真实 B0 结果"],
+            ["runs", "▤", "合成回放任务"],
+            ["compare", "⇄", "合成结果比较"],
             ["nodes", "▦", "计算节点"],
           ].map(([key, icon, label]) => (
             <button
@@ -1012,11 +1298,13 @@ function App() {
               <span>{icon}</span>
               {label}
               <small>
-                {key === "runs"
-                  ? jobs.length
-                  : key === "nodes"
-                    ? workers.length
-                    : ""}
+                {key === "results"
+                  ? results.length
+                  : key === "runs"
+                    ? jobs.length
+                    : key === "nodes"
+                      ? workers.length
+                      : ""}
               </small>
             </button>
           ))}
@@ -1025,7 +1313,8 @@ function App() {
           <span className="sidebar-note-dot" />
           <strong>离线研究，边界清晰</strong>
           <p>
-            任务与结果集中查看。当前仅开放合成 replay-demo；不连接交易下单接口。
+            真实 B0 摘要只读展示；仅合成 replay-demo
+            可执行。不连接交易下单接口。
           </p>
         </div>
         <footer>
@@ -1037,11 +1326,13 @@ function App() {
         <header className="topbar">
           <div className="breadcrumbs">
             工作空间 <span>/</span>{" "}
-            {section === "runs"
-              ? "回放任务"
-              : section === "compare"
-                ? "结果比较"
-                : "计算节点"}
+            {section === "results"
+              ? "真实 B0 结果 / 只读"
+              : section === "runs"
+                ? "合成回放任务"
+                : section === "compare"
+                  ? "合成结果比较"
+                  : "计算节点"}
           </div>
           <div className="connection">
             <i className={connected ? "live" : ""} />
@@ -1068,25 +1359,43 @@ function App() {
                 REMOTE REPLAY / RESEARCH WORKBENCH
               </span>
               <h1>
-                {section === "runs"
-                  ? "让每一次回放，都可追溯。"
-                  : section === "compare"
-                    ? "先看同一口径，再做比较。"
-                    : "算力在哪里，任务就在哪里。"}
+                {section === "results"
+                  ? "真实基线，按原口径查看。"
+                  : section === "runs"
+                    ? "让每一次回放，都可追溯。"
+                    : section === "compare"
+                      ? "先看同一口径，再做比较。"
+                      : "算力在哪里，任务就在哪里。"}
               </h1>
               <p>
-                管理执行、检查事件路径，回到原始报告。没有预置收益，也没有隐含实盘授权。
+                {section === "results"
+                  ? "已导入的历史 B0 结果，与合成任务隔离展示；只读查看不授予研究或实盘执行权限。"
+                  : "管理合成执行、检查事件路径，回到原始报告。没有预置收益，也没有隐含实盘授权。"}
               </p>
             </div>
-            <button className="button primary" onClick={() => setCreate(true)}>
-              ＋ 新建实验
-            </button>
+            {section === "results" ? (
+              <span className="tag real-tag">READ ONLY · 无执行入口</span>
+            ) : (
+              <button
+                className="button primary"
+                onClick={() => setCreate(true)}
+              >
+                ＋ 新建合成实验
+              </button>
+            )}
           </div>
           <div className="boundary-strip">
-            <span className="tag">演示能力已接入</span>
-            <span>replay-demo / synthetic-demo</span>
+            <span className={`tag ${section === "results" ? "real-tag" : ""}`}>
+              {section === "results" ? "真实结果 · 只读导入" : "合成执行能力"}
+            </span>
+            <span>
+              {section === "results"
+                ? "真实 B0 ≠ 合成 demo 的 B0 标签"
+                : "replay-demo / synthetic-demo"}
+            </span>
             <span className="muted">
-              真实 F01、current B0 与 E/C：适配器未接入，提交关闭
+              真实 F01、B0 重跑与 E/C 执行尚未接入；页面不触发 Blob
+              同步或云资源操作
             </span>
           </div>
           <div className="auth-bar">
@@ -1110,6 +1419,46 @@ function App() {
                 setAuthOpen(false);
               }}
             />
+          )}
+          {section === "results" && (
+            <>
+              {results.length > 0 && (
+                <div className="baseline-picker">
+                  <label htmlFor="baseline-result">已导入结果</label>
+                  <select
+                    id="baseline-result"
+                    value={selectedResultId}
+                    onChange={(event) => {
+                      setBaselineReport(null);
+                      setBaselineError("");
+                      setSelectedResultId(event.target.value);
+                    }}
+                  >
+                    {results.map((result) => (
+                      <option key={result.id} value={result.id}>
+                        {result.name} · {result.coverage_days} 日 /{" "}
+                        {result.segment_count} 段
+                      </option>
+                    ))}
+                  </select>
+                  <span className="muted">只读目录 · 不属于任务队列</span>
+                </div>
+              )}
+              <BaselineView
+                result={selectedResult}
+                report={
+                  baselineReport?.id === selectedResultId
+                    ? baselineReport
+                    : null
+                }
+                loading={
+                  loading ||
+                  loadingBaseline ||
+                  Boolean(selectedResult && !baselineReport && !baselineError)
+                }
+                error={resultsError || baselineError}
+              />
+            </>
           )}
           {section === "runs" && (
             <>
@@ -1256,9 +1605,11 @@ function App() {
               <div className="section-heading">
                 <div>
                   <span className="eyebrow">WORKER REGISTRY</span>
-                  <h2>计算节点</h2>
+                  <h2>合成任务计算节点</h2>
                 </div>
-                <span className="muted">可用性采用服务端心跳判断</span>
+                <span className="muted">
+                  合成 worker 心跳 · 不代表真实 B0 来源主机或 Azure 研究状态
+                </span>
               </div>
               <div className="nodes-grid">
                 {workers.map((worker) => (

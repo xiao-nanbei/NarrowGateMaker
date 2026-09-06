@@ -50,7 +50,7 @@ SHA 只能证明当前读取的字节与该 digest 指定的字节相同。它�
 
 通用部署代码和 provider 示例可以公开。只有具体 host、账户、credential、active config/release、runtime receipt、rollback selector 与当前运营状态属于所有者私有信息。公开说明和占位符绝不授予远端控制权；解析某一次具体部署时只能使用 Git 忽略的私有配置与证据，缺失权威时必须关闭失败。
 
-需要浏览器界面时，可使用开发中的 [Replay Studio](docs/plans/remote_replay_studio.zh-CN.md)：持久化控制服务和独立 worker 运行同一个合成演示，界面展示订单、库存和原始事件。目前尚不能从界面提交真实行情 B0 或 E/C 研究；旧 `v0.1.1` tag 不包含这一界面。
+需要浏览器界面时，可使用开发中的 [Replay Studio](docs/plans/remote_replay_studio.zh-CN.md)：持久化控制服务和独立 worker 运行同一个合成演示，界面展示订单、库存和原始事件，并提供独立的已完成 owner 私有 B0 结果只读导入。目前尚不能从界面提交真实行情 B0 或 E/C 研究；旧 `v0.1.1` tag 不包含这一界面。
 
 ## 稳定公开版本
 

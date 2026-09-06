@@ -7,8 +7,11 @@ SQLite belongs to the control host; workers exchange artifacts through HTTP.
 import argparse
 import asyncio
 import contextlib
+import csv
 import fcntl
+import hashlib
 import json
+import math
 import os
 import platform
 import signal
@@ -17,6 +20,7 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -35,6 +39,198 @@ FILES = (
 )
 RUNNER = "replay-demo"
 DATASET = "synthetic-demo"
+B0_CLASSIFICATION = "real_market_baseline_read_only"
+
+
+def b0_projection(summary_path: Path) -> dict:
+    """Import completed owner-selected outputs, never discover or execute replay work.
+
+    Source locators and raw artifacts remain private and are never sent to the browser.
+    This checks import consistency, not a new economic or cross-host qualification.
+    """
+    summary_path = summary_path.resolve()
+    root = summary_path.parent
+
+    def selected(relative: str) -> Path:
+        path = (root / relative).resolve()
+        if (
+            Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+            or "partial" in relative.lower()
+            or not path.is_relative_to(root)
+            or not path.is_file()
+        ):
+            raise ValueError("B0 source must be a complete selected file inside the summary root")
+        return path
+
+    def number(value) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError("B0 numeric field is invalid")
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("B0 numeric fields must be finite")
+        return result
+
+    def equal(left, right):
+        if not math.isclose(number(left), number(right), rel_tol=1e-12, abs_tol=1e-8):
+            raise ValueError("B0 selected outputs do not reconcile with the summary")
+
+    content = selected(summary_path.name).read_bytes()
+    source = json.loads(content)
+    plan = json.loads(selected("input_plan.json").read_bytes())
+    if (
+        source["visibility"] != "local_only_do_not_publish"
+        or source["arm"] != "baseline"
+        or source["source_commit"] != plan["source_commit"]
+    ):
+        raise ValueError("a private baseline summary with matching source identity is required")
+    verified = source["verification"]
+    for key in (
+        "all_segments_complete",
+        "full_fill_trace_reconciled",
+        "funding_cashflows_reconciled",
+        "campaign_values_reconciled_with_csv_rounding",
+    ):
+        if verified[key] is not True:
+            raise ValueError("B0 source summary has incomplete reconciliation")
+    dates = source["dates"]
+    if (
+        not dates
+        or dates != sorted(set(dates))
+        or dates != plan["days"]
+        or len(dates) != source["unique_utc_days"]
+    ):
+        raise ValueError("B0 coverage must match the frozen unique chronological day list")
+    segments = source["segments"]
+    if not segments or len(segments) != source["continuous_segments"]:
+        raise ValueError("B0 segment count is incomplete")
+    planned = {item["id"]: item["days"] for item in plan["segments"]}
+    if len(planned) != len(segments) or len(planned) != len(plan["segments"]):
+        raise ValueError("B0 segments must match the input plan exactly")
+    fields = {
+        "trading_pnl": ("trading_pnl_after_fees_usdc", "replay_pnl"),
+        "funding_pnl": ("funding_cashflow_usdc", "funding_cashflow_usdc"),
+        "net_pnl": ("net_pnl_usdc", "replay_net_pnl"),
+        "filled_orders": ("fills", "fills_total"),
+        "campaign_count": ("campaigns", "campaigns"),
+        "buy_fills": ("buy_fills", "fills_bid_buy"),
+        "sell_fills": ("sell_fills", "fills_ask_sell"),
+        "closed_campaigns": ("closed_campaigns", "closed_campaigns"),
+        "open_campaigns": ("open_campaigns", "open_campaigns"),
+    }
+    queue_totals = {
+        key: number(verified[key])
+        for key in (
+            "queue_lookup_count",
+            "queue_exact_count",
+            "queue_known_zero_count",
+            "queue_missing_count",
+            "native_events_consumed",
+            "native_events_rejected",
+            "native_gap_invalid_sequence_time_reversal_counts",
+        )
+    }
+    rows, covered, stems = [], [], set()
+    for item in segments:
+        segment_days = planned[item["segment"]]
+        start, end = (date.fromisoformat(value) for value in item["segment"].split("_"))
+        expected = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+        if not expected or segment_days != expected or len(expected) != item["days"]:
+            raise ValueError("B0 segment dates are not contiguous or do not match the plan")
+        covered.extend(expected)
+        stem = item["selected_output"]
+        origin = stem.split("/", 1)[0]
+        if stem in stems or not origin.startswith(("local_", "cloud_")):
+            raise ValueError("B0 selected output is duplicated or has an unknown source host")
+        stems.add(stem)
+        artifacts = {
+            suffix: selected(stem + suffix)
+            for suffix in (
+                ".json",
+                ".daily.csv",
+                ".campaign_labels.csv",
+                ".fill_trace.csv",
+                ".funding.csv",
+            )
+        }
+        metadata = json.loads(artifacts[".json"].read_bytes())
+        with artifacts[".daily.csv"].open() as handle:
+            daily = list(csv.DictReader(handle))
+        if len(daily) != 1:
+            raise ValueError("B0 continuous segment must have exactly one aggregate CSV row")
+        row = daily[0]
+        if (
+            metadata["days"] != expected
+            or metadata["arms"] != ["baseline"]
+            or metadata["config_sha256"] != source["strategy"]["config_sha256"]
+            or metadata["accounting_window"] != "continuous_segment"
+            or row["arm"] != "baseline"
+            or row["day"] != expected[0]
+            or row["window_end_day"] != expected[-1]
+            or int(row["window_day_count"]) != len(expected)
+            or row["accounting_window"] != "continuous_segment"
+            or row["economic_pnl_complete"].lower() != "true"
+        ):
+            raise ValueError("B0 segment is incomplete or has mismatched accounting metadata")
+        projected = {
+            "index": len(rows) + 1,
+            "start_day": expected[0],
+            "end_day": expected[-1],
+            "day_count": len(expected),
+            "source": "local" if origin.startswith("local_") else "azure",
+            "queue_mode": "strict"
+            if row.get("exchange_book_queue_mode") == "strict"
+            else "non_strict",
+        }
+        for output, (summary_key, csv_key) in fields.items():
+            equal(item[summary_key], row[csv_key])
+            projected[output] = number(item[summary_key])
+        equal(projected["net_pnl"], projected["trading_pnl"] + projected["funding_pnl"])
+        rows.append(projected)
+    if covered != dates:
+        raise ValueError("B0 selected segments overlap or do not exactly cover the frozen dates")
+    totals = {}
+    for output, (source_key, _) in fields.items():
+        equal(source["totals"][source_key], sum(row[output] for row in rows))
+        totals[output] = number(source["totals"][source_key])
+    equal(
+        source["totals"]["fill_fee_cost_usdc"],
+        sum(number(item["fill_fee_cost_usdc"]) for item in segments),
+    )
+    overlap = verified["host_comparison_days"]
+    if not overlap or overlap != sorted(set(overlap)) or not set(overlap).issubset(dates):
+        raise ValueError("B0 host comparison days are invalid")
+    report_id = "b0-" + hashlib.sha256(content).hexdigest()[:24]
+    report = {
+        "id": report_id,
+        "name": f"B0 · {len(dates)} UTC 日 · 只读结果",
+        "classification": B0_CLASSIFICATION,
+        "summary": {
+            **totals,
+            "coverage_days": len(dates),
+            "segment_count": len(rows),
+            "fees_already_included": True,
+            "fee_cost": number(source["totals"]["fill_fee_cost_usdc"]),
+        },
+        "segments": rows,
+        "verification": {
+            **queue_totals,
+            "overlap_days": overlap,
+            "passed": True,
+            "description": "既有摘要记录的本地 / Azure 跨主机核验；本次只读导入，没有重跑或重新核验远端。",
+        },
+        "limitations": [
+            "这是 modeled diagnostic B0，不是精确实盘经济复现、策略晋级或 E/C 训练结果。",
+            "每行代表连续 segment；段内状态延续，数据缺口后重新开始。不能视为每日收益或跨缺口连续账户曲线，也不计算 Sharpe、日胜率或日置信区间。",
+            "交易 PnL 已含成交手续费和终点 MTM；资金费仅加一次。Campaign 是金额分解，不能再累加到净 PnL。",
+            f"源摘要记录 {queue_totals['queue_missing_count']:g} 次激活查询缺少 exact / known-zero 覆盖。队列位置和成交是模型估计；strict 模式不等于全部精确队列。",
+            "native rejected 是 accepted=false，包含正常重复、已覆盖或 snapshot 前更新，并含 D−1 warmup；不是坏行情数。native 计数按源摘要展示，本次导入不重新做原生数据资格核验。",
+            "Python REST 异步 GLOBAL FIFO、24h native warmup；短时延迟 pilot 与 bulk-cancel n=1 prior 不能证明长期尾部或实盘路径等价。",
+            "部分回调、bulk terminal、IOC 查询和网关失败 / UNKNOWN 时序未建模；资金费不反馈到当前 trading-PnL 风控，没有保证金 / 强平模型。",
+            "来源 local / Azure 描述已选产物的执行来源，不表示当前云节点在线；没有启动云同步、worker 或任何回测。",
+        ],
+    }
+    return report
 
 
 def dumps(value: object) -> str:
@@ -93,6 +289,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
                     data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS results (
+                    id TEXT PRIMARY KEY, report TEXT NOT NULL, imported_at REAL NOT NULL);
             """)
 
     @contextlib.contextmanager
@@ -190,6 +388,45 @@ class Store:
         with self.connect() as db:
             ids = db.execute("SELECT id FROM jobs ORDER BY created_at DESC LIMIT 1000").fetchall()
         return [self.job(row["id"]) for row in ids]
+
+    def import_b0(self, summary_path: Path) -> dict:
+        if self.root.stat().st_mode & 0o077:
+            raise ValueError("private B0 imports require an owner-only state directory (mode 0700)")
+        report = b0_projection(summary_path)
+        result_id = report["id"]
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT * FROM results WHERE id=?", (result_id,)).fetchone()
+            if existing:
+                if existing["report"] != dumps(report):
+                    raise Conflict(
+                        "imported B0 display fields changed; preserve the original result"
+                    )
+            else:
+                db.execute(
+                    "INSERT INTO results VALUES (?,?,?)",
+                    (result_id, dumps(report), time.time()),
+                )
+        return self.result(result_id)
+
+    def result(self, result_id: str) -> dict:
+        identifier(result_id)
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM results WHERE id=?", (result_id,)).fetchone()
+        if row is None:
+            raise KeyError(result_id)
+        return {**json.loads(row["report"]), "imported_at": row["imported_at"]}
+
+    def results(self) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id FROM results ORDER BY imported_at DESC LIMIT 1000"
+            ).fetchall()
+        return [
+            {key: report[key] for key in ("id", "name", "classification", "imported_at")}
+            | {key: report["summary"][key] for key in ("coverage_days", "segment_count")}
+            for report in (self.result(row["id"]) for row in rows)
+        ]
 
     def register(self, worker_id: str, session: str) -> dict:
         identifier(worker_id)
@@ -434,6 +671,14 @@ def create_app(root: Path, token: str = ""):
     @app.get("/api/jobs")
     def jobs():
         return {"items": store.jobs()}
+
+    @app.get("/api/results")
+    def results():
+        return {"items": store.results()}
+
+    @app.get("/api/results/{result_id}")
+    def result(result_id: str):
+        return store.result(result_id)
 
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
@@ -758,12 +1003,30 @@ def main(argv=None) -> int:
     serve = sub.add_parser("serve", help="start the loopback control API and packaged frontend")
     serve.add_argument("--state-dir", type=Path, required=True)
     serve.add_argument("--port", type=int, default=8080)
+    imported = sub.add_parser(
+        "import-b0", help="import existing private B0 results; never run replay"
+    )
+    imported.add_argument("--state-dir", type=Path, required=True)
+    imported.add_argument("--summary", type=Path, required=True)
     run = sub.add_parser("worker", help="run one independent worker; no shared SQLite access")
     run.add_argument("--url", default="http://127.0.0.1:8080")
     run.add_argument("--worker-id", required=True)
     run.add_argument("--work-dir", type=Path, required=True)
     run.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "import-b0":
+        report = Store(args.state_dir).import_b0(args.summary)
+        print(
+            dumps(
+                {
+                    "id": report["id"],
+                    "classification": report["classification"],
+                    "coverage_days": report["summary"]["coverage_days"],
+                    "segment_count": report["summary"]["segment_count"],
+                }
+            )
+        )
+        return 0
     if args.command == "worker":
         return worker(args)
     import uvicorn

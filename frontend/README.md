@@ -1,13 +1,13 @@
 # Replay Studio frontend
 
+Last materially modified: 2026-09-06
 Last materially synchronized: 2026-09-06
 
 This English page is canonical; [简体中文](README.zh-CN.md).
 
-React + TypeScript workspace for the packaged Studio UI. The only currently supported
-runner is `replay-demo` with the built-in `synthetic-demo` dataset. This interface
-does not submit real F01, current B0 or E/C research, invoke shell commands, or
-provision cloud resources.
+React + TypeScript workspace for the packaged Studio UI. The only executable runner is `replay-demo` with the built-in `synthetic-demo` dataset. A separate default tab displays existing private B0 summaries imported through the [owner-local CLI](../docs/plans/remote_replay_studio.md#import-completed-b0-results-without-replay). This interface does not submit real F01, current B0 or E/C research, invoke shell commands, or provision cloud resources.
+
+Real results use read-only `/api/results` endpoints and remain separate from synthetic jobs, reports and comparison. The browser displays saved amounts and continuous-segment coverage without manufacturing daily PnL or Sharpe; fees already in trading PnL are not deducted again, and funding is added once. Local/Azure origin and existing cross-host verification describe historical provenance, not current cloud connectivity. Missing queue coverage and modeled-evidence limitations stay visible. No private evidence ships in the frontend bundle.
 
 ## Developer build
 

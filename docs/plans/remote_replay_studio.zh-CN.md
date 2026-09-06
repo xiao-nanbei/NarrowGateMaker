@@ -9,9 +9,9 @@ Last materially synchronized: 2026-09-06
 
 Replay Studio 已提供浏览器工作台、持久化控制服务和独立 HTTP worker。首个适配器执行已有的[公开合成回放](../../examples/replay_demo/README.zh-CN.md)，没有另写撮合引擎。浏览器或 SSH 断线不会取消已提交的实验；只要状态目录仍在，控制进程重启后可以恢复任务和已发布结果。
 
-这是能运行的第一阶段交付，不是已经完成的研究平台。真实行情 F01/F10 执行、当前私有 B0 和训练后的 E/C 候选尚未接入服务，界面明确关闭这些选项。创建两个演示臂会在独立输出目录运行同一 fixture；臂的名字不会自动产生不同经济策略。
+这是能运行的第一阶段交付，不是已经完成的研究平台。已完成的 owner 私有 B0 结果现可导入并只读查看，与合成任务分开。真实行情 F01/F10 执行和训练后的 E/C 候选仍关闭。创建两个演示臂会在独立输出目录运行同一 fixture；臂的名字不会自动产生不同经济策略。
 
-服务不会启动 maker、读取实盘凭据、导入 current-live pointer、创建云资源或晋级策略。只接受内置合成数据集，不要通过演示适配器上传私有行情、账户或研究工件。
+服务不会启动 maker、读取实盘凭据、导入 current-live pointer、创建云资源或晋级策略。任务提交只接受内置合成数据集，不要通过演示适配器上传私有行情、账户或研究工件。B0 结果导入是 owner 本地 CLI 操作，不提供 HTTP 上传或任意路径读取接口。
 
 ## 跑通完整链路
 
@@ -34,6 +34,20 @@ python -m narrowgate.studio worker \
 打开 `http://127.0.0.1:8080`，创建演示实验，检查订单、事件轨迹、campaign、账本和日志原文。第二个 worker 使用不同 ID 和工作目录。每个 worker 最多持有一个未完成任务；两个 worker 可以并行运行两个独立臂，但不能由此把连续库存路径随意拆成每天 fresh-start 再拼接。
 
 前端开发和可复现构建见 [frontend/README.zh-CN.md](../../frontend/README.zh-CN.md)。真实数据诊断暂时仍通过公开[一日数据教程](../opensource/one_day_data_pipeline.zh-CN.md)运行，不走 Studio。
+
+## 只导入已完成 B0，不重跑
+
+Owner 提供已有私有 `baseline_summary.json`、同目录 `input_plan.json` 及摘要选定的最终 segment 产物。这些输入保存在私有证据存储中，不随公开仓库分发。使用控制服务同一个 owner-only 状态目录（权限 `0700`）：
+
+```bash
+.venv/bin/python -m narrowgate.studio import-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json"
+```
+
+导入器只按明确选定的 segment stems 读取小型摘要、输入计划、segment 元数据和汇总 CSV，检查覆盖、已完成 baseline/config 元数据及金额一致性。原始 fill、campaign 和 funding 文件只确认存在，不重新读取或计算哈希。缺失、partial、重叠或越出摘要目录的输入会被拒绝。现有私有 SQLite 只保存字段白名单内的精简报告，不复制原始工件或来源路径；一个由摘要生成的 ID 保证重复导入幂等。后续研究阶段、训练或执行许可说明改变，不会阻止查看既有 B0。导入不会创建 job，也不启动 replay、worker、Azure 同步或云资源。
+
+独立的“真实 B0”视图使用只读 `/api/results` 接口，显示覆盖 UTC 日数、连续段、会计金额、选定产物的 local/Azure 执行来源，以及源摘要已记录的跨主机核验说明。来源是历史出处，不是当前云节点存活状态。导入一致性检查不会重做原始 fill/funding 或跨主机资格核验。`daily.csv` 每行仍是 segment 汇总；界面不制造每日收益、Sharpe 或账户权益曲线。交易 PnL 已含手续费和终点 MTM，资金费只加一次。native queue 缺失覆盖和运行时模型限制仍明确显示。合成 demo 任务及其 worker 保持独立。
 
 ## 先一台远程主机，再扩展 worker
 
@@ -124,7 +138,7 @@ WantedBy=default.target
 | --- | --- |
 | 公开入门文档 | 已将无账户 demo 前置，补一笔订单的完整例子、数据状态表，并区分研究状态与工具可用性。 |
 | 远程执行基础 | 已实现合成 demo 的持久队列、独立 worker、取消／失联状态、结果发布和浏览器检查。 |
-| 当前 B0 接入 | 尚未开放。先适配完整 canonical F01/F10 结果及其数据／runtime／延迟身份、连续段会计，不修改正在执行的冻结 B0。 |
+| 当前 B0 接入 | 已完成私有 B0 摘要可只读导入，保留连续段会计与导入一致性检查；真实行情任务执行仍关闭。 |
 | E/C 研究 | 独立研究分支已有完整机会采集及单干预配对标签组装；不等于已有训练或通过经济验证的选择策略。 |
 | 真实数据登记 | 提交真实市场任务之前，需要明确 Development／Validation／holdout 角色、不可变逻辑数据映射、源覆盖，以及禁止静默替换 backend/feed。 |
 | 有界真实执行 | 接入白名单 canonical runner、CPU／RSS／磁盘预算及工件流式发布，绝不从浏览器接受任意 shell 命令。 |

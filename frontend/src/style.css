@@ -378,6 +378,82 @@ summary {
   color: #52786b;
   white-space: nowrap;
 }
+.real-tag {
+  background: #e3f0ef;
+  border-color: #b4d5ce;
+  color: #166a61;
+  font-weight: 600;
+}
+.baseline-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.baseline-picker label {
+  color: #718783;
+  font-size: 11px;
+}
+.baseline-picker select {
+  max-width: 100%;
+  font-size: 11px;
+}
+.baseline-panel > .result-header {
+  background: #f8fbf8;
+  border-bottom: 1px solid var(--line);
+}
+.baseline-panel .result-header > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.baseline-verification {
+  font-size: 11px;
+  color: #748783;
+  line-height: 1.9;
+}
+.baseline-verification .status {
+  display: flex;
+  margin: 12px 0 8px;
+}
+.coverage-dates {
+  margin: 12px 0 8px;
+}
+.baseline-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.baseline-section-heading .muted {
+  font-size: 10px;
+}
+.baseline-segments {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.baseline-segments th,
+.baseline-segments td {
+  padding: 12px;
+}
+.baseline-segments th {
+  border-top: 0;
+}
+.baseline-table-note {
+  font-size: 10px;
+  color: #80918c;
+  margin-top: 12px;
+  line-height: 1.9;
+}
+.baseline-audit dl {
+  max-width: 660px;
+  margin-top: 12px;
+}
+.baseline-limitations-heading {
+  margin-top: 24px;
+}
 .run-counters {
   display: flex;
   align-items: center;
@@ -1101,7 +1177,8 @@ dd {
     display: none;
   }
   .sidebar nav {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
     margin-top: 16px;
   }
@@ -1142,6 +1219,21 @@ dd {
   .page-heading > .button {
     font-size: 10px;
     padding: 9px 10px;
+  }
+  .page-heading > .real-tag {
+    display: none;
+  }
+  .baseline-picker {
+    gap: 8px;
+  }
+  .baseline-picker select {
+    width: 100%;
+  }
+  .baseline-metrics .metric strong {
+    font-size: 16px;
+  }
+  .baseline-metrics .metric small {
+    letter-spacing: 0;
   }
   .boundary-strip {
     padding: 10px;
