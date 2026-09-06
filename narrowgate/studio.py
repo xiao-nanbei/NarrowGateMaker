@@ -26,6 +26,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
+from narrowgate import studio_market
+
 LEASE_SECONDS = 45
 ARTIFACT_LIMIT = 2_000_000
 TERMINAL = {"completed", "failed", "canceled"}
@@ -217,17 +219,43 @@ def b0_projection(summary_path: Path) -> dict:
             **queue_totals,
             "overlap_days": overlap,
             "passed": True,
-            "description": "既有摘要记录的本地 / Azure 跨主机核验；本次只读导入，没有重跑或重新核验远端。",
+            "description": (
+                "既有摘要记录的本地 / Azure 跨主机核验；"
+                "本次只读导入，没有重跑或重新核验远端。"
+            ),
         },
         "limitations": [
             "这是 modeled diagnostic B0，不是精确实盘经济复现、策略晋级或 E/C 训练结果。",
-            "每行代表连续 segment；段内状态延续，数据缺口后重新开始。不能视为每日收益或跨缺口连续账户曲线，也不计算 Sharpe、日胜率或日置信区间。",
-            "交易 PnL 已含成交手续费和终点 MTM；资金费仅加一次。Campaign 是金额分解，不能再累加到净 PnL。",
-            f"源摘要记录 {queue_totals['queue_missing_count']:g} 次激活查询缺少 exact / known-zero 覆盖。队列位置和成交是模型估计；strict 模式不等于全部精确队列。",
-            "native rejected 是 accepted=false，包含正常重复、已覆盖或 snapshot 前更新，并含 D−1 warmup；不是坏行情数。native 计数按源摘要展示，本次导入不重新做原生数据资格核验。",
-            "Python REST 异步 GLOBAL FIFO、24h native warmup；短时延迟 pilot 与 bulk-cancel n=1 prior 不能证明长期尾部或实盘路径等价。",
-            "部分回调、bulk terminal、IOC 查询和网关失败 / UNKNOWN 时序未建模；资金费不反馈到当前 trading-PnL 风控，没有保证金 / 强平模型。",
-            "来源 local / Azure 描述已选产物的执行来源，不表示当前云节点在线；没有启动云同步、worker 或任何回测。",
+            (
+                "每行代表连续 segment；段内状态延续，数据缺口后重新开始。"
+                "不能视为每日收益或跨缺口连续账户曲线，也不计算 Sharpe、日胜率或日置信区间。"
+            ),
+            (
+                "交易 PnL 已含成交手续费和终点 MTM；资金费仅加一次。"
+                "Campaign 是金额分解，不能再累加到净 PnL。"
+            ),
+            (
+                f"源摘要记录 {queue_totals['queue_missing_count']:g} 次激活查询缺少 "
+                "exact / known-zero 覆盖。队列位置和成交是模型估计；"
+                "strict 模式不等于全部精确队列。"
+            ),
+            (
+                "native rejected 是 accepted=false，包含正常重复、已覆盖或 snapshot 前更新，"
+                "并含 D−1 warmup；不是坏行情数。native 计数按源摘要展示，"
+                "本次导入不重新做原生数据资格核验。"
+            ),
+            (
+                "Python REST 异步 GLOBAL FIFO、24h native warmup；"
+                "短时延迟 pilot 与 bulk-cancel n=1 prior 不能证明长期尾部或实盘路径等价。"
+            ),
+            (
+                "部分回调、bulk terminal、IOC 查询和网关失败 / UNKNOWN 时序未建模；"
+                "资金费不反馈到当前 trading-PnL 风控，没有保证金 / 强平模型。"
+            ),
+            (
+                "来源 local / Azure 描述已选产物的执行来源，不表示当前云节点在线；"
+                "没有启动云同步、worker 或任何回测。"
+            ),
         ],
     }
     return report
@@ -292,6 +320,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS results (
                     id TEXT PRIMARY KEY, report TEXT NOT NULL, imported_at REAL NOT NULL);
             """)
+            studio_market.initialize(db)
 
     @contextlib.contextmanager
     def connect(self):
@@ -680,6 +709,44 @@ def create_app(root: Path, token: str = ""):
     def result(result_id: str):
         return store.result(result_id)
 
+    @app.get("/api/results/{result_id}/market")
+    def result_market(result_id: str):
+        return studio_market.market_info(store, result_id)
+
+    @app.get("/api/results/{result_id}/candles")
+    def result_candles(result_id: str, start_ms: int, end_ms: int, interval_s: int = 60):
+        return studio_market.candles(store, result_id, start_ms, end_ms, interval_s)
+
+    @app.get("/api/results/{result_id}/fills")
+    def result_fills(
+        result_id: str, start_ms: int, end_ms: int, limit: int = 200, cursor: str = ""
+    ):
+        return studio_market.fills(store, result_id, start_ms, end_ms, limit, cursor)
+
+    @app.get("/api/results/{result_id}/orders/{order_id}")
+    def result_order(result_id: str, order_id: str):
+        return studio_market.order(store, result_id, order_id)
+
+    @app.get("/api/data-quality/catalog")
+    def data_quality_catalog():
+        from narrowgate.studio_quality import quality_catalog
+
+        return quality_catalog(store.root)
+
+    @app.get("/api/data-quality")
+    def data_quality(start_day: str, end_day: str, dataset_id: str = "", node: str = "local"):
+        from narrowgate.studio_quality import quality_days
+
+        return quality_days(store.root, start_day, end_day, dataset_id, node)
+
+    @app.get("/api/data-quality/export")
+    def data_quality_export(
+        start_day: str, end_day: str, dataset_id: str = "", node: str = "local"
+    ):
+        from narrowgate.studio_quality import quality_export
+
+        return quality_export(store.root, start_day, end_day, dataset_id, node)
+
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
         store.expire()
@@ -1008,12 +1075,24 @@ def main(argv=None) -> int:
     )
     imported.add_argument("--state-dir", type=Path, required=True)
     imported.add_argument("--summary", type=Path, required=True)
+    connected = sub.add_parser(
+        "connect-b0", help="index existing B0 fills and connect retained market bars without replay"
+    )
+    connected.add_argument("--state-dir", type=Path, required=True)
+    connected.add_argument("--result-id", required=True)
+    connected.add_argument("--summary", type=Path, required=True)
+    connected.add_argument("--bars-dir", type=Path)
     run = sub.add_parser("worker", help="run one independent worker; no shared SQLite access")
     run.add_argument("--url", default="http://127.0.0.1:8080")
     run.add_argument("--worker-id", required=True)
     run.add_argument("--work-dir", type=Path, required=True)
     run.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "connect-b0":
+        print(dumps(studio_market.connect_b0(
+            Store(args.state_dir), args.result_id, args.summary, args.bars_dir
+        )))
+        return 0
     if args.command == "import-b0":
         report = Store(args.state_dir).import_b0(args.summary)
         print(

@@ -90,6 +90,326 @@ export type BaselineReport = {
   limitations: string[];
 };
 
+export type QualityDataset = {
+  id: string;
+  source: string;
+  exchange: string;
+  market: string;
+  symbol: string;
+  data_type: string;
+  version: string;
+  label: string;
+};
+export type QualitySource = Omit<QualityDataset, "id"> & {
+  dataset_id: string;
+  availability: "present" | "missing" | "unknown";
+  check_status: "passed" | "failed" | "unchecked" | "partial";
+  check_scope: string;
+  task_usability: Record<
+    "candles" | "modeled_replay" | "strict_replay" | "funding_pnl",
+    "passed" | "failed" | "unknown" | "not_applicable"
+  >;
+  records: number | null;
+  size_bytes: number | null;
+  checked_at: string | null;
+  coverage_ratio: number | null;
+  max_gap_ms: number | null;
+  reasons: string[];
+  intervals: {
+    start_ms: number;
+    end_ms: number;
+    status: "gap" | "invalid" | "valid" | "unknown";
+    kind: string;
+    reason: string;
+  }[];
+  replica: {
+    status: "verified" | "present_unverified" | "missing" | "unknown" | "stale";
+    last_checked_at: string | null;
+    node_status: string;
+  };
+  evidence_label: string;
+};
+export type QualityDay = {
+  day: string;
+  ongoing: boolean;
+  problem: boolean;
+  sources: QualitySource[];
+};
+export type QualityCatalog = {
+  datasets: QualityDataset[];
+  nodes: { id: string; status: string; last_seen: string | null }[];
+  updated_at: string | null;
+};
+export type QualityReport = {
+  start_day: string;
+  end_day: string;
+  node: string;
+  items: QualityDay[];
+  limitations: string[];
+};
+export type QualityExport = {
+  items: ({
+    day: string;
+    dataset_id?: string;
+    start_ms: number;
+    end_ms: number;
+    reason: string;
+    recommended_action: string;
+  } & Row)[];
+};
+
+export async function getQualityCatalog(
+  signal?: AbortSignal,
+): Promise<QualityCatalog> {
+  const value = await api<QualityCatalog>("/data-quality/catalog", { signal });
+  if (!Array.isArray(value.datasets) || !Array.isArray(value.nodes))
+    throw new Error("质量目录格式不受支持。");
+  return value;
+}
+
+export async function getQualityReport(
+  query: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<QualityReport> {
+  const value = await api<QualityReport>(`/data-quality?${query}`, { signal });
+  const start = Date.parse(`${query.get("start_day")}T00:00:00Z`);
+  const end = Date.parse(`${query.get("end_day")}T00:00:00Z`);
+  if (
+    value.start_day !== query.get("start_day") ||
+    value.end_day !== query.get("end_day") ||
+    value.node !== query.get("node") ||
+    !Array.isArray(value.items) ||
+    value.items.length !== (end - start) / 86400000 + 1 ||
+    !Array.isArray(value.limitations) ||
+    value.items.some(
+      (day, index) =>
+        day.day !==
+          new Date(start + index * 86400000).toISOString().slice(0, 10) ||
+        !Array.isArray(day.sources) ||
+        day.sources.some(
+          (source) =>
+            !source.task_usability ||
+            !source.replica ||
+            !Array.isArray(source.intervals) ||
+            !Array.isArray(source.reasons) ||
+            Object.values(source.task_usability).some(
+              (state) =>
+                !["passed", "failed", "unknown", "not_applicable"].includes(
+                  state,
+                ),
+            ) ||
+            !["present", "missing", "unknown"].includes(source.availability) ||
+            !["passed", "failed", "unchecked", "partial"].includes(
+              source.check_status,
+            ),
+        ),
+    )
+  ) {
+    throw new Error("质量记录格式不受支持；不能将缺失字段视为通过。");
+  }
+  return value;
+}
+
+export type MarketSource = {
+  kind: string;
+  location: string;
+  connected: boolean;
+};
+export type MarketMetadata = {
+  result_id: string;
+  symbol: string;
+  classification: "simulated_historical_fills";
+  status: "available" | "unavailable";
+  reason: string | null;
+  source: MarketSource;
+  segments: {
+    index: number;
+    start_day: string;
+    end_day: string;
+    days: string[];
+    source: "local" | "azure";
+  }[];
+  intervals_s: number[];
+  max_candles: number;
+  max_window_ms: number;
+  order_lifecycle: "partial_fill_snapshots_only";
+  pnl: "unavailable";
+};
+export type MarketCandle = {
+  time_ms: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  source_rows: number;
+};
+export type MarketCandles = {
+  result_id: string;
+  status: "available" | "unavailable";
+  reason: string | null;
+  source: MarketSource;
+  interval_s: number;
+  start_ms: number;
+  end_ms: number;
+  items: MarketCandle[];
+  count: number;
+  truncated: boolean;
+  gaps: number;
+};
+export type MarketFill = {
+  id: string;
+  segment_index: number;
+  fill_sequence: number;
+  fill_ts_ms: number;
+  visible_ts_ms: number | null;
+  side: "BUY" | "SELL";
+  price: number;
+  fill_trade_price?: number | null;
+  quantity: number;
+  order_id: string | null;
+  source_order_id: string | null;
+  inventory_before: number | null;
+  inventory_after: number | null;
+  fee: number | null;
+  fee_asset: string | null;
+  campaign_id: string | null;
+  campaign_id_at_submit?: string | null;
+};
+export type MarketFills = {
+  result_id: string;
+  status: "available" | "unavailable";
+  reason: string | null;
+  classification: "simulated_historical_fills";
+  start_ms: number;
+  end_ms: number;
+  items: MarketFill[];
+  count: number;
+  next_cursor: string | null;
+  truncated: boolean;
+};
+export type MarketOrder = {
+  result_id: string;
+  id: string;
+  status: string;
+  classification: "simulated_historical_fills";
+  scope: "fill_trace_snapshots_only";
+  source_order_id: string | null;
+  segment_index: number;
+  side: string;
+  price: number | null;
+  quantity: number | null;
+  submit_ts_ms: number | null;
+  activate_ts_ms: number | null;
+  new_ack_ts_ms: number | null;
+  cancel_request_ts_ms: number | null;
+  cancel_effective_ts_ms: number | null;
+  cancel_ack_ts_ms: number | null;
+  filled_quantity: number | null;
+  fill_count: number;
+  fills: MarketFill[];
+  truncated?: boolean;
+  lifecycle_complete: false;
+  pnl: null;
+};
+
+const marketRoute = (id: string, kind: string) =>
+  `/results/${encodeURIComponent(id)}/${kind}`;
+const finite = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value);
+export async function getMarketMetadata(
+  id: string,
+  signal?: AbortSignal,
+): Promise<MarketMetadata> {
+  const value = await api<MarketMetadata>(marketRoute(id, "market"), {
+    signal,
+  });
+  if (
+    value.result_id !== id ||
+    value.classification !== "simulated_historical_fills" ||
+    !Array.isArray(value.segments) ||
+    !value.source ||
+    !Array.isArray(value.intervals_s)
+  )
+    throw new Error("市场复盘接口分类或格式不受支持。");
+  return value;
+}
+export async function getMarketCandles(
+  id: string,
+  query: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<MarketCandles> {
+  const value = await api<MarketCandles>(
+    `${marketRoute(id, "candles")}?${query}`,
+    { signal },
+  );
+  if (
+    value.result_id !== id ||
+    value.start_ms !== Number(query.get("start_ms")) ||
+    value.end_ms !== Number(query.get("end_ms")) ||
+    !Array.isArray(value.items) ||
+    value.count !== value.items.length ||
+    value.items.some(
+      (c, index) =>
+        ![c.time_ms, c.open, c.high, c.low, c.close].every(finite) ||
+        c.time_ms < value.start_ms ||
+        c.time_ms >= value.end_ms ||
+        (index > 0 && c.time_ms <= value.items[index - 1].time_ms) ||
+        c.low > Math.min(c.open, c.close) ||
+        c.high < Math.max(c.open, c.close),
+    )
+  )
+    throw new Error("市场 OHLC 格式不受支持；不由模拟成交构造 K 线。");
+  return value;
+}
+export async function getMarketFills(
+  id: string,
+  query: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<MarketFills> {
+  const value = await api<MarketFills>(`${marketRoute(id, "fills")}?${query}`, {
+    signal,
+  });
+  if (
+    value.result_id !== id ||
+    value.start_ms !== Number(query.get("start_ms")) ||
+    value.end_ms !== Number(query.get("end_ms")) ||
+    value.classification !== "simulated_historical_fills" ||
+    !Array.isArray(value.items) ||
+    value.count !== value.items.length ||
+    new Set(value.items.map((f) => f.id)).size !== value.items.length ||
+    value.items.some(
+      (f) =>
+        f.fill_ts_ms < value.start_ms ||
+        f.fill_ts_ms >= value.end_ms ||
+        typeof f.id !== "string" ||
+        !["BUY", "SELL"].includes(f.side) ||
+        ![f.fill_ts_ms, f.price, f.quantity].every(finite),
+    )
+  )
+    throw new Error("模拟成交格式不受支持；未混用合成 trace。");
+  return value;
+}
+export async function getMarketOrder(
+  id: string,
+  orderId: string,
+  signal?: AbortSignal,
+): Promise<MarketOrder> {
+  const value = await api<MarketOrder>(
+    marketRoute(id, `orders/${encodeURIComponent(orderId)}`),
+    { signal },
+  );
+  if (
+    value.result_id !== id ||
+    value.id !== orderId ||
+    value.classification !== "simulated_historical_fills" ||
+    value.scope !== "fill_trace_snapshots_only" ||
+    value.lifecycle_complete !== false
+  )
+    throw new Error("订单快照格式不受支持；不推断完整挂单状态。");
+  return value;
+}
+
 let sessionToken = "";
 export function setSessionToken(value: string): void {
   sessionToken = value.trim();

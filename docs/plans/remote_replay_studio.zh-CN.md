@@ -2,8 +2,8 @@
 
 [English](remote_replay_studio.md)
 
-Last materially modified: 2026-09-06
-Last materially synchronized: 2026-09-06
+Last materially modified: 2026-09-07
+Last materially synchronized: 2026-09-07
 
 ## 现在能做什么
 
@@ -48,6 +48,40 @@ Owner 提供已有私有 `baseline_summary.json`、同目录 `input_plan.json` �
 导入器只按明确选定的 segment stems 读取小型摘要、输入计划、segment 元数据和汇总 CSV，检查覆盖、已完成 baseline/config 元数据及金额一致性。原始 fill、campaign 和 funding 文件只确认存在，不重新读取或计算哈希。缺失、partial、重叠或越出摘要目录的输入会被拒绝。现有私有 SQLite 只保存字段白名单内的精简报告，不复制原始工件或来源路径；一个由摘要生成的 ID 保证重复导入幂等。后续研究阶段、训练或执行许可说明改变，不会阻止查看既有 B0。导入不会创建 job，也不启动 replay、worker、Azure 同步或云资源。
 
 独立的“真实 B0”视图使用只读 `/api/results` 接口，显示覆盖 UTC 日数、连续段、会计金额、选定产物的 local/Azure 执行来源，以及源摘要已记录的跨主机核验说明。来源是历史出处，不是当前云节点存活状态。导入一致性检查不会重做原始 fill/funding 或跨主机资格核验。`daily.csv` 每行仍是 segment 汇总；界面不制造每日收益、Sharpe 或账户权益曲线。交易 PnL 已含手续费和终点 MTM，资金费只加一次。native queue 缺失覆盖和运行时模型限制仍明确显示。合成 demo 任务及其 worker 保持独立。
+
+## 连接市场上下文与历史模拟成交
+
+导入报告后，owner 可按同一批明确选定的最终 fill trace 建立私有展示索引，并连接已有 BTCUSDC 市场 K 线。此操作不重新回放策略，也不修改原摘要、产物或会计金额。可选 `--bars-dir` 指向已有 `BTCUSDC-1s-YYYY-MM-DD.parquet` 文件；省略时仍可查询成交，但 K 线明确保持不可用。
+
+```bash
+.venv/bin/python -m narrowgate.studio connect-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --result-id "<imported-result-id>" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json" \
+  --bars-dir "${NARROWGATE_DATA_ROOT}/bars_1s"
+```
+
+连接信息和派生成交索引留在 owner-only SQLite 内。只有 CLI 能登记本地路径；浏览器 API 只接受结果 ID、UTC 时间窗和分页游标，不接受任意路径。重新连接仅替换展示索引，不改已导入的不可变报告。不复制、重新哈希或上传原始市场文件。
+
+`GET /api/results/{id}/market` 返回 segment／UTC 日覆盖和源可用性。`GET /api/results/{id}/candles` 必须提供最多 24 小时的 UTC 毫秒半开区间（`start_ms`、`end_ms`），边界对齐 `interval_s`，取值为 `1,5,60,300`，最多返回 5,000 根 K 线。OHLC 和成交量只聚合已有市场 bars；缺行的秒不补造，也不前向填充，其数量不能区分没有成交的秒和数据源缺口。该行情明确标记为历史市场上下文 `context_only_not_exact_replay_binding`；登记本身不证明它与原回放输入字节完全一致。市场文件缺失、不可读或字段非法时返回明确不可用原因，绝不用策略自身成交拼 K 线。
+
+`GET /api/results/{id}/fills` 使用同样有界的 UTC 时间窗，`limit` 最多 1,000，并通过不透明游标续页。同一时间戳的多笔成交分别保留，ID 按 segment 隔离，同时保留原始 fill sequence。执行 `price` 使用原账本价格 `quote_px`；触发行情成交价和订单限价是独立字段。物理成交时刻与私有可见时刻保持分开。成交前后库存是原日志的本地回调账，不编造成按物理成交顺序重建的库存。签名手续费保留正值成本、负值返佣；原交易 PnL 已含该费用。`campaign_id_at_submit` 不改称最终 campaign ID。
+
+`GET /api/results/{id}/orders/{order_id}` 仅返回实际成交时记录的订单快照，最多 1,000 笔成交，超过时明确标记截断。目标报价建议不会变成有效订单。未成交订单生命周期、后续撤单结果和订单 PnL 未被原记录保存时保持不可用；缺失字段返回 null，生命周期完整性始终为 false。成交和订单统一标记 `simulated_historical_fills`，不是实盘成交。已有汇总报告仍为会计金额视图；图表查询不制造 PnL 曲线。
+
+## 查看已有数据质量证据
+
+Owner 可以把已有分源／版本审计 CSV 和只读文件元数据清单适配到日历，不下载数据、不重跑审计，也不改变冻结的回放输入：
+
+```bash
+.venv/bin/python -m narrowgate.studio_quality \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/operator-selected.json"
+```
+
+私有 manifest 指定数据源身份、已有审计列及可选文件清单模式；简明字段映射见 [`import_quality`](../../narrowgate/studio_quality.py)。它不施加新的质量阈值。`GET /api/data-quality/catalog` 列出已登记的数据集和节点。`GET /api/data-quality?start_day=YYYY-MM-DD&end_day=YYYY-MM-DD` 返回最多 366 个 UTC 日的完整含首尾日历，可选 `dataset_id` 和 `node` 过滤。`/api/data-quality/export` 使用相同参数，仅导出修复／同步建议清单，不执行这些操作。
+
+审计状态仅适用于明确的数据源版本和记录的检查范围，不证明另一节点已保存同一版本。文件存在、源质量、任务可用性和节点副本验证分别展示。节点副本不可访问或离线时保持未知，不自动判为缺失。没有区间报告不能画成全天绿色，没有审计的日子仍显示为未知，不从日历消失。日历不授予策略或回放准入。
 
 ## 先一台远程主机，再扩展 worker
 

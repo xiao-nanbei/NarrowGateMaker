@@ -21,6 +21,7 @@ dependencies = [
 studio = [
   "fastapi>=0.115,<1",
   "uvicorn>=0.30,<1",
+  "pyarrow>=14.0",
 ]
 dev = [
   "pytest>=8.0",

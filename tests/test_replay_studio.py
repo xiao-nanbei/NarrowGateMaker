@@ -339,6 +339,220 @@ def test_b0_import_is_private_idempotent_and_never_creates_or_executes_jobs(
     assert locked.get("/api/results").status_code == 401
 
 
+@pytest.fixture
+def connected_market(store, b0_source, tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from narrowgate import studio_market
+
+    start = 1735689600000
+    rows = []
+    for index, offset in enumerate((123, 123, 1000, 86_400_000)):
+        rows.append({
+            "arm": "baseline", "fill_sequence": index, "fill_ts": start + offset,
+            "side": "BUY" if index < 2 else "SELL", "quote_px": 101 + index,
+            "fill_trade_px": 99, "fill_qty": 0.001, "order_id": 0 if index < 2 else index,
+            "price": 100, "quantity": 0.002, "submit_ts": start,
+            "activate_ts": start + 1, "new_ack_ts": start + 2, "cancel_ack_ts": -1,
+            "inventory_before_fill": index / 1000, "inventory_after_fill": (index + 1) / 1000,
+            "last_private_fill_visible_ts_ms": start + offset + 5,
+            "fill_fee_usdc": -0.001, "fill_fee_asset": "USDC", "campaign_id_at_submit": 0,
+        })
+    path = b0_source.parent / "local_fixture/result.fill_trace.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+    bars = tmp_path / "bars"
+    bars.mkdir()
+    pq.write_table(pa.table({
+        "timestamp": [start, start + 1000, start + 60000],
+        "open": [50., 51., 55.], "high": [52., 54., 56.],
+        "low": [49., 50., 54.], "close": [51., 53., 55.], "volume": [1., 2., 3.],
+    }), bars / "BTCUSDC-1s-2025-01-01.parquet")
+    report = store.import_b0(b0_source)
+    studio_market.connect_b0(store, report["id"], b0_source, bars)
+    return SimpleNamespace(id=report["id"], start=start, bars=bars, summary=b0_source,
+                           path=path, rows=rows, report=report)
+
+
+def test_real_market_queries_keep_market_and_fill_evidence_separate(store, connected_market):
+    source = connected_market
+    client = TestClient(studio.create_app(store.root))
+    route = f"/api/results/{source.id}"
+    window = {"start_ms": source.start, "end_ms": source.start + 120000}
+    info = client.get(route + "/market").json()
+    assert info["segments"][0]["days"] == ["2025-01-01", "2025-01-02"]
+    assert info["source"]["identity"] == "context_only_not_exact_replay_binding"
+    response = client.get(route + "/candles", params=window).json()
+    assert response["status"] == "available"
+    assert response["items"][0] == {
+        "time_ms": source.start, "open": 50., "high": 54., "low": 49.,
+        "close": 53., "volume": 3., "source_rows": 2,
+    }
+    assert response["gaps"] == 117  # absent trade seconds, NOT a source outage diagnosis
+    first = client.get(route + "/fills", params=window | {"limit": 1}).json()
+    second = client.get(route + "/fills", params=window | {
+        "limit": 1, "cursor": first["next_cursor"],
+    }).json()
+    assert first["items"][0]["fill_ts_ms"] == second["items"][0]["fill_ts_ms"]
+    assert first["items"][0]["id"] != second["items"][0]["id"]
+    fill = first["items"][0]
+    assert fill["price"] == 101  # accounting execution price, not triggering tape or order limit
+    assert fill["fill_trade_price"] == 99
+    assert fill["visible_ts_ms"] == fill["fill_ts_ms"] + 5
+    assert fill["campaign_id"] is None and fill["campaign_id_at_submit"] == "0"
+    assert fill["fee"] == -0.001 and fill["source_order_id"] == "0"
+    order = client.get(route + "/orders/" + fill["order_id"]).json()
+    assert order["price"] == 100 and order["filled_quantity"] == 0.002
+    assert order["fill_count"] == 2 and order["cancel_ack_ts_ms"] is None
+    assert order["scope"] == "fill_trace_snapshots_only"
+    assert order["pnl"] is None and not order["lifecycle_complete"]
+    assert client.get(route + "/orders/not-an-existing-order").status_code == 404
+    assert client.post(route + "/market", json={"path": str(source.path)}).status_code == 405
+    assert str(source.summary.parent) not in json.dumps([info, response, first, order])
+    assert store.result(source.id) == source.report and store.jobs() == []
+
+
+@pytest.mark.parametrize("interval_s", [1, 5, 60, 300])
+def test_market_candle_intervals_and_empty_seconds(store, connected_market, interval_s):
+    from narrowgate import studio_market
+
+    source = connected_market
+    response = studio_market.candles(store, source.id, source.start,
+                                    source.start + 300000, interval_s)
+    assert response["status"] == "available"
+    assert sum(item["source_rows"] for item in response["items"]) == 3
+    assert sum(item["volume"] for item in response["items"]) == 6
+    assert response["count"] == len(response["items"]) <= 3
+
+
+@pytest.mark.parametrize("query", [
+    {"end_ms": 1735689600000}, {"end_ms": 1735689600000 + 86_460_000},
+    {"interval_s": 2}, {"interval_s": 1, "end_ms": 1735689600000 + 5001000},
+    {"start_ms": 1735689600001},
+])
+def test_market_candles_reject_unbounded_and_unaligned_queries(store, connected_market, query):
+    source = connected_market
+    client = TestClient(studio.create_app(store.root))
+    response = client.get(f"/api/results/{source.id}/candles", params={
+        "start_ms": source.start, "end_ms": source.start + 60000,
+    } | query)
+    assert response.status_code == 400
+
+
+def test_market_missing_inputs_and_invalid_index_leave_original_intact(store, connected_market):
+    from narrowgate import studio_market
+
+    source = connected_market
+    source.path.write_text("arm,fill_sequence\nbaseline,0\n")
+    with pytest.raises(ValueError, match="fill_ts"):
+        studio_market.connect_b0(store, source.id, source.summary, source.bars)
+    assert studio_market.fills(store, source.id, source.start, source.start + 10000)["count"] == 3
+    source.bars.joinpath("BTCUSDC-1s-2025-01-01.parquet").unlink()
+    response = studio_market.candles(store, source.id, source.start, source.start + 60000)
+    assert response["reason"] == "market_day_file_unavailable" and response["items"] == []
+    assert store.result(source.id) == source.report
+    client = TestClient(studio.create_app(store.root))
+    assert client.get(f"/api/results/{source.id}/fills", params={
+        "start_ms": source.start, "end_ms": source.start + 10000, "limit": 1001,
+    }).status_code == 400
+    assert client.get(f"/api/results/{source.id}/fills", params={
+        "start_ms": source.start, "end_ms": source.start + 10000, "cursor": "invalid",
+    }).status_code == 400
+
+
+def test_market_unregistered_report_does_not_invent_fills(store, b0_source):
+    from narrowgate import studio_market
+
+    report = store.import_b0(b0_source)
+    assert studio_market.market_info(store, report["id"])["status"] == "unavailable"
+    response = studio_market.fills(store, report["id"], 1735689600000, 1735689660000)
+    assert response["status"] == "unavailable" and response["items"] == []
+
+
+@pytest.mark.parametrize("defect", ["duplicate", "wrong_arm", "outside", "truncated"])
+def test_market_connection_rejects_incomplete_or_duplicate_selected_fills(
+    store, connected_market, defect
+):
+    from narrowgate import studio_market
+
+    source = connected_market
+    if defect == "duplicate":
+        source.rows[1]["fill_sequence"] = source.rows[0]["fill_sequence"]
+    elif defect == "wrong_arm":
+        source.rows[0]["arm"] = "candidate"
+    elif defect == "outside":
+        source.rows[0]["fill_ts"] = source.start - 1
+    else:
+        source.rows.pop()
+    with source.path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=source.rows[0])
+        writer.writeheader()
+        writer.writerows(source.rows)
+    with pytest.raises(ValueError):
+        studio_market.connect_b0(store, source.id, source.summary, source.bars)
+    response = studio_market.fills(store, source.id, source.start, source.start + 86400000)
+    assert response["count"] == 3 and store.result(source.id) == source.report
+
+
+@pytest.mark.parametrize(
+    "defect", ["duplicate", "nonfinite", "wrong_columns", "wrong_timestamp_type", "symlink"]
+)
+def test_market_invalid_bars_are_unavailable_without_fill_substitution(
+    store, connected_market, tmp_path, defect
+):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from narrowgate import studio_market
+
+    source = connected_market
+    path = source.bars / "BTCUSDC-1s-2025-01-01.parquet"
+    data = pq.read_table(path).to_pydict()
+    if defect == "duplicate":
+        data["timestamp"][1] = data["timestamp"][0]
+    elif defect == "nonfinite":
+        data["close"][0] = float("nan")
+    elif defect == "wrong_columns":
+        data.pop("open")
+    elif defect == "wrong_timestamp_type":
+        data["timestamp"] = [str(value) for value in data["timestamp"]]
+    if defect == "symlink":
+        external = tmp_path / "unregistered.parquet"
+        path.rename(external)
+        path.symlink_to(external)
+    else:
+        pq.write_table(pa.table(data), path)
+    response = studio_market.candles(store, source.id, source.start, source.start + 60000)
+    assert response["status"] == "unavailable" and response["items"] == []
+    assert str(tmp_path) not in json.dumps(response)
+
+
+def test_market_cli_reconnect_keeps_null_fields_and_day_boundary(store, connected_market, capsys):
+    from narrowgate import studio_market
+
+    source = connected_market
+    for row in source.rows:
+        for key in ("last_private_fill_visible_ts_ms", "fill_fee_usdc", "inventory_after_fill"):
+            row.pop(key)
+    with source.path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=source.rows[0])
+        writer.writeheader()
+        writer.writerows(source.rows)
+    assert studio.main(["connect-b0", "--state-dir", str(store.root), "--result-id", source.id,
+                        "--summary", str(source.summary)]) == 0
+    assert "bars_dir" not in capsys.readouterr().out
+    page = studio_market.fills(store, source.id, source.start, source.start + 86400000)
+    assert page["count"] == 3  # next UTC day's fill is excluded by the half-open window
+    assert page["items"][0]["visible_ts_ms"] is None
+    assert page["items"][0]["fee"] is None and page["items"][0]["inventory_after"] is None
+    assert studio_market.candles(store, source.id, source.start, source.start + 60000)[
+        "reason"
+    ] == "market_source_not_connected"
+
+
 @pytest.mark.parametrize(
     "defect", ["missing", "partial", "traversal", "overlap", "pnl", "nan", "incomplete"]
 )

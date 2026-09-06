@@ -1,13 +1,21 @@
 # Replay Studio frontend
 
-Last materially modified: 2026-09-06
-Last materially synchronized: 2026-09-06
+Last materially modified: 2026-09-07
+Last materially synchronized: 2026-09-07
 
 This English page is canonical; [简体中文](README.zh-CN.md).
 
 React + TypeScript workspace for the packaged Studio UI. The only executable runner is `replay-demo` with the built-in `synthetic-demo` dataset. A separate default tab displays existing private B0 summaries imported through the [owner-local CLI](../docs/plans/remote_replay_studio.md#import-completed-b0-results-without-replay). This interface does not submit real F01, current B0 or E/C research, invoke shell commands, or provision cloud resources.
 
 Real results use read-only `/api/results` endpoints and remain separate from synthetic jobs, reports and comparison. The browser displays saved amounts and continuous-segment coverage without manufacturing daily PnL or Sharpe; fees already in trading PnL are not deducted again, and funding is added once. Local/Azure origin and existing cross-host verification describe historical provenance, not current cloud connectivity. Missing queue coverage and modeled-evidence limitations stay visible. No private evidence ships in the frontend bundle.
+
+## Market review and data quality
+
+The market-review page selects an imported B0, continuous segment, UTC date, and 1s/5s/1m/5m candle interval (default 1m). It reuses the existing React/SVG stack, with keyboard/button zoom and bounded drag navigation; requests stay within one UTC day, align to complete candle boundaries, and display at most 1,000 candles. Candles come only from retained market bars, never from strategy fills. The current source is explicitly **historical market context, not verified as the exact original replay input**. A missing bar second has an unknown cause, not an automatic source-outage classification.
+
+BUY/SELL markers identify simulated fill direction, not opening/closing trades. Each fill keeps its exact physical and local-visible timestamp, execution price, quantity, original/scoped order identifiers, inventory, signed fee, and recorded campaign fields. Same-candle and same-millisecond fills remain independent rows; incomplete pagination is disclosed and can be continued. Missing fields stay unknown, and a submit-time campaign is not relabeled as final attribution. Inventory observations use the local-visible callback clock and original sequence, retaining same-clock changes without drawing an invented path across different timestamps. Missing inventory clocks are not replaced by exchange fill time. Order details are partial fill snapshots: the UI does not manufacture active-order bands or continuous PnL.
+
+The separate UTC quality calendar includes the entire requested inclusive date range, including absent leading/trailing dates. Source, market, symbol, dataset, node, problem-day, and explicitly missing-replica filters are available. File availability, audit status, per-task usability, and node-copy verification remain separate; an offline or unchecked copy is not silently missing or usable. Expanded entries show only recorded counts, byte sizes, coverage, gap intervals, timestamps, reasons, and evidence scope. Export creates a bounded JSON download/recheck checklist; it never launches a download, synchronization, audit, or replay. Following a day into market review does not bind the current quality catalog to an older result.
 
 ## Developer build
 

@@ -2,8 +2,8 @@
 
 [简体中文](remote_replay_studio.zh-CN.md)
 
-Last materially modified: 2026-09-06
-Last materially synchronized: 2026-09-06
+Last materially modified: 2026-09-07
+Last materially synchronized: 2026-09-07
 
 ## What is available
 
@@ -48,6 +48,40 @@ The owner supplies an existing private `baseline_summary.json` beside its `input
 The importer follows only explicitly selected segment stems and reads the small summary, input plan, segment metadata and aggregate CSV. It checks coverage, completed baseline/config metadata and amount consistency. Raw fill, campaign and funding files are checked for existence only, not reread or rehashed. Missing, partial, overlapping and out-of-root sources are rejected. An allowlisted compact report is stored in the existing private SQLite database, without raw artifacts or source paths; one summary-derived ID makes repeat imports idempotent. Changes to subsequent research phase, training or execution-permission descriptions do not block viewing an existing B0. Import creates no job and starts no replay, worker, Azure synchronization or cloud resource.
 
 The separate “真实 B0” view uses read-only `/api/results` endpoints. It shows covered UTC days, continuous segments, accounting amounts, selected local/Azure execution origins and the source summary's existing cross-host verification statement. Origin is provenance, not current cloud liveness. Import consistency checks do not repeat the original fill/funding or cross-host qualification. `daily.csv` rows remain segment aggregates; the UI does not invent daily returns, Sharpe or an account equity curve. Trading PnL already includes fees and terminal MTM; funding is added exactly once. Missing native queue coverage and modeled-runtime limitations remain visible. Synthetic demo jobs and their workers stay separate.
+
+## Connect market context and simulated historical fills
+
+After importing the report, the owner can create a private display index from those same selected final fill traces and connect existing BTCUSDC market bars. This does not replay the strategy or modify its summary, artifacts or accounting. The optional `--bars-dir` names retained `BTCUSDC-1s-YYYY-MM-DD.parquet` files; without it, fill queries work while candles explicitly remain unavailable.
+
+```bash
+.venv/bin/python -m narrowgate.studio connect-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --result-id "<imported-result-id>" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json" \
+  --bars-dir "${NARROWGATE_DATA_ROOT}/bars_1s"
+```
+
+The connection and derived fill index stay in owner-only SQLite. Only the CLI can register local paths; browser APIs accept result IDs, UTC time windows and page cursors, never arbitrary paths. Reconnecting replaces only the display index, not the immutable imported report. No raw market files are copied, hashed again or uploaded.
+
+`GET /api/results/{id}/market` reports segment/day coverage and source availability. `GET /api/results/{id}/candles` requires a half-open UTC millisecond window (`start_ms`, `end_ms`) of at most 24 hours, aligned to `interval_s` in `1,5,60,300`, with at most 5,000 candles. OHLC and volume are aggregated only from retained market bars; absent seconds stay absent, without forward-filling. Their count does not distinguish a no-trade second from a source gap. These bars are historical market context, explicitly `context_only_not_exact_replay_binding`; registration alone does not prove they are the exact original replay input. Missing, unreadable or malformed market data returns an explicit unavailable reason rather than candles made from strategy fills.
+
+`GET /api/results/{id}/fills` uses the same bounded UTC window and `limit` up to 1,000 plus an opaque cursor. Equal-timestamp fills remain separate, with segment-scoped IDs and original fill sequence. Execution `price` comes from the recorded accounting price (`quote_px`); triggering tape price and order limit remain separate. Physical fill time and private visibility time are distinct. Inventory before/after is the recorded local callback ledger, not an invented physical-order reconstruction. Signed fees preserve positive cost and negative rebate; they are already included in trading PnL. `campaign_id_at_submit` is not relabeled as the final campaign ID.
+
+`GET /api/results/{id}/orders/{order_id}` returns only snapshots saved at actual fills, with at most 1,000 fill rows and explicit truncation. Target quote proposals never become effective orders. Unfilled-order lifecycle, later cancel outcomes and order PnL are unavailable unless present in those original records; absent fields remain null and lifecycle completeness remains false. All fills and orders are labeled `simulated_historical_fills`, not live executions. The existing aggregate report remains the accounting view; chart queries do not manufacture a PnL curve.
+
+## View existing data-quality evidence
+
+The owner can adapt existing source/version audit CSVs and metadata-only file inventories into the calendar without downloading data, rerunning an audit or changing frozen replay inputs:
+
+```bash
+.venv/bin/python -m narrowgate.studio_quality \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/operator-selected.json"
+```
+
+The private manifest selects the source identity, existing audit columns and optional inventory patterns; the compact mapping is documented in [`import_quality`](../../narrowgate/studio_quality.py). It does not apply new quality thresholds. `GET /api/data-quality/catalog` lists registered datasets and nodes. `GET /api/data-quality?start_day=YYYY-MM-DD&end_day=YYYY-MM-DD` returns the complete inclusive calendar for at most 366 UTC days, optionally filtered by `dataset_id` and `node`. `/api/data-quality/export` uses the same parameters and exports only a suggested repair/synchronization list; it performs none of those operations.
+
+Audit status belongs to an explicit source version and recorded check scope. It is not proof that another node has that version. File presence, source quality, task usability and node-copy verification remain separate. Unavailable or offline node copies remain unknown, not automatically missing. An unreported interval never becomes a fully green day, and days without an audit remain visible as unknown rather than disappearing. The calendar does not grant strategy or replay eligibility.
 
 ## One remote host first, then more workers
 

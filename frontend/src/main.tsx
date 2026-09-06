@@ -7,6 +7,8 @@ import React, {
 } from "react";
 import { createRoot } from "react-dom/client";
 import { TraceCharts } from "./TraceCharts";
+import { TradeReplay } from "./TradeReplay";
+import { DataQuality } from "./DataQuality";
 import {
   api,
   display,
@@ -1121,6 +1123,7 @@ function App() {
   const [loadingReport, setLoadingReport] = useState(false);
   const [create, setCreate] = useState(false);
   const [section, setSection] = useState("results");
+  const [reviewDay, setReviewDay] = useState<string>();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [connected, setConnected] = useState(false);
@@ -1133,6 +1136,7 @@ function App() {
   const selectedResult = results.find(
     (result) => result.id === selectedResultId,
   );
+  const readOnlySection = ["results", "replay", "quality"].includes(section);
   const refresh = useCallback(async () => {
     if (refreshBusy.current) return;
     refreshBusy.current = true;
@@ -1286,6 +1290,8 @@ function App() {
         <nav>
           {[
             ["results", "▥", "真实 B0 结果"],
+            ["replay", "⌁", "K 线交易复盘"],
+            ["quality", "▦", "数据质量"],
             ["runs", "▤", "合成回放任务"],
             ["compare", "⇄", "合成结果比较"],
             ["nodes", "▦", "计算节点"],
@@ -1311,10 +1317,9 @@ function App() {
         </nav>
         <div className="sidebar-note">
           <span className="sidebar-note-dot" />
-          <strong>离线研究，边界清晰</strong>
+          <strong>离线回测工作台</strong>
           <p>
-            真实 B0 摘要只读展示；仅合成 replay-demo
-            可执行。不连接交易下单接口。
+            查看已有 B0、行情和成交记录，或运行合成演示。不连接实盘下单接口。
           </p>
         </div>
         <footer>
@@ -1328,11 +1333,15 @@ function App() {
             工作空间 <span>/</span>{" "}
             {section === "results"
               ? "真实 B0 结果 / 只读"
-              : section === "runs"
-                ? "合成回放任务"
-                : section === "compare"
-                  ? "合成结果比较"
-                  : "计算节点"}
+              : section === "replay"
+                ? "K 线交易复盘 / 只读"
+                : section === "quality"
+                  ? "数据质量 / UTC 日历"
+                  : section === "runs"
+                    ? "合成回放任务"
+                    : section === "compare"
+                      ? "合成结果比较"
+                      : "计算节点"}
           </div>
           <div className="connection">
             <i className={connected ? "live" : ""} />
@@ -1361,20 +1370,24 @@ function App() {
               <h1>
                 {section === "results"
                   ? "真实基线，按原口径查看。"
-                  : section === "runs"
-                    ? "让每一次回放，都可追溯。"
-                    : section === "compare"
-                      ? "先看同一口径，再做比较。"
-                      : "算力在哪里，任务就在哪里。"}
+                  : section === "replay"
+                    ? "把成交，放回真实行情。"
+                    : section === "quality"
+                      ? "每一个自然日，都有据可查。"
+                      : section === "runs"
+                        ? "让每一次回放，都可追溯。"
+                        : section === "compare"
+                          ? "先看同一口径，再做比较。"
+                          : "算力在哪里，任务就在哪里。"}
               </h1>
               <p>
-                {section === "results"
-                  ? "已导入的历史 B0 结果，与合成任务隔离展示；只读查看不授予研究或实盘执行权限。"
-                  : "管理合成执行、检查事件路径，回到原始报告。没有预置收益，也没有隐含实盘授权。"}
+                {readOnlySection
+                  ? "读取已有回测结果与行情记录，不重新运行回测。"
+                  : "运行合成演示、查看事件路径和原始报告。"}
               </p>
             </div>
-            {section === "results" ? (
-              <span className="tag real-tag">READ ONLY · 无执行入口</span>
+            {readOnlySection ? (
+              <span className="tag real-tag">READ ONLY · 已有结果</span>
             ) : (
               <button
                 className="button primary"
@@ -1385,17 +1398,16 @@ function App() {
             )}
           </div>
           <div className="boundary-strip">
-            <span className={`tag ${section === "results" ? "real-tag" : ""}`}>
-              {section === "results" ? "真实结果 · 只读导入" : "合成执行能力"}
+            <span className={`tag ${readOnlySection ? "real-tag" : ""}`}>
+              {readOnlySection ? "历史记录 · 只读查看" : "合成执行能力"}
             </span>
             <span>
-              {section === "results"
-                ? "真实 B0 ≠ 合成 demo 的 B0 标签"
+              {readOnlySection
+                ? "B0 成交来自历史回测，并非实盘成交。"
                 : "replay-demo / synthetic-demo"}
             </span>
             <span className="muted">
-              真实 F01、B0 重跑与 E/C 执行尚未接入；页面不触发 Blob
-              同步或云资源操作
+              真实回测任务调度和数据同步尚未接入页面。
             </span>
           </div>
           <div className="auth-bar">
@@ -1459,6 +1471,24 @@ function App() {
                 error={resultsError || baselineError}
               />
             </>
+          )}
+          {section === "replay" && (
+            <TradeReplay
+              results={results}
+              resultId={selectedResultId}
+              onResultId={setSelectedResultId}
+              authVersion={authVersion}
+              requestedDay={reviewDay}
+            />
+          )}
+          {section === "quality" && (
+            <DataQuality
+              authVersion={authVersion}
+              onReviewDay={(day) => {
+                setReviewDay(day);
+                setSection("replay");
+              }}
+            />
           )}
           {section === "runs" && (
             <>
