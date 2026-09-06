@@ -4,6 +4,8 @@
 
 Last materially synchronized: 2026-09-06
 
+Last materially modified: 2026-09-06
+
 This runbook defines a reusable private Azure Batch executor for offline
 NarrowGate replay. It contains no subscription, account, region, resource ID,
 storage locator, private path, strategy parameter, dataset identity, or result.
@@ -63,6 +65,18 @@ One-time pool bootstrap must:
 Keep Batch's own node-shared and task-working directories distinct from any
 compatibility mount. A missing closure is a bootstrap failure, not permission to
 download dependencies from the network inside a formal task.
+
+## Stable SSH access without an operator-IP storage rule
+
+When explicitly requested, retain one Standard static public IPv4 resource for the research period and bind it to the Batch pool's `publicIPAddressConfiguration` with `provision=UserManaged`. The address must be in the same region and subscription. An existing pool cannot change its public-IP list: first preserve its configuration and task metadata, verify zero nodes and no pending/running tasks, then recreate the pool definition. Do not delete Blob data or historical jobs to change networking. Follow the [Batch public-IP requirements](https://learn.microsoft.com/en-us/azure/batch/create-pool-public-ip).
+
+Configure an explicit TCP inbound NAT pool for SSH; current Batch pools do not expose SSH automatically. Its frontend range must contain at least 40 ports, avoid reserved ports 50000–55000, and its security-rule priority must be 150–3500. Permit only the remote access required by the owner. Disable password, keyboard-interactive and root login; create the operator account with an SSH public key and an expiry within the approved research period. Never upload the private key. Verify the node host-key fingerprint through the authenticated Batch control plane before first SSH connection.
+
+The retained public IP is stable, but node IDs, mapped ports, user accounts and host keys can change when nodes are recreated. Resolve `az batch node remote-login-settings show` and provision the public-key account for each new node; do not pin a retired node's port or disable host-key checking. Zero nodes means no SSH server. The address remains allocated and billable until final cleanup; do not keep an extra jump VM merely to provide SSH.
+
+SSH authenticates access to the node, not to Blob storage. Node-to-Blob access uses the pool's managed identity and the existing permitted subnet/service endpoint. Keep storage's default network action `Deny`; a changing workstation or proxy IP is not a durable storage-access design. Upload inputs through the authorized node when needed. Preserve task logs and results with the `outputFiles` mechanism below, regardless of whether the operator is connected.
+
+Record the owner-confirmed credit expiry and cleanup date on the resource group and in the private operations record. Schedule final cleanup two days before expiry, including the retained public IP. A desktop follow-up requires the desktop to be available; it is not a cloud-enforced spending cap. Pool autoscale and bounded tasks must independently limit idle compute. Archive unique results before deleting storage.
 
 ## Controlled native wheel builder
 

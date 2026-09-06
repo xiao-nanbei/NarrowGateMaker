@@ -4,6 +4,8 @@
 
 Last materially synchronized: 2026-09-06
 
+Last materially modified: 2026-09-06
+
 本文定义离线 NarrowGate replay 的可复用私有 Azure Batch executor，不包含 subscription、
 account、region、resource ID、storage locator、private path、策略参数、dataset identity
 或结果。
@@ -55,6 +57,18 @@ copy-on-write 实测证明其他配置安全，否则每个 node 使用一个 ta
 
 Batch 自己的 node-shared 与 task-working directory 必须和 compatibility mount 分离。
 Closure 缺失属于 bootstrap failure，不能因此允许 formal task 联网下载依赖。
+
+## 固定 SSH 入口，不依赖本机 IP 放行存储
+
+在 owner 明确要求时，为研究周期保留一个 Standard 静态公网 IPv4，并通过池的 `publicIPAddressConfiguration`、`provision=UserManaged` 绑定。地址须与 Batch 池位于同一区域及订阅。既有池不能修改公网 IP 列表：先保存配置和任务元数据，确认零节点、没有待执行或运行中的任务，再重建池定义。不要为调整网络删除 Blob 数据或历史 job。遵循 [Batch 公网 IP 要求](https://learn.microsoft.com/en-us/azure/batch/create-pool-public-ip)。
+
+显式配置 SSH 的 TCP inbound NAT pool；当前 Batch 池不再自动开放 SSH。前端端口范围至少包含 40 个端口，避开保留端口 50000–55000；安全规则优先级须在 150–3500 之间。仅允许 owner 所需的远程访问。禁用密码、keyboard-interactive 和 root 登录；使用 SSH 公钥建立操作账号，将其有效期限制在获准研究周期内。不得上传私钥。首次 SSH 连接前，通过已认证的 Batch 控制面核对节点 host-key fingerprint。
+
+保留的公网 IP 不变，但节点重建后 node ID、映射端口、用户账号和 host key 可能变化。每个新节点都应查询 `az batch node remote-login-settings show` 并配置公钥账号；不要固定引用已释放节点的端口，也不要关闭 host-key 检查。零节点意味着没有 SSH 服务。公网 IP 会一直保留并计费，直到最终清理；不要为 SSH 额外常驻一台跳板 VM。
+
+SSH 验证的是节点登录，不是 Blob 存储访问。节点通过池的 managed identity 和已经获准的 subnet/service endpoint 访问 Blob。存储默认网络策略保持 `Deny`；不断变化的本机或代理出口 IP 不是稳定的存储访问方案。需要时通过已获授权的节点传入输入文件。无论操作人员是否在线，任务日志和结果都使用下文的 `outputFiles` 持久化机制。
+
+将 owner 确认的信用到期日和清理日写入资源组标签与私有运维记录，在到期前两天安排最终清理，包括保留的公网 IP。桌面跟进任务要求桌面届时可运行，不是云端硬性费用上限；pool autoscale 和有时限的任务仍须独立限制空闲计算费用。删除存储前先归档唯一结果。
 
 ## 受控 native wheel builder
 
