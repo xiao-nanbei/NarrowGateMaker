@@ -181,6 +181,45 @@ def test_export_is_actionable_but_never_executes_download(tmp_path):
     assert len(report["items"]) == 4
 
 
+def test_reimport_replaces_selected_sources_without_deleting_raw_data(tmp_path):
+    root, path = setup_catalog(tmp_path)
+    manifest = json.loads(path.read_text())
+    execution = manifest["datasets"][0]
+    reference_data = tmp_path / "raw" / "BTCUSDT-2026-08-02.csv"
+    reference_data.write_text("retained optional reference book")
+    reference_audit = tmp_path / "reference-quality.csv"
+    reference_audit.write_text("day,symbol,raw_ok\n2026-08-02,BTCUSDT,False\n")
+    manifest["datasets"].append(
+        {
+            **execution,
+            "id": "reference-book-v1",
+            "symbol": "BTCUSDT",
+            "data_type": "reference_bbo_l2_100ms",
+            "label": "Optional reference book, separately selected version",
+            "audit": {**execution["audit"], "path": str(reference_audit)},
+        }
+    )
+    path.write_text(json.dumps(manifest))
+    import_quality(root, path)
+    assert {row["id"] for row in quality_catalog(root)["datasets"]} == {
+        "trades-v1",
+        "reference-book-v1",
+    }
+
+    # Deselection replaces the projection, without revisiting the old audit.
+    manifest["datasets"] = [execution]
+    path.write_text(json.dumps(manifest))
+    reference_audit.unlink()
+    import_quality(root, path)
+    assert [row["id"] for row in quality_catalog(root)["datasets"]] == ["trades-v1"]
+    days = quality_days(root, "2026-08-01", "2026-08-04")["items"]
+    assert all([row["dataset_id"] for row in day["sources"]] == ["trades-v1"] for day in days)
+    exported = quality_export(root, "2026-08-01", "2026-08-04")["items"]
+    assert len(exported) == 4
+    assert {row["dataset_id"] for row in exported} == {"trades-v1"}
+    assert reference_data.read_text() == "retained optional reference book"
+
+
 def test_current_and_future_days_are_incomplete_not_historical_failures(tmp_path):
     report = quality_days(tmp_path, "2099-01-01", "2099-01-02")
     assert all(row["ongoing"] for row in report["items"])

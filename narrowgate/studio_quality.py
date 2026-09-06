@@ -20,6 +20,7 @@ NAME = "data-quality.json"
 META = ("id", "source", "exchange", "market", "symbol", "data_type", "version", "label")
 TASKS = ("candles", "modeled_replay", "strict_replay", "funding_pnl")
 LIMITATIONS = [
+    "This inventory is not a replay dependency list; reference feeds need not be execution books.",
     "Audit status applies to the named source/version and recorded check scope, not every replay.",
     "File presence is not content verification; node reachability is not data quality.",
     "No interval is inferred from a second without trades, overall coverage, or forward filling.",
