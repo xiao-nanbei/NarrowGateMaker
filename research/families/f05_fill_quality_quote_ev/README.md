@@ -16,6 +16,40 @@ The canonical prediction output is `expected_maker_markout_bps_per_opportunity_3
 
 The root files own Quote-EV modeling and training; `audit/` owns order-level denominators, nulls, toxicity, and selection scoring. The production scorer adapter remains under `strategy/`. Shared dependencies: D, R, S.
 
+## E/C execution plumbing (untrained, not deployed)
+
+[`strategy/risk_selection.py`](../../../strategy/risk_selection.py) supplies immutable
+observations, quantity-aware `candidate_role()`, and the pure batch
+`evaluate_risk_selection()` interface. Both sides use one visible snapshot. E compares
+POST/WAIT for a flat opener; C compares KEEP/CANCEL for an existing order whose
+remaining quantity only increases exposure. Other nonterminal orders are included in
+the reachable-inventory range. Ambiguous roles, reducing/mixed orders, missing model
+inputs, and absent models preserve the baseline decision and its existing protections.
+The optional linear scorer estimates action-value differences in USDC; it is an
+interface, not a trained or economically validated policy.
+
+The existing F01
+[`campaign_outcome_replay_audit.py`](../f01_fixed_parameter_racing/campaign_outcome_replay_audit.py)
+accepts `--save-risk-opportunities` on its Python path to export eligible E/C
+opportunities, including those that never fill. Keeping the existing frozen inputs,
+an `--arm-spec-json` arm can select one recorded opportunity with an override such as:
+
+```json
+{"risk_selection_intervention": {"opportunity_id": "<recorded opportunity id>", "action": "WAIT"}}
+```
+
+Use `WAIT` only for E and `CANCEL` only for C. WAIT suppresses that submission, without
+adding a cooldown; CANCEL uses the normal cancellation lifecycle and cannot remove
+ownership before terminal confirmation. Collection is disabled by default.
+
+This implements observation and single-opportunity intervention plumbing only.
+Validated shared-prefix pairing, complete sampled paired labels, copy-on-write label
+generation, model training, and the live adapter remain unfinished. It introduces no
+new research family and grants no economic or deployment claim. Historical results
+below are not results for this interface.
+
+## Historical research results
+
 The Development-only successor [`decision_visible_negative_fill_value_evidence_m0_v1_1`](docs/decision_visible_negative_fill_value_evidence_m0_v1_1_development_20260729.md) used F10's native, hash-frozen first-add decision-to-terminal artifact, one decision per campaign, direct USDC/decision targets, expanding chronological OOF, and separate BUY/SELL evidence. Neither side improved on the campaign-state nuisance model with a positive familywise lower bound, and the predicted high-risk groups' mean-value intervals crossed zero. The identity is closed on Development; Validation and sealed holdout remain unread.
 
 This does not negate the older fill-toxicity and maker-markout evidence. It shows that the currently frozen decision-visible local microstructure fields do not reliably identify which first exposure-increasing add fill will have negative decision-to-campaign-terminal value. Existing fill-conditioned toxicity or `expected_maker_markout_bps_per_opportunity_30s` outputs cannot be substituted for this target and cannot authorize an F09 action.

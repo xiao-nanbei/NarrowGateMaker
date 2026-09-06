@@ -89,6 +89,12 @@ from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
 )
 from models.replay.continuous_accounting import FEE_ACCOUNTING_SEMANTICS
 from models.replay.replay_state_checkpoint import validate_replay_initial_state
+from models.replay.risk_selection import (
+    ReplayRiskSelection,
+    feature_ready_time,
+    opportunity_id,
+    visible_feature_snapshot,
+)
 from models.replay_contract import (  # noqa: E402
     _local_work_samples,
     bulk_cancel_sample_rows,
@@ -130,6 +136,12 @@ from strategy.conditional_p3_reach_gate import (
     executable_price_tick,
 )
 from strategy.buy_soft_widen_release import evaluate_buy_soft_widen_release
+from strategy.risk_selection import (
+    PendingExposure,
+    RiskSelectionCandidate,
+    RiskSelectionObservation,
+    candidate_role,
+)
 
 # Force unbuffered output for progress reporting
 os.environ["PYTHONUNBUFFERED"] = "1"
@@ -3732,6 +3744,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     正式 daily evidence 应通过 `_simulate_daily_segmented_with_engine()` 进入。
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="python")
+    risk_selection = None
+    if bool(params.get("risk_selection_collect_opportunities", False)):
+        risk_selection = ReplayRiskSelection(
+            intervention=params.get("risk_selection_intervention"),
+            sink=params.get("_risk_selection_opportunity_sink"),
+            max_rows=int(params.get("risk_selection_opportunity_max_rows", 0)),
+        )
+    elif (params.get("risk_selection_intervention") is not None
+          or params.get("_risk_selection_opportunity_sink") is not None):
+        raise ValueError("risk-selection intervention/sink requires opportunity collection")
     TICK = float(params.get("tick_size", globals()["TICK"]))
     LOT_SIZE = float(params.get("lot_size", globals()["LOT_SIZE"]))
     if not math.isfinite(TICK) or TICK <= 0.0:
@@ -16803,6 +16825,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         quantity_btc: float,
         exposure_increasing: bool,
         side_ctx: dict[str, Any],
+        reserve: bool = True,
     ) -> tuple[bool, str]:
         nonlocal post_cooldown_inventory_budget_block_count
         nonlocal post_cooldown_inventory_budget_next_preparation_id
@@ -16820,6 +16843,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         episode = post_cooldown_inventory_budget_active_by_side.get(normalized_side)
         if episode is None:
             return True, "no_active_budget_episode"
+        if not reserve:
+            # WAIT still needs the baseline's admission answer, but must not
+            # reserve inventory, consume a token, or count a submitted order.
+            probe = replace(
+                episode["budget"],
+                _reserved_by_order=dict(episode["budget"]._reserved_by_order),
+            ).reserve("risk-selection-probe", float(quantity_btc), exposure_increasing=True)
+            return bool(probe.allowed), str(probe.reason)
         preparation_token = (
             f"prepared:{normalized_side}:"
             f"{post_cooldown_inventory_budget_next_preparation_id}"
@@ -30783,6 +30814,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             bid_cancel_first = _should_cancel_first_replace("BUY", q, bid_ref_order, bid_updated, hb_new)
             ask_cancel_first = _should_cancel_first_replace("SELL", q, ask_ref_order, ask_updated, ha_new)
 
+            risk_selection_wait_sides = set()
+            if risk_selection is not None and abs(float(q)) <= 1e-10:
+                for side, orders, route_due, can_new, updated, cancel_first, coalesce in (
+                    ("BUY", bid_orders, bid_route_due, hb_new, bid_updated,
+                     bid_cancel_first, bid_pending_coalesce),
+                    ("SELL", ask_orders, ask_route_due, ha_new, ask_updated,
+                     ask_cancel_first, ask_pending_coalesce),
+                ):
+                    if (not orders and route_due and can_new and updated
+                            and not cancel_first and not coalesce
+                            and risk_selection.targets(
+                                opportunity_id(SYMBOL, int(t), int(nrq), side, "E"), "WAIT"
+                            )):
+                        risk_selection_wait_sides.add(side)
+
             if (
                 hb_new
                 and bid_updated
@@ -30795,6 +30841,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         quantity_btc=float(bid_sz),
                         exposure_increasing=bool(q >= 0.0),
                         side_ctx=quote_context["BUY"],
+                        reserve="BUY" not in risk_selection_wait_sides,
                     )
                 )
                 if not bid_budget_allowed:
@@ -30815,6 +30862,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         quantity_btc=float(ask_sz),
                         exposure_increasing=bool(q <= 0.0),
                         side_ctx=quote_context["SELL"],
+                        reserve="SELL" not in risk_selection_wait_sides,
                     )
                 )
                 if not ask_budget_allowed:
@@ -30854,6 +30902,134 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 bid_action = "none"
             if not ask_route_due:
                 ask_action = "none"
+            risk_selection_cancel_sides = set()
+            if risk_selection is not None:
+                risk_selection_pending = tuple(
+                    PendingExposure(_ranked_guard_order_id(order), str(order["side"]),
+                                    float(order["remaining"]))
+                    for order in (*bid_orders, *ask_orders)
+                    if float(order["remaining"]) > 0.0
+                )
+                for side, action, orders, ref_order, price, quantity, side_ctx in (
+                    ("BUY", bid_action, bid_orders, bid_ref_order, nbid, bid_sz,
+                     quote_context["BUY"]),
+                    ("SELL", ask_action, ask_orders, ask_ref_order, nask, ask_sz,
+                     quote_context["SELL"]),
+                ):
+                    kind = ""
+                    target_order_id = ""
+                    if action == "place" and not orders and abs(float(q)) <= 1e-10:
+                        kind = "E"
+                    elif (action == "keep" and len(orders) == 1 and ref_order is not None
+                          and ref_order["state"] == ORDER_OPEN
+                          and float(ref_order.get("cancel_ts", 0.0)) <= 0.0
+                          and float(ref_order["remaining"]) > 0.0):
+                        kind = "C"
+                        target_order_id = _ranked_guard_order_id(ref_order)
+                        price = float(ref_order["price"])
+                        quantity = float(ref_order["remaining"])
+                    if not kind:
+                        continue
+                    identity = opportunity_id(
+                        SYMBOL, int(t), int(nrq), side, kind, target_order_id
+                    )
+                    role = candidate_role(
+                        RiskSelectionObservation(int(t) * 1_000_000, int(t) * 1_000_000,
+                                                 float(q), risk_selection_pending),
+                        RiskSelectionCandidate(identity, kind, side, float(quantity),
+                                               "POST" if kind == "E" else "KEEP",
+                                               order_id=target_order_id),
+                    )
+                    if (kind == "E" and role != "opener") or (
+                        kind == "C" and role not in {"opener", "add"}
+                    ):
+                        continue
+                    # Explicit policy-visible fields only. In particular never
+                    # expose exchange_inventory, exchange_remaining, queue_left,
+                    # native scheduler cursors, or future markout labels here.
+                    features = {
+                        "mid": float(mid), "best_bid": float(cur_best_bid),
+                        "best_ask": float(cur_best_ask), "inventory_btc": float(q),
+                        "price": float(price), "quantity_btc": float(quantity),
+                        "toxicity": float(cur_tox_bid if side == "BUY" else cur_tox_ask),
+                        "markout_ema": float(mo_ema_bid if side == "BUY" else mo_ema_ask),
+                        **{name: side_ctx[name] for name in (
+                            "microprice_shift_bps", "l2_quote_flip_rate",
+                            "l2_book_refresh_ratio", "l2_book_cancel_ratio",
+                            "l2_near_depth_total",
+                        ) if name in side_ctx},
+                        **{name: cur_prediction_features[name] for name in (
+                            "volatility_5s", "volatility_30s", "volatility_60s",
+                            "volume_imbalance_5s", "volume_imbalance_30s",
+                            "trade_intensity_5s", "trade_intensity_30s",
+                            "price_change_5s", "price_change_30s",
+                        ) if name in cur_prediction_features},
+                    }
+                    features = visible_feature_snapshot(features)
+                    source_ready_ts_ns = {
+                        feed: max(0, int(_message_clock_state(feed, int(t))[2]))
+                        for feed in exec_message_schedules
+                    }
+                    prediction_ready_ts_ns = (
+                        int(_message_clock_state("prediction", int(t))[2])
+                        if "prediction" in exec_message_schedules else
+                        int(ml_ts[ml_idx]) * 1_000_000 if 0 <= int(ml_idx) < len(ml_ts) else 0
+                    )
+                    feature_ready_ts_ns = feature_ready_time(
+                        source_ready_ts_ns, prediction_ready_ts_ns, int(t) * 1_000_000,
+                    )
+                    chosen = risk_selection.observe({
+                        "opportunity_id": identity, "role": role,
+                        "kind": kind, "side": side, "order_id": target_order_id,
+                        "decision_ts_ns": int(t) * 1_000_000,
+                        "feature_ready_ts_ns": feature_ready_ts_ns,
+                        "decision_sequence": int(nrq),
+                        "baseline_action": "POST" if kind == "E" else "KEEP",
+                        "baseline_allowed": True, "quantity_btc": float(quantity),
+                        "price": float(price), "inventory_btc": float(q),
+                        "pending_orders": [
+                            {"order_id": _ranked_guard_order_id(order),
+                             "side": str(order["side"]),
+                             "remaining_qty_btc": float(order["remaining"])}
+                            for order in (*bid_orders, *ask_orders)
+                            if float(order["remaining"]) > 0.0
+                        ],
+                        "features": features,
+                        "visible_context": {
+                            "decision_bbo_index": int(decision_bbo_idx),
+                            "decision_l2_index": int(decision_l2_idx),
+                            "trade_visible_ts_ms": int(signal_visible_ts),
+                            "feature_ready_index": int(var_idx),
+                            "prediction_index": int(ml_idx),
+                            "prediction_ready_ts_ns": prediction_ready_ts_ns,
+                            "source_feature_ready_ts_ns": source_ready_ts_ns,
+                            "feature_ready_clock": (
+                                "latest_source_ready" if source_ready_ts_ns else "decision_snapshot"
+                            ),
+                            "scheduled_requote": bool(scheduled_requote_due),
+                        },
+                    })
+                    if chosen == "WAIT":
+                        if side == "BUY":
+                            hb_new, bid_updated, bid_action = False, False, "pause"
+                            bid_block_reasons.append("risk_selection_wait")
+                        else:
+                            ha_new, ask_updated, ask_action = False, False, "pause"
+                            ask_block_reasons.append("risk_selection_wait")
+                    elif chosen == "CANCEL":
+                        risk_selection_cancel_sides.add(side)
+                        if side == "BUY":
+                            hb_new, bid_updated, bid_action = False, True, "cancel"
+                        else:
+                            ha_new, ask_updated, ask_action = False, True, "cancel"
+            bid_update_cancel_reason = (
+                "risk_selection_cancel" if "BUY" in risk_selection_cancel_sides
+                else "requote_replace" if hb_new else "side_disabled"
+            )
+            ask_update_cancel_reason = (
+                "risk_selection_cancel" if "SELL" in risk_selection_cancel_sides
+                else "requote_replace" if ha_new else "side_disabled"
+            )
             if (
                 ema_add_wait_fork_enabled
                 and ema_add_wait_fork_assigned
@@ -31004,7 +31180,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 block_reasons=ask_block_reasons,
                 route_allowed=ask_route_due,
             )
-            if bid_route_due:
+            if bid_route_due and "BUY" not in risk_selection_wait_sides:
                 _maybe_submit_safe_add_rearm_probe(
                     "BUY",
                     int(t),
@@ -31018,7 +31194,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     exposure_increasing=bool(q >= 0.0),
                     side_orders=bid_orders,
                 )
-            if ask_route_due:
+            if ask_route_due and "SELL" not in risk_selection_wait_sides:
                 _maybe_submit_safe_add_rearm_probe(
                     "SELL",
                     int(t),
@@ -31053,6 +31229,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             reason = (
                                 "ranked_toxicity_guard" if guard_id else
                                 "cancel_first_replace" if cancel_first else
+                                "risk_selection_cancel" if side in risk_selection_cancel_sides else
                                 "requote_replace" if can_new else "side_disabled"
                             )
                             serial_steps.append({
@@ -31157,7 +31334,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _request_cancel_all(
                         bid_orders,
                         t,
-                        "requote_replace" if hb_new else "side_disabled",
+                        bid_update_cancel_reason,
                     )
 
                 if ranked_guard_ask_cancel_order_id:
@@ -31177,7 +31354,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _request_cancel_all(
                         ask_orders,
                         t,
-                        "requote_replace" if ha_new else "side_disabled",
+                        ask_update_cancel_reason,
                     )
 
                 _process_order_transitions(bid_orders, "BUY", t, p)
@@ -31227,7 +31404,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     if bid_orders:
                         _request_cancel_all(
                             bid_orders, t,
-                            "requote_replace" if hb_new else "side_disabled",
+                            bid_update_cancel_reason,
                     )
                     _process_order_transitions(bid_orders, "BUY", t, p)
                     if hb_new and bid_orders:
@@ -31259,7 +31436,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     if ask_orders:
                         _request_cancel_all(
                             ask_orders, t,
-                            "requote_replace" if ha_new else "side_disabled",
+                            ask_update_cancel_reason,
                     )
                     _process_order_transitions(ask_orders, "SELL", t, p)
                     if ha_new and ask_orders:
@@ -34716,6 +34893,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         cooldown_duration_shared_prefix_executor.finalize_simulation_result(
             result
         )
+    if risk_selection is not None:
+        result.update(risk_selection.finish())
     return result
 
 
@@ -35685,6 +35864,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
+    if (params.get("risk_selection_collect_opportunities", False)
+            or params.get("risk_selection_intervention") is not None
+            or params.get("_risk_selection_opportunity_sink") is not None):
+        raise NotImplementedError("E/C opportunity replay is Python-authoritative")
     if runtime_compute_sample_rows(params):
         raise ValueError("path-conditioned runtime compute continuation is Python-only")
     if "last_requote_ts_ms" in (params.get("initial_live_state") or {}):

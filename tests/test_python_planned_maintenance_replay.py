@@ -1870,6 +1870,243 @@ def _async_fifo_params(*, new=(2.0, 5.0, 300.0), cancel=(2.0, 11.0, 400.0)):
     }
 
 
+@pytest.mark.parametrize("async_gateway", [False, True])
+def test_risk_selection_neutral_collector_preserves_execution_and_all_opportunities(async_gateway):
+    import json
+
+    overrides = {"planned_quote_stop_ts_ms": 0, "trace_decisions_max": 1}
+    if async_gateway:
+        overrides.update(_async_fifo_params())
+        overrides["trace_decisions_max"] = 1
+    baseline = _run(keep_until_stop=True, param_overrides=overrides)
+    disabled = _run(keep_until_stop=True, param_overrides={
+        **overrides, "risk_selection_collect_opportunities": False,
+    })
+    collected = _run(keep_until_stop=True, param_overrides={
+        **overrides, "risk_selection_collect_opportunities": True,
+    })
+    for field in ("pnl", "final_inventory", "fills_bid", "fills_ask", "n_requotes",
+                  "_quote_trace", "_fill_trace", "_decision_trace"):
+        assert baseline[field] == disabled[field] == collected[field]
+    assert "_risk_selection_opportunities" not in disabled
+    rows = collected["_risk_selection_opportunities"]
+    assert collected["risk_selection_opportunity_counts"]["E"] == 2
+    # While flat, the other side's live order can change this target's role.
+    assert collected["risk_selection_opportunity_counts"]["C"] == 0
+    assert len(collected["_decision_trace"]) == 1 < len(rows)
+    assert len({row["opportunity_id"] for row in rows}) == len(rows)
+    assert collected["fills_bid"] == collected["fills_ask"] == 0
+    assert {row["kind"] for row in rows} == {"E"}
+    adds = _run(keep_until_stop=True, param_overrides={
+        **overrides, "risk_selection_collect_opportunities": True,
+        "initial_inventory": 0.002, "initial_entry_price": 100.0,
+    })["_risk_selection_opportunities"]
+    assert len(adds) > 1
+    assert all(row["kind"] == "C" and row["side"] == "BUY" for row in adds)
+    assert len({row["order_id"] for row in adds}) == 1
+    assert all(not ({"queue_left", "exchange_inventory", "exchange_remaining"}
+                    & row["features"].keys()) for row in rows)
+    json.dumps(rows, allow_nan=False)
+
+
+@pytest.mark.parametrize("async_gateway", [False, True])
+def test_risk_selection_wait_skips_only_one_new_and_preserves_cadence(async_gateway):
+    overrides = {"planned_quote_stop_ts_ms": 0, "risk_selection_collect_opportunities": True,
+                 "trace_decisions_max": 100,
+                 "post_cooldown_incremental_inventory_budget_enabled": True,
+                 "post_cooldown_incremental_inventory_budget_units": 1,
+                 "fill_cooldown": 1.0,
+                 "fill_cooldown_consecutive_reset_policy": "opposite_fill_only",
+                 "trace_post_cooldown_incremental_inventory_budget_max": 100,
+                 "decision_trace_profile": "mechanics_only"}
+    if async_gateway:
+        overrides.update(_async_fifo_params())
+    baseline = _run(keep_until_stop=True, param_overrides=overrides)
+    target = next(row for row in baseline["_risk_selection_opportunities"]
+                  if row["kind"] == "E" and row["side"] == "BUY")
+    waited = _run(keep_until_stop=True, param_overrides={
+        **overrides, "risk_selection_intervention": {
+            "opportunity_id": target["opportunity_id"], "action": "WAIT",
+        },
+    })
+    assert waited["risk_selection_intervention_count"] == 1
+    paired_target = next(row for row in waited["_risk_selection_opportunities"]
+                         if row["opportunity_id"] == target["opportunity_id"])
+    assert {k: v for k, v in paired_target.items() if k != "action"} == {
+        k: v for k, v in target.items() if k != "action"
+    }
+    buy = [row for row in waited["_quote_trace"] if row["side"] == "BUY"]
+    sell = [row for row in waited["_quote_trace"] if row["side"] == "SELL"]
+    assert buy[0]["submit_ts"] == 1_000
+    assert sell[0]["submit_ts"] == 0
+    assert waited["n_requotes"] == baseline["n_requotes"]
+    assert waited["post_cooldown_incremental_inventory_budget_conservation_failures"] == 0
+    assert [row["action"] for row in waited["_risk_selection_opportunities"]].count("WAIT") == 1
+
+
+@pytest.mark.parametrize("async_gateway", [False, True])
+def test_risk_selection_cancel_uses_ack_path_without_replacement_continuation(async_gateway):
+    overrides = {"planned_quote_stop_ts_ms": 0, "risk_selection_collect_opportunities": True,
+                 "replace_terminal_continuation": True, "trace_decisions_max": 100,
+                 "initial_inventory": 0.002, "initial_entry_price": 100.0}
+    if async_gateway:
+        overrides.update(_async_fifo_params(new=(2.0, 5.0, 30.0),
+                                             cancel=(200.0, 600.0, 900.0)))
+    baseline = _run(keep_until_stop=True, param_overrides=overrides)
+    target = next(row for row in baseline["_risk_selection_opportunities"]
+                  if row["kind"] == "C" and row["side"] == "BUY")
+    canceled = _run(keep_until_stop=True, param_overrides={
+        **overrides, "risk_selection_intervention": {
+            "opportunity_id": target["opportunity_id"], "action": "CANCEL",
+        },
+    })
+    buy = [row for row in canceled["_quote_trace"] if row["side"] == "BUY"]
+    assert buy[0]["cancel_reason"] == "risk_selection_cancel"
+    assert buy[0]["outcome"] == "cancel"
+    assert buy[0]["outcome_ts"] > target["decision_ts_ns"] // 1_000_000
+    assert buy[1]["submit_ts"] == 2_000
+    assert canceled["replace_terminal_continuation_decision_count"] == 0
+    assert canceled["risk_selection_intervention_count"] == 1
+    paired_target = next(row for row in canceled["_risk_selection_opportunities"]
+                         if row["opportunity_id"] == target["opportunity_id"])
+    assert {k: v for k, v in paired_target.items() if k != "action"} == {
+        k: v for k, v in target.items() if k != "action"
+    }
+    if async_gateway:
+        assert buy[0]["cancel_effective_ts"] == 1_200
+        assert buy[0]["cancel_ack_ts"] == 1_600
+        assert buy[0]["cancel_rest_return_ts"] == 1_900
+
+
+@pytest.mark.parametrize("side,inventory", [("BUY", 0.002), ("SELL", -0.002)])
+def test_risk_selection_excludes_reducing_and_risk_blocked_opportunities(side, inventory):
+    result = _run(keep_until_stop=True, param_overrides={
+        "risk_selection_collect_opportunities": True, "planned_quote_stop_ts_ms": 0,
+        "initial_inventory": inventory, "initial_entry_price": 100.0,
+    })
+    rows = result["_risk_selection_opportunities"]
+    assert rows and all(row["kind"] == "C" and row["side"] == side for row in rows)
+    blocked = _run(param_overrides={"risk_selection_collect_opportunities": True,
+                                    "max_position_value": 0.01})
+    assert blocked["_risk_selection_opportunities"] == []
+
+
+def test_risk_selection_collector_streaming_overflow_and_missing_target():
+    rows = []
+    result = _run(keep_until_stop=True, param_overrides={
+        "risk_selection_collect_opportunities": True, "_risk_selection_opportunity_sink": rows.append,
+    })
+    assert result["_risk_selection_opportunities"] == []
+    assert len(rows) == sum(result["risk_selection_opportunity_counts"].values())
+    with pytest.raises(RuntimeError, match="exceeded max_rows"):
+        _run(param_overrides={"risk_selection_collect_opportunities": True,
+                              "risk_selection_opportunity_max_rows": 1})
+    with pytest.raises(RuntimeError, match="was not reached"):
+        _run(param_overrides={"risk_selection_collect_opportunities": True,
+                              "risk_selection_intervention": {
+                                  "opportunity_id": "missing", "action": "WAIT"}})
+
+
+def test_risk_selection_full_cpp_cannot_silently_ignore_intervention():
+    from models.backtest_tick import _simulate_tick_cpp
+
+    trades, bbo = _inputs()
+    with pytest.raises(NotImplementedError, match="Python-authoritative"):
+        _simulate_tick_cpp(trades, np.asarray([0]), np.asarray([1.0]),
+                           {**_params(), "risk_selection_collect_opportunities": True}, bbo_data=bbo)
+
+
+def test_risk_selection_unknown_features_remain_json_null():
+    from models.replay.risk_selection import visible_feature_snapshot
+
+    assert visible_feature_snapshot({"a": None, "b": np.nan, "c": np.inf,
+                                     "d": "unknown", "e": 1.0}) == {
+        "a": None, "b": None, "c": None, "d": None, "e": 1.0,
+    }
+
+
+def test_risk_selection_positive_dust_retains_quantity_and_cancel_identity():
+    from models.replay.risk_selection import ReplayRiskSelection
+    from strategy.risk_selection import (
+        PendingExposure, RiskSelectionCandidate, RiskSelectionObservation, candidate_role,
+    )
+
+    quantity = 0.0005  # Positive remainder smaller than the usual 0.001 lot.
+    observation = RiskSelectionObservation(
+        1_000_000_000, 900_000_000, 0.002, (PendingExposure("old", "BUY", quantity),),
+    )
+    candidate = RiskSelectionCandidate("dust", "C", "BUY", quantity, "KEEP", order_id="old")
+    assert candidate_role(observation, candidate) == "add"
+    collector = ReplayRiskSelection(intervention={"opportunity_id": "dust", "action": "CANCEL"})
+    assert collector.observe({"opportunity_id": "dust", "kind": "C", "side": "BUY",
+                              "baseline_action": "KEEP", "quantity_btc": quantity,
+                              "order_id": "old"}) == "CANCEL"
+    row = collector.finish()["_risk_selection_opportunities"][0]
+    assert row["quantity_btc"] == quantity and row["order_id"] == "old"
+
+
+@pytest.mark.parametrize("source_ready,prediction_ready,expected", [
+    ({"depth": 800, "bbo": 850}, 900, 900),
+    ({"depth": 950, "bbo": 850}, 900, 950),
+    ({}, 900, 1_000),
+])
+def test_risk_selection_readiness_includes_prediction_fallback(source_ready, prediction_ready, expected):
+    from models.replay.risk_selection import feature_ready_time
+
+    assert feature_ready_time(source_ready, prediction_ready, 1_000) == expected
+
+
+@pytest.mark.parametrize("private_delay_ms", [0.0, 1_200.0])
+def test_risk_selection_pending_cancel_can_fill_before_effective(private_delay_ms):
+    overrides = {
+        **_async_fifo_params(new=(2.0, 5.0, 30.0), cancel=(500.0, 700.0, 900.0)),
+        "risk_selection_collect_opportunities": True, "replace_terminal_continuation": True,
+        "initial_inventory": 0.002, "initial_entry_price": 100.0,
+        "_private_fill_visibility_latency_samples_ms": [private_delay_ms],
+    }
+    # Both calls consume the same prefix. The adverse trade arrives only after
+    # the targeted KEEP/CANCEL decision, before its cancel reaches exchange.
+    baseline = _run(keep_until_stop=True, crossing_fill_ts_ms=1_200,
+                    param_overrides=overrides)
+    target = next(row for row in baseline["_risk_selection_opportunities"]
+                  if row["kind"] == "C" and row["side"] == "BUY")
+    canceled = _run(keep_until_stop=True, crossing_fill_ts_ms=1_200, param_overrides={
+        **overrides, "risk_selection_intervention": {
+            "opportunity_id": target["opportunity_id"], "action": "CANCEL",
+        },
+    })
+    buy = next(row for row in canceled["_quote_trace"] if row["side"] == "BUY")
+    assert buy["cancel_request_ts"] == 1_000
+    assert buy["outcome"] == "fill"
+    assert buy["outcome_ts"] == 1_200 + private_delay_ms
+    assert canceled["fills_bid"] >= 1
+    assert canceled["risk_selection_intervention_count"] == 1
+
+
+def test_risk_selection_collection_preserves_source_delivery_and_async_private_state():
+    import json
+
+    from tests.test_exec_book_visibility_delay import _profile_execution_message_fixture
+
+    inputs, *_ = _profile_execution_message_fixture()
+    inputs["params"].update(_async_fifo_params(new=(2.0, 5.0, 30.0),
+                                               cancel=(2.0, 11.0, 40.0)))
+    inputs["params"]["_private_fill_visibility_latency_samples_ms"] = [35.0]
+    baseline = simulate_tick(**inputs)
+    inputs["params"]["risk_selection_collect_opportunities"] = True
+    collected = simulate_tick(**inputs)
+    for name in ("_quote_trace", "_decision_trace", "_fill_trace", "pnl", "final_inventory",
+                 "private_fill_exchange_match_count", "private_fill_visible_count"):
+        assert baseline[name] == collected[name]
+    rows = collected["_risk_selection_opportunities"]
+    assert rows
+    for row in rows:
+        clocks = row["visible_context"]["source_feature_ready_ts_ns"]
+        assert clocks and row["feature_ready_ts_ns"] == max(clocks.values())
+        assert row["feature_ready_ts_ns"] <= row["decision_ts_ns"]
+    json.dumps(rows, allow_nan=False)
+
+
 @pytest.mark.parametrize("initial_sign", [-1, 1])
 @pytest.mark.parametrize("cause", ["position_timeout", "circuit_breaker"])
 @pytest.mark.parametrize("new_http_ms", [3.0, 2_500.0])

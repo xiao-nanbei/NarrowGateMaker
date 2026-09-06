@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from strategy.native_runtime import load_native_module, validate_native_capabilities
+from strategy.risk_selection import inventory_role_for_target
 
 SPREAD_CAP_COMPRESS = 0
 SPREAD_CAP_PAUSE_EXPOSURE = 1
@@ -661,26 +662,10 @@ def ber_inventory_role_for_target(
     *,
     epsilon_btc: float = 1e-10,
 ) -> str:
-    """Classify a quote without hiding partial-inventory cross-zero risk."""
-    normalized = str(side).strip().upper()
-    if normalized not in {"BUY", "SELL"}:
-        raise ValueError(f"unsupported BER quote side: {side!r}")
-    quantity = float(target_quantity)
-    if not math.isfinite(quantity) or quantity <= 0.0:
-        raise ValueError(
-            "BER target_quantity must be finite and positive"
-        )
-    q = float(inventory)
-    epsilon = max(float(epsilon_btc), 0.0)
-    if abs(q) <= epsilon:
-        return "opener"
-    signed_quantity = quantity if normalized == "BUY" else -quantity
-    if q * signed_quantity > 0.0:
-        return "add"
-    q_after = q + signed_quantity
-    if abs(q_after) <= epsilon or q * q_after > 0.0:
-        return "reducing"
-    return "mixed_cross_zero"
+    """Compatibility name for the shared quantity-aware role classifier."""
+    return inventory_role_for_target(
+        side, inventory, target_quantity, epsilon_btc=epsilon_btc
+    )
 
 
 def compose_ber_exposure_add_only_quote(

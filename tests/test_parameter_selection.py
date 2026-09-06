@@ -123,7 +123,8 @@ def test_funding_history_rejects_invalid_records(tmp_path, change):
         campaign_audit._load_funding_history(path, symbol="BTCUSDC")
 
 
-def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatch):
+@pytest.mark.parametrize("collect_risk", [False, True])
+def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatch, collect_risk):
     days = ["2026-01-01", "2026-01-02"]
     monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
     windows = []
@@ -143,7 +144,18 @@ def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatc
 
     def simulate(engine, trades, var_ts, var_ssq, params, **kwargs):
         calls.append((trades, params))
-        return {"pnl": 3., "_fill_trace": []}
+        result = {"pnl": 3., "_fill_trace": []}
+        if collect_risk:
+            result.update({
+                "_risk_selection_opportunities": [{
+                    "opportunity_id": "same-prefix", "kind": "E", "side": "BUY",
+                    "baseline_action": "POST", "features": {"toxicity": None},
+                    "decision_ts_ns": int(campaign_audit._day_start_ts(days[-1])) * 1_000_000_000,
+                }],
+                "risk_selection_opportunity_counts": {"E": 1, "C": 0},
+                "risk_selection_intervention_count": 0,
+            })
+        return result
 
     monkeypatch.setattr(campaign_audit.smoke, "_load_window", load)
     monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
@@ -151,7 +163,8 @@ def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatc
                         lambda **_kw: None)
     arms = [campaign_audit.smoke.SmokeArm(name, "test", {}, "") for name in ("B", "E")]
     result = campaign_audit._run_day_campaign_audit(
-        day=days[0], continuous_days=days, symbol="BTCUSDC", base={}, arms=arms,
+        day=days[0], continuous_days=days, symbol="BTCUSDC",
+        base={"risk_selection_collect_opportunities": collect_risk}, arms=arms,
         engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
     )
     assert len(windows) == 2  # shared market data; no per-arm reload
@@ -163,6 +176,31 @@ def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatc
     )
     assert all(row["window_day_count"] == 2 for row in result["daily_rows"])
     assert all(row["accounting_window"] == "continuous_segment" for row in result["daily_rows"])
+    assert len(result["risk_selection_opportunity_rows"]) == (2 if collect_risk else 0)
+    if collect_risk:
+        assert [row["arm"] for row in result["risk_selection_opportunity_rows"]] == ["B", "E"]
+        assert all(row["day"] == days[-1] for row in result["risk_selection_opportunity_rows"])
+        assert all(row["segment_start_day"] == days[0]
+                   for row in result["risk_selection_opportunity_rows"])
+        assert all(row["risk_selection_e_opportunities"] == 1 for row in result["daily_rows"])
+
+
+def test_risk_opportunity_export_preserves_unfilled_denominator(tmp_path):
+    rows = [{"opportunity_id": str(index), "kind": "E", "features": {"x": None}}
+            for index in range(3)]
+    path = tmp_path / "opportunities.jsonl"
+    campaign_audit._write_risk_opportunities(path, rows)
+    assert [json.loads(line) for line in path.read_text().splitlines()] == rows
+    with pytest.raises(ValueError, match="JSON compliant"):
+        campaign_audit._write_risk_opportunities(path, [{"feature": float("nan")}])
+
+
+def test_risk_opportunities_cli_rejects_unsupported_backend_before_loading_data():
+    with pytest.raises(SystemExit, match="require --engine python"):
+        campaign_audit_main([
+            "--days", "2026-01-01", "--arms", "baseline", "--engine", "cpp",
+            "--save-risk-opportunities", "--replay-purpose", "diagnostic",
+        ])
 
 
 @pytest.mark.parametrize("opening_fee", [0.1, -0.1, 0.0])

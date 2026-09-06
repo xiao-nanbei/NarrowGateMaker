@@ -1997,6 +1997,7 @@ def _write_partial_day_outputs(out_dir: Path, stem: str, day_result: dict[str, A
     quote_trace_df = pd.DataFrame(day_result.get("quote_trace_rows", []))
     fill_trace_df = pd.DataFrame(day_result.get("fill_trace_rows", []))
     decision_trace_df = pd.DataFrame(day_result.get("decision_trace_rows", []))
+    risk_opportunities = day_result.get("risk_selection_opportunity_rows", [])
     rollup_df = _rollup(daily_df)
     out_dir.mkdir(parents=True, exist_ok=True)
     daily_df.to_csv(out_dir / f"{stem}.partial.{safe_day}.daily.csv", index=False)
@@ -2025,6 +2026,18 @@ def _write_partial_day_outputs(out_dir: Path, stem: str, day_result: dict[str, A
             out_dir / f"{stem}.partial.{safe_day}.decision_trace.csv",
             index=False,
         )
+    if day_result.get("risk_selection_collect_opportunities"):
+        _write_risk_opportunities(
+            out_dir / f"{stem}.partial.{safe_day}.risk_opportunities.jsonl",
+            risk_opportunities,
+        )
+
+
+def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Keep the full visible opportunity denominator, including unfilled orders."""
+    with path.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, allow_nan=False, sort_keys=True) + "\n")
 
 
 def _run_day_campaign_audit(
@@ -2161,6 +2174,7 @@ def _run_day_campaign_audit(
     fill_trace_rows: list[dict[str, Any]] = []
     funding_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
+    risk_selection_opportunity_rows: list[dict[str, Any]] = []
     campaign_repair_model = (
         CampaignRepairModel.from_dict(campaign_repair_model_payload)
         if campaign_repair_model_payload
@@ -2360,6 +2374,16 @@ def _run_day_campaign_audit(
                 {"day": day, "arm": arm.name, "group": arm.group, **row}
                 for row in result.get("_decision_trace", [])
             )
+        risk_selection_opportunity_rows.extend(
+            {
+                **row, "segment_start_day": day,
+                "day": datetime.fromtimestamp(
+                    int(row["decision_ts_ns"]) // 1_000_000_000, tz=timezone.utc,
+                ).strftime("%Y-%m-%d"),
+                "arm": arm.name, "group": arm.group,
+            }
+            for row in result.get("_risk_selection_opportunities", [])
+        )
         initial_inventory = float(params.get("initial_inventory", 0.0) or 0.0)
         initial_entry_price = float(params.get("initial_entry_price", 0.0) or 0.0)
         arm_funding_trace: list[dict[str, Any]] = []
@@ -2408,6 +2432,16 @@ def _run_day_campaign_audit(
             "funding_risk_feedback": "not_applied_current_live_uses_trading_pnl",
             "funding_same_ms_fill_count": sum(row["same_ms_fill_count"] for row in arm_funding_trace),
         })
+        if params.get("risk_selection_collect_opportunities"):
+            daily.update({
+                "risk_selection_e_opportunities": (
+                    result["risk_selection_opportunity_counts"]["E"]
+                ),
+                "risk_selection_c_opportunities": (
+                    result["risk_selection_opportunity_counts"]["C"]
+                ),
+                "risk_selection_intervention_count": result["risk_selection_intervention_count"],
+            })
         funding_trace_rows.extend(
             {"day": day, "arm": arm.name, **row} for row in arm_funding_trace
         )
@@ -2433,6 +2467,10 @@ def _run_day_campaign_audit(
         "fill_trace_rows": fill_trace_rows,
         "funding_trace_rows": funding_trace_rows,
         "decision_trace_rows": decision_trace_rows,
+        "risk_selection_opportunity_rows": risk_selection_opportunity_rows,
+        "risk_selection_collect_opportunities": bool(
+            base.get("risk_selection_collect_opportunities")
+        ),
         "native_exchange_book_identity": native_exchange_book_identity,
         "logs": logs,
     }
@@ -2543,6 +2581,14 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument("--trace-decisions-max", type=int, default=100_000)
+    parser.add_argument(
+        "--save-risk-opportunities", action="store_true",
+        help=(
+            "Save all eligible E POST / C KEEP opportunities as JSONL, including unfilled "
+            "orders. Single-opportunity WAIT/CANCEL experiments use arm-spec overrides; "
+            "this is modeled counterfactual research, not live authority. Python only."
+        ),
+    )
     parser.add_argument(
         "--save-decision-trace",
         action="store_true",
@@ -3016,6 +3062,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.native_exchange_book_root is not None and args.engine != "python":
         raise SystemExit("--native-exchange-book-root currently requires --engine python")
+    if args.save_risk_opportunities and args.engine != "python":
+        raise SystemExit("E/C opportunities currently require --engine python")
     wall_started = time.perf_counter()
 
     bt.configure_symbol(args.symbol)
@@ -3152,6 +3200,8 @@ def main(argv: list[str] | None = None) -> None:
         max(1, int(args.trace_decisions_max)) if args.save_decision_trace else 0
     )
     base["trace_queue_events_max"] = 0
+    if args.save_risk_opportunities:
+        base["risk_selection_collect_opportunities"] = True
     base["trace_fills_max"] = int(args.trace_fills_max)
     base["execution_trade_source"] = str(args.execution_trade_source)
     if args.individual_trades_manifest_path is not None:
@@ -3556,6 +3606,7 @@ def main(argv: list[str] | None = None) -> None:
     decision_trace_rows: list[dict[str, Any]] = []
     native_exchange_book_identities: dict[str, dict[str, Any]] = {}
     funding_trace_rows: list[dict[str, Any]] = []
+    risk_selection_opportunity_rows: list[dict[str, Any]] = []
     out_dir = Path(os.environ.get("MM_RESULTS_DIR", str(bt.RESULTS_DIR))).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"campaign_outcome_replay_{args.tag}_{args.symbol.lower()}"
@@ -3591,6 +3642,9 @@ def main(argv: list[str] | None = None) -> None:
         fill_trace_rows.extend(day_result.get("fill_trace_rows", []))
         funding_trace_rows.extend(day_result.get("funding_trace_rows", []))
         decision_trace_rows.extend(day_result.get("decision_trace_rows", []))
+        risk_selection_opportunity_rows.extend(
+            day_result.get("risk_selection_opportunity_rows", [])
+        )
         identity = day_result.get("native_exchange_book_identity") or {}
         if identity:
             native_exchange_book_identities[str(day_result.get("day", ""))] = identity
@@ -3777,6 +3831,9 @@ def main(argv: list[str] | None = None) -> None:
         pd.DataFrame(fill_trace_rows).to_csv(fill_trace_path, index=False)
     if args.save_decision_trace:
         pd.DataFrame(decision_trace_rows).to_csv(decision_trace_path, index=False)
+    risk_opportunities_path = out_dir / f"{stem}.risk_opportunities.jsonl"
+    if args.save_risk_opportunities:
+        _write_risk_opportunities(risk_opportunities_path, risk_selection_opportunity_rows)
     random_null_df = _random_passive_null_table(daily_df) if random_arms else pd.DataFrame()
     random_null_df.to_csv(random_null_path, index=False)
     if cpp_parity_rows:
@@ -4019,6 +4076,7 @@ def main(argv: list[str] | None = None) -> None:
         "trace_quotes_max": int(base.get("trace_quotes_max", 0) or 0),
         "save_fill_trace": bool(args.save_fill_trace),
         "save_decision_trace": bool(args.save_decision_trace),
+        "save_risk_opportunities": bool(args.save_risk_opportunities),
         "trace_decisions_max": int(base.get("trace_decisions_max", 0) or 0),
         "outputs": {
             "campaign_labels_csv": str(campaigns_path),
@@ -4030,6 +4088,9 @@ def main(argv: list[str] | None = None) -> None:
             "quote_trace_csv": str(quote_trace_path) if args.save_quote_trace else "",
             "fill_trace_csv": str(fill_trace_path) if args.save_fill_trace else "",
             "decision_trace_csv": (str(decision_trace_path) if args.save_decision_trace else ""),
+            "risk_opportunities_jsonl": (
+                str(risk_opportunities_path) if args.save_risk_opportunities else ""
+            ),
             "random_passive_null_csv": str(random_null_path),
             "cpp_baseline_parity_csv": (
                 str(cpp_parity_path) if cpp_parity_rows else ""
@@ -4052,6 +4113,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Saved {fill_trace_path}")
     if args.save_decision_trace:
         print(f"Saved {decision_trace_path}")
+    if args.save_risk_opportunities:
+        print(f"Saved {risk_opportunities_path}")
     if random_arms:
         print(f"Saved {random_null_path}")
     if cpp_parity_rows:
