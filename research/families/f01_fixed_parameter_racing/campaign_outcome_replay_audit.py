@@ -1927,6 +1927,19 @@ def _rollup(daily: pd.DataFrame) -> pd.DataFrame:
                     "replay_inv_adj_median_by_day", "mtm_before_terminal_fee_sum",
                 ):
                     row[name] = None
+        if "window_is_partial" in grp:
+            partial = bool(grp["window_is_partial"].any())
+            row.update({
+                "observation_unit": "continuous_prefix" if partial else "continuous_segment",
+                "observation_count": len(grp),
+                "n_days": None if partial else row["n_days"],
+                "window_is_partial": partial,
+                "window_complete_utc_day_count": int(sum_col("window_complete_utc_day_count")),
+                "replay_start_ts_ms": int(grp["replay_start_ts_ms"].min()),
+                "replay_end_ts_ms": int(grp["replay_end_ts_ms"].max()),
+                "replay_end_boundary": "inclusive_millisecond",
+                "window_duration_ms": int(sum_col("window_duration_ms")),
+            })
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -1978,6 +1991,15 @@ def _write_markdown(
             "At least one day/arm stopped before its economic ledger was complete. "
             "Full-window PnL aggregates are unset and promotion is false. "
             "Daily values preserve the partial path for diagnosis, not a completed baseline.",
+            "",
+        ]
+    if meta.get("window_is_partial"):
+        lines[9:9] = [
+            "## Predeclared continuous prefix",
+            "",
+            f"Executed UTC milliseconds [{meta['replay_start_ts_ms']}, "
+            f"{meta['replay_end_ts_ms']}] inclusive, with full source-day and warmup inputs. "
+            "This is a partial-window diagnostic, not a complete UTC-day observation.",
             "",
         ]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -2051,6 +2073,9 @@ def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smoke.SmokeArm]:
     """Reuse one baseline; every other arm may change exactly one E/C opportunity."""
+    window_fields = {"replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms"}
+    if any(window_fields.intersection(arm.overrides) for arm in arms):
+        raise ValueError("risk pair arms cannot override the common replay window")
     baselines = [arm for arm in arms if arm.name == baseline_name]
     if len(baselines) != 1 or len(arms) < 2:
         raise ValueError("risk pairs need one named baseline and at least one intervention arm")
@@ -2065,6 +2090,18 @@ def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smok
             raise ValueError("risk pair arms may differ only by one risk_selection_intervention")
         ReplayRiskSelection(intervention=intervention)
     return [baseline, *alternatives]
+
+
+def _continuous_replay_bounds(days: list[str], end_ts_ms: int) -> tuple[int, int]:
+    """An inclusive terminal inside the final source day; initial state stays at midnight."""
+    start_ms = int(_day_start_ts(days[0]) * 1000)
+    final_start_ms = int(_day_start_ts(days[-1]) * 1000)
+    if (isinstance(end_ts_ms, bool) or not isinstance(end_ts_ms, int)
+            or not max(start_ms + 1, final_start_ms) <= end_ts_ms < final_start_ms + 86_400_000):
+        raise ValueError(
+            "replay end must be after segment start and within the final --days UTC day"
+        )
+    return start_ms, end_ts_ms
 
 
 def _run_day_campaign_audit(
@@ -2096,6 +2133,7 @@ def _run_day_campaign_audit(
     funding_events: list[dict[str, Any]] | None = None,
     continuous_days: list[str] | None = None,
     risk_pair_baseline_arm: str = "",
+    replay_end_ts_ms: int | None = None,
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -2112,6 +2150,29 @@ def _run_day_campaign_audit(
         base["replay_event_clock_end_ts_ms"] = int(
             (_day_start_ts(source_days[-1]) + 86400) * 1000 - 1
         )
+    prefix_metadata: dict[str, Any] = {}
+    if replay_end_ts_ms is not None:
+        if not continuous_days:
+            raise ValueError("replay end requires a continuous prefix")
+        start_ms, end_ms = _continuous_replay_bounds(source_days, replay_end_ts_ms)
+        if any({"replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms"}
+               .intersection(arm.overrides) for arm in arms):
+            raise ValueError("arms cannot override the common replay window")
+        if base.get("replay_event_clock") not in {"merged", "empirical"}:
+            raise ValueError("continuous prefix requires a merged or empirical event clock")
+        base["replay_event_clock_end_ts_ms"] = end_ms
+        partial = end_ms < int((_day_start_ts(source_days[-1]) + 86400) * 1000 - 1)
+        prefix_metadata = {
+            "replay_start_ts_ms": start_ms, "replay_end_ts_ms": end_ms,
+            "replay_end_boundary": "inclusive_millisecond",
+            "window_duration_ms": end_ms - start_ms + 1,
+            "window_is_partial": partial,
+            "window_complete_utc_day_count": len(source_days) - int(partial),
+            "accounting_window": "continuous_prefix" if partial else "continuous_segment",
+        }
+        if funding_events is not None:
+            funding_events = [row for row in funding_events
+                              if start_ms <= int(row["fundingTime"]) <= end_ms]
     if runtime_compute_clock is not None:
         if runtime_compute_calibration is None:
             raise ValueError("runtime compute requires the already-loaded timing calibration")
@@ -2147,6 +2208,7 @@ def _run_day_campaign_audit(
     window_cache: dict[tuple[str, str, str, int], dict[str, Any]] = {}
     compute_cache: dict[int, dict[str, Any]] = {}
     message_cache: dict[int, dict[str, Any]] = {}
+    execution_prefix_cache: dict[int, pd.DataFrame] = {}
 
     def _window_for_params(params: dict[str, Any]) -> dict[str, Any]:
         """Load/reuse the day window for the arm's model bundle.
@@ -2321,6 +2383,17 @@ def _run_day_campaign_audit(
         started = time.perf_counter()
         logs.append(f"  [{idx:02d}/{len(arms):02d}] {day} {arm.name} ...")
         window = _window_for_params(params)
+        execution_trades = window["trades"]
+        if replay_end_ts_ms is not None:
+            if id(window) not in execution_prefix_cache:
+                # Preserve full source/pre-roll arrays and their cache identity.
+                # Only the exchange execution view ends at the common terminal.
+                execution_prefix_cache[id(window)] = execution_trades.loc[
+                    execution_trades["transact_time"] <= replay_end_ts_ms
+                ].copy()
+                if execution_prefix_cache[id(window)].empty:
+                    raise ValueError("continuous prefix has no execution trades")
+            execution_trades = execution_prefix_cache[id(window)]
         if execution_message_profile:
             if id(window) not in message_cache:
                 message_cache[id(window)] = data_windows.execution_message_delivery_params(
@@ -2329,6 +2402,20 @@ def _run_day_campaign_audit(
                     parent_source_identity=parent_source_identity,
                     unmatched_child_mode="matching_only",
                 )
+                if replay_end_ts_ms is not None:
+                    # Build visibility from ALL retained children first. Cutting
+                    # the final parent packet early would reveal it prematurely.
+                    delivery = dict(message_cache[id(window)]["_exec_message_delivery"])
+                    trade_delivery = dict(delivery["trade"])
+                    count = len(execution_trades)
+                    trade_delivery["visible_child_mask"] = trade_delivery["visible_child_mask"][:count]
+                    visible_rows = np.flatnonzero(trade_delivery["visible_child_mask"])
+                    last_visible = int(visible_rows[-1]) if visible_rows.size else -1
+                    child_rows = np.minimum(trade_delivery["last_child_row_index"], last_visible)
+                    child_rows.setflags(write=False)
+                    trade_delivery["last_child_row_index"] = child_rows
+                    delivery["trade"] = trade_delivery
+                    message_cache[id(window)]["_exec_message_delivery"] = delivery
             params.update(message_cache[id(window)])
         cooldown_policy = build_configured_cooldown_policy_adapter(window=window, params=params)
         if cooldown_policy is not None:
@@ -2361,7 +2448,7 @@ def _run_day_campaign_audit(
         )
         result = bt._simulate_tick_with_engine(
             engine,
-            window["trades"],
+            execution_trades,
             window["var_ts_ms"],
             window["var_ssq"],
             params,
@@ -2510,6 +2597,7 @@ def _run_day_campaign_audit(
             "replay_net_pnl": daily["replay_pnl"] + funding_value,
             "funding_risk_feedback": "not_applied_current_live_uses_trading_pnl",
             "funding_same_ms_fill_count": sum(row["same_ms_fill_count"] for row in arm_funding_trace),
+            **prefix_metadata,
         })
         if params.get("risk_selection_collect_opportunities"):
             daily.update({
@@ -2585,6 +2673,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--continuous", action="store_true",
         help="Run contiguous --days in one state machine, without midnight strategy resets",
+    )
+    parser.add_argument(
+        "--replay-end-ts-ms", type=int,
+        help=(
+            "Inclusive UTC millisecond terminal within the final --days date; requires "
+            "--continuous. Keeps midnight initial state and full source/warmup inputs, "
+            "but executes only this predeclared prefix, not a complete-day observation."
+        ),
     )
     parser.add_argument(
         "--funding-history", type=Path,
@@ -3086,6 +3182,8 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.replay_end_ts_ms is not None and not args.continuous:
+        raise SystemExit("--replay-end-ts-ms requires --continuous")
     if args.risk_pair_baseline_arm:
         if not args.continuous or args.funding_history is None:
             raise SystemExit("risk pairs require --continuous and --funding-history")
@@ -3167,6 +3265,11 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(
                 "--continuous requires contiguous UTC days; do not bridge missing days"
             )
+    if args.replay_end_ts_ms is not None:
+        try:
+            _continuous_replay_bounds(days, args.replay_end_ts_ms)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     funding_history = (
         _load_funding_history(args.funding_history.expanduser(), symbol=args.symbol)
         if args.funding_history is not None else None
@@ -3764,6 +3867,7 @@ def main(argv: list[str] | None = None) -> None:
                     ),
                     continuous_days=days if args.continuous else None,
                     risk_pair_baseline_arm=args.risk_pair_baseline_arm,
+                    replay_end_ts_ms=args.replay_end_ts_ms,
                     base=base,
                     arms=arms,
                     engine=args.engine,
@@ -3987,6 +4091,11 @@ def main(argv: list[str] | None = None) -> None:
         "runtime_timing_calibration": reported_timing_calibration,
         "runtime_compute_clock": args.runtime_compute_clock,
         "accounting_window": "continuous_segment" if args.continuous else "daily_fresh_start",
+        **({key: daily_rows[0][key] for key in (
+            "accounting_window", "replay_start_ts_ms", "replay_end_ts_ms",
+            "replay_end_boundary", "window_duration_ms", "window_is_partial",
+            "window_complete_utc_day_count",
+        )} if args.replay_end_ts_ms is not None else {}),
         "funding_history": {
             "path": str(args.funding_history) if args.funding_history else "",
             "sha256": _sha256(args.funding_history) if args.funding_history else "",

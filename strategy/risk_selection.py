@@ -266,7 +266,8 @@ def evaluate_risk_selection(
 ) -> tuple[RiskSelectionDecision, ...]:
     """Batch evaluate one snapshot; never mutate it after the first side.
 
-    Negative value differences veto POST/KEEP. Zero retains the baseline.
+    E requires strictly positive POST-minus-WAIT; C cancels only a negative
+    KEEP-minus-CANCEL value. Thus the zero-value tie waits for E and keeps for C.
     Missing models/features abstain; invalid account/order inputs raise instead
     of pretending that an unknown trading state is safe.
     """
@@ -297,8 +298,10 @@ def evaluate_risk_selection(
             except (KeyError, ValueError, TypeError, OverflowError):
                 value, reason = None, "unavailable_feature"
             else:
-                action = veto_action if value < 0 else active_action
-                reason = "negative_value" if value < 0 else "nonnegative_value"
+                veto = value <= 0 if candidate.kind == "E" else value < 0
+                action = veto_action if veto else active_action
+                reason = ("zero_entry_value" if candidate.kind == "E" and value == 0
+                          else "negative_value" if value < 0 else "nonnegative_value")
         decisions.append(RiskSelectionDecision(
             candidate.opportunity_id, candidate.kind, candidate.side, candidate.order_id,
             action, value, role, reason, value is None,

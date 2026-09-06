@@ -56,11 +56,12 @@ def test_quantity_role_and_legacy_ber_delegate(side, q, qty, expected):
 @pytest.mark.parametrize("kind,q", [("E", 0), ("C", 0), ("C", 0.002)])
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
 @pytest.mark.parametrize("value,veto", [(-0.02, True), (0, False), (0.02, False)])
-def test_value_difference_is_usdc_per_action_with_zero_baseline_tie(kind, q, side, value, veto):
+def test_value_difference_usdc_with_surface_specific_zero_tie(kind, q, side, value, veto):
     obs = observation(q if side == "BUY" else -q)
     choice = candidate(kind, side)
     result, = evaluate_risk_selection(obs, [choice], constant_policy(value))
-    assert result.action == (("WAIT" if kind == "E" else "CANCEL") if veto
+    expected_veto = veto or (kind == "E" and value == 0)
+    assert result.action == (("WAIT" if kind == "E" else "CANCEL") if expected_veto
                              else choice.baseline_action)
     assert result.value_delta_usdc == value
     assert not result.out_of_scope

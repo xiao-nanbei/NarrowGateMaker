@@ -204,19 +204,24 @@ def test_risk_opportunities_cli_rejects_unsupported_backend_before_loading_data(
 
 
 @pytest.mark.parametrize("truncate_trace", [False, True])
+@pytest.mark.parametrize("prefix", [False, True])
 def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
-    monkeypatch, tmp_path, truncate_trace,
+    monkeypatch, tmp_path, truncate_trace, prefix,
 ):
     from dataclasses import replace
 
     from tests.test_python_planned_maintenance_replay import _async_fifo_params, _inputs, _params
 
     day = "2026-01-01"
-    start_ms = int((campaign_audit._day_start_ts(day) + 86400) * 1000) - 2000
+    start_ms = int(campaign_audit._day_start_ts(day) * 1000) + (0 if prefix else 86_398_000)
     trades, bbo = _inputs(crossing_fill_ts_ms=500)
     trades.loc[trades["transact_time"] == 500, "quantity"] = .001
     trades.loc[trades["transact_time"] == 700, ["price", "quantity"]] = [96., 10.]
     trades["transact_time"] += start_ms
+    if prefix:
+        after_terminal = trades.iloc[[-1]].copy()
+        after_terminal["transact_time"] = start_ms + 5000
+        trades = pd.concat([trades, after_terminal], ignore_index=True)
     bbo = replace(bbo, ts_ms=bbo.ts_ms + start_ms)
     window = {"trades": trades, "bbo_data": bbo, "var_ts_ms": np.array([start_ms]),
               "var_ssq": np.array([1.]), "l2_data": None, "ml_data": None,
@@ -241,11 +246,16 @@ def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
             "trace_fills_max": 1 if truncate_trace else 100,
             "replay_event_clock_start_ts_ms": start_ms,
             "replay_event_clock_end_ts_ms": start_ms + 4000}
-    funding = [{"fundingTime": start_ms + 2500, "markPrice": 100., "fundingRate": .01}]
+    funding = [{"fundingTime": start_ms + (4000 if prefix else 2500),
+                "markPrice": 100., "fundingRate": .01}]
+    if prefix:
+        funding.append({"fundingTime": start_ms + 5000, "markPrice": 100., "fundingRate": .99})
     baseline_arm = campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")
     arguments = dict(day=day, symbol="BTCUSDC", base=base, engine="python",
                      day_initial={}, day_live_state=None, use_initial_state=False,
-                     funding_events=funding)
+                     funding_events=funding,
+                     **({"continuous_days": [day], "replay_end_ts_ms": start_ms + 4000}
+                        if prefix else {}))
     discovery = campaign_audit._run_day_campaign_audit(arms=[baseline_arm], **arguments)
     target = next(row for row in discovery["risk_selection_opportunity_rows"]
                   if row["kind"] == "E" and row["side"] == "BUY")
@@ -279,11 +289,31 @@ def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
         baseline["replay_net_pnl"] - alternative["replay_net_pnl"]
     )
     assert label["terminal_mark_ts_ms"] == start_ms + 4000
-    assert label["terminal_mark_ts_ms"] > start_ms + 2000  # same continuous midnight crossing
+    assert label["terminal_mark_ts_ms"] > calls[0][0]["transact_time"].iloc[-1]
+    if prefix:
+        assert trades["transact_time"].iloc[-1] > label["terminal_mark_ts_ms"]
+        assert all(row["accounting_window"] == "continuous_prefix" for row in result["daily_rows"])
+        assert all(row["window_is_partial"] for row in result["daily_rows"])
+        assert all(row["window_complete_utc_day_count"] == 0 for row in result["daily_rows"])
+        assert all(row["replay_start_ts_ms"] == start_ms for row in result["daily_rows"])
+        assert all(row["replay_end_ts_ms"] == start_ms + 4000 for row in result["daily_rows"])
+        assert all(row["funding_ts_ms"] == start_ms + 4000 for row in result["funding_trace_rows"])
     assert label["baseline_arm"] == "B" and label["alternative_arm"] == "wait"
     campaign_audit._write_partial_day_outputs(tmp_path, "synthetic", result)
     exported = tmp_path / f"synthetic.partial.{day}.risk_paired_labels.jsonl"
     assert json.loads(exported.read_text()) == label
+    if prefix:
+        rollup = pd.read_csv(tmp_path / f"synthetic.partial.{day}.rollup.csv")
+        assert rollup["observation_unit"].eq("continuous_prefix").all()
+        assert rollup["n_days"].isna().all()
+        assert rollup["window_complete_utc_day_count"].eq(0).all()
+        path = tmp_path / "prefix.md"
+        campaign_audit._write_markdown(path, pd.DataFrame(result["daily_rows"]), rollup, {
+            "tag": "synthetic", "symbol": "BTCUSDC", "days": [day], "arms": ["B", "wait"],
+            "window_is_partial": True, "replay_start_ts_ms": start_ms,
+            "replay_end_ts_ms": start_ms + 4000,
+        })
+        assert "not a complete UTC-day observation" in path.read_text()
 
 
 @pytest.mark.parametrize("extra", [{"gamma": .2}, {"rng_seed": 99},
@@ -300,6 +330,108 @@ def test_risk_pair_arms_cannot_change_policy_or_environment(extra):
 def test_risk_pair_cli_requires_explicit_continuous_funding_before_data_load():
     with pytest.raises(SystemExit, match="--continuous and --funding-history"):
         campaign_audit_main(["--days", "2026-01-01", "--risk-pair-baseline-arm", "baseline"])
+
+
+@pytest.mark.parametrize("field", [
+    "replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms",
+])
+def test_risk_pair_arms_cannot_redefine_even_an_identical_window(field):
+    baseline = campaign_audit.smoke.SmokeArm("B", "synthetic", {field: 1000}, "")
+    candidate = campaign_audit.smoke.SmokeArm("E", "synthetic", {
+        **baseline.overrides,
+        "risk_selection_intervention": {"opportunity_id": "target", "action": "WAIT"},
+    }, "")
+    with pytest.raises(ValueError, match="cannot override the common replay window"):
+        campaign_audit._risk_pair_arms([baseline, candidate], "B")
+
+
+def test_continuous_prefix_cli_requires_continuous_before_loading_data():
+    with pytest.raises(SystemExit, match="--replay-end-ts-ms requires --continuous"):
+        campaign_audit_main(["--days", "2026-01-01", "--replay-end-ts-ms", "1000"])
+
+
+@pytest.mark.parametrize("days,offset,valid", [
+    (["2026-01-01"], 0, False), (["2026-01-01"], -1, False),
+    (["2026-01-01"], 3_599_999, True), (["2026-01-01"], 86_399_999, True),
+    (["2026-01-01"], 86_400_000, False),
+    (["2026-01-01", "2026-01-02"], 3_599_999, False),
+    (["2026-01-01", "2026-01-02"], 86_400_000, True),
+])
+def test_continuous_prefix_bounds_stay_inside_final_source_day(days, offset, valid):
+    start_ms = int(campaign_audit._day_start_ts(days[0]) * 1000)
+    if valid:
+        assert campaign_audit._continuous_replay_bounds(days, start_ms + offset) == (
+            start_ms, start_ms + offset,
+        )
+    else:
+        with pytest.raises(ValueError, match="within the final --days UTC day"):
+            campaign_audit._continuous_replay_bounds(days, start_ms + offset)
+
+
+@pytest.mark.parametrize("unmatched_tail", [False, True])
+def test_continuous_prefix_preserves_complete_parent_readiness_and_source_preroll(
+    monkeypatch, unmatched_tail,
+):
+    from dataclasses import replace
+
+    from tests.test_exec_book_visibility_delay import _profile_execution_message_fixture
+
+    inputs, parents, profile, _ = _profile_execution_message_fixture()
+    day = "2026-01-01"
+    start_ms = int(campaign_audit._day_start_ts(day) * 1000)
+    shift_ms = start_ms - 1_000_000
+    inputs["trades_df"]["transact_time"] += shift_ms
+    parents["transact_time"] += shift_ms
+    if unmatched_tail:
+        parents.loc[2, "last_trade_id"] = 12  # The prefix's final child (13) is unmatched.
+    for name in ("bbo_data", "l2_data"):
+        inputs[name] = replace(inputs[name], ts_ms=inputs[name].ts_ms + shift_ms)
+    inputs["var_ts_ms"] += shift_ms
+    inputs["ml_data"] = (inputs["ml_data"][0] + shift_ms, *inputs["ml_data"][1:])
+    window = {"trades": inputs["trades_df"], "var_ti": None, "var_retsq": None,
+              **{name: inputs[name] for name in (
+                  "var_ts_ms", "var_ssq", "bbo_data", "l2_data", "ml_data",
+              )}}
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", lambda *_args: window)
+    monkeypatch.setattr(campaign_audit.data_windows, "load_replay_aggregate_parents",
+                        lambda *_args: (parents, []))
+    monkeypatch.setattr(campaign_audit, "build_configured_cooldown_policy_adapter",
+                        lambda **_kw: None)
+    original = campaign_audit.bt._simulate_tick_with_engine
+    captures = []
+
+    def simulate(engine, trades, *args, **kwargs):
+        captures.append((trades, args[-1], kwargs))
+        return original(engine, trades, *args, **kwargs)
+
+    monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
+    complete = campaign_audit.data_windows.execution_message_delivery_params(
+        window, symbol="BTCUSDC", profile=profile, seed=7,
+        parent_trades=parents, parent_source_identity=[], unmatched_child_mode="matching_only",
+    )["_exec_message_delivery"]
+    result = campaign_audit._run_day_campaign_audit(
+        day=day, continuous_days=[day], replay_end_ts_ms=start_ms + 1200, symbol="BTCUSDC",
+        base={**inputs["params"], "risk_selection_collect_opportunities": True,
+              "exec_message_delivery_profile_path": "synthetic"},
+        arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")],
+        engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
+        funding_events=[], market_data_latency_profile_payload=profile,
+        market_data_latency_mode="profile_empirical",
+    )
+    trades, params, kwargs = captures[0]
+    assert len(trades) == 4 < len(window["trades"])
+    for name in ("bbo_data", "l2_data"):
+        np.testing.assert_array_equal(kwargs[name].ts_ms, inputs[name].ts_ms)
+        assert kwargs[name].ts_ms[0] < start_ms
+    projected = params["_exec_message_delivery"]
+    for feed, clock in complete.items():
+        for name in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns"):
+            np.testing.assert_array_equal(projected[feed][name], clock[name])
+    np.testing.assert_array_equal(projected["trade"]["visible_child_mask"],
+                                  complete["trade"]["visible_child_mask"][:4])
+    assert max(projected["trade"]["last_child_row_index"]) == (2 if unmatched_tail else 3)
+    assert result["daily_rows"][0]["replay_end_ts_ms"] == start_ms + 1200
 
 
 @pytest.mark.parametrize("opening_fee", [0.1, -0.1, 0.0])

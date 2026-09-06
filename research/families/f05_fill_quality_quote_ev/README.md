@@ -1,6 +1,6 @@
 # F05 Fill Quality, Toxicity, And Quote EV
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-09-06
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](../../../docs/public_private_documentation_contract.md).
 
@@ -42,11 +42,14 @@ Use `WAIT` only for E and `CANCEL` only for C. WAIT suppresses that submission, 
 adding a cooldown; CANCEL uses the normal cancellation lifecycle and cannot remove
 ownership before terminal confirmation. Collection is disabled by default.
 
-This implements observation and single-opportunity intervention plumbing only.
-Validated shared-prefix pairing, complete sampled paired labels, copy-on-write label
-generation, model training, and the live adapter remain unfinished. It introduces no
-new research family and grants no economic or deployment claim. Historical results
-below are not results for this interface.
+The existing runner now validates common opportunity prefixes and assembles one
+POST-minus-WAIT / KEEP-minus-CANCEL label per intervention at a common terminal mark,
+including fees and funding. The [minimal training guide](docs/risk_selection_training.md)
+([中文](docs/risk_selection_training.zh-CN.md)) describes the separate chronological
+Ridge entrypoint. These are implementation capabilities, not a positive study result.
+Complete checkpoint/copy-on-write branching, full-path learned-policy evaluation,
+and the live adapter remain unfinished. No new research family or economic/deployment
+claim is introduced. Historical results below are not results for this interface.
 
 ## Historical research results
 
