@@ -170,7 +170,14 @@ def candidate_role(
             low -= order.remaining_qty_btc
     low_role = inventory_role_for_target(candidate.side, low, candidate.quantity_btc)
     high_role = inventory_role_for_target(candidate.side, high, candidate.quantity_btc)
-    return low_role if low_role == high_role else "ambiguous_pending"
+    if low_role == high_role:
+        return low_role
+    if candidate.kind == "C" and {low_role, high_role} == {"opener", "add"}:
+        # Every reachable inventory in this one-sided interval still makes the
+        # remaining order purely exposure-increasing. Flat versus already-held
+        # inventory is not an ambiguity about whether C can cancel new risk.
+        return "opener_or_add"
+    return "ambiguous_pending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,7 +286,8 @@ def evaluate_risk_selection(
         action, value, reason = candidate.baseline_action, None, "no_model"
         active_action, veto_action = _ACTIONS[candidate.kind]
         model = policy.models.get(f"{candidate.kind}:{candidate.side}") if policy else None
-        allowed_roles = {"opener"} if candidate.kind == "E" else {"opener", "add"}
+        allowed_roles = ({"opener"} if candidate.kind == "E"
+                         else {"opener", "add", "opener_or_add"})
         if not candidate.baseline_allowed or action != active_action:
             reason = "baseline_blocked"
         elif role not in allowed_roles:

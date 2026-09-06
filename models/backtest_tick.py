@@ -30941,7 +30941,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                                                order_id=target_order_id),
                     )
                     if (kind == "E" and role != "opener") or (
-                        kind == "C" and role not in {"opener", "add"}
+                        kind == "C" and role not in {"opener", "add", "opener_or_add"}
                     ):
                         continue
                     # Explicit policy-visible fields only. In particular never

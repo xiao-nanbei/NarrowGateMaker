@@ -107,6 +107,26 @@ def test_role_uses_current_remaining_quantity_not_original_submission_role():
     assert candidate_role(observation(.0004), replace(choice, quantity_btc=.0004)) == "add"
 
 
+@pytest.mark.parametrize("side,inventory,other_side", [
+    ("BUY", .001, "SELL"), ("SELL", -.001, "BUY"),
+])
+def test_c_opener_add_interval_is_pure_exposure_increasing(side, inventory, other_side):
+    choice = candidate("C", side)
+    orders = (PendingExposure(choice.order_id, side, .001),
+              PendingExposure("other", other_side, .001))
+    obs = observation(inventory, pending_orders=orders)
+    assert candidate_role(obs, choice) == "opener_or_add"
+    decision, = evaluate_risk_selection(obs, [choice], constant_policy())
+    assert decision.action == "CANCEL" and not decision.out_of_scope
+    # More opposite pending exposure can cross zero and is genuinely ambiguous.
+    bad = replace(obs, pending_orders=(orders[0], replace(orders[1], remaining_qty_btc=.002)))
+    assert candidate_role(bad, choice) == "ambiguous_pending"
+    assert evaluate_risk_selection(bad, [choice], constant_policy())[0].action == "KEEP"
+    # This exception never converts a potential add into an E flat opener.
+    e_choice = candidate("E", side)
+    assert candidate_role(replace(obs, pending_orders=(orders[1],)), e_choice) == "ambiguous_pending"
+
+
 @pytest.mark.parametrize("kind,blocked_action", [("E", "WAIT"), ("C", "CANCEL")])
 def test_h0_blocked_action_is_never_reenabled(kind, blocked_action):
     choice = candidate(kind, baseline_action=blocked_action, baseline_allowed=False)
