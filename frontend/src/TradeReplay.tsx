@@ -469,6 +469,8 @@ export function TradeReplay({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const panel = useRef<HTMLElement>(null);
+  const [loadingHeight, setLoadingHeight] = useState<number>();
   const generation = useRef(0);
   const bounds = useMemo(() => {
     const start = Date.parse(`${day}T00:00:00Z`);
@@ -528,9 +530,14 @@ export function TradeReplay({
       window.start < bounds.start ||
       window.end > bounds.end ||
       window.end <= window.start
-    )
+    ) {
+      setLoading(false);
       return;
+    }
     const controller = new AbortController();
+    // Clearing the old chart/list must not shrink the document and clamp its
+    // scroll offset while the new window is in flight. Retain geometry only.
+    setLoadingHeight(panel.current?.getBoundingClientRect().height);
     setLoading(true);
     setError("");
     const query = new URLSearchParams({
@@ -632,7 +639,12 @@ export function TradeReplay({
     }
   };
   return (
-    <section className="panel trade-replay">
+    <section
+      ref={panel}
+      className="panel trade-replay"
+      style={{ minHeight: loading ? loadingHeight : undefined }}
+      aria-busy={loading}
+    >
       <div className="result-header">
         <div>
           <span className="eyebrow">MARKET CANDLES + SIMULATED FILLS</span>
