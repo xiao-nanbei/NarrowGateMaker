@@ -98,3 +98,36 @@ def test_constant_feature_scaling_and_past_intercept_reference():
     assert model["intercept_usdc"] == pytest.approx(.045)
     surface = report["surfaces"]["E:BUY"]
     assert surface["validation_mse"] == surface["past_only_intercept_mse"]
+
+
+@pytest.mark.parametrize("feature_order", [
+    ("quantity", "x", "near_constant"),
+    ("x", "near_constant", "quantity"),
+    ("near_constant", "quantity", "x"),
+])
+@pytest.mark.parametrize("row_order", ["original", "reversed", "shuffled"])
+def test_decimal_constant_is_exact_under_row_and_column_reordering(feature_order, row_order):
+    rows = [label(i) for i in range(43)]
+    for index, row in enumerate(rows):
+        row["features"].update({
+            "quantity": 0.001,
+            "near_constant": np.nextafter(0.001, np.inf) if index % 2 else 0.001,
+        })
+    if row_order == "reversed":
+        rows.reverse()
+    elif row_order == "shuffled":
+        rows = [rows[index] for index in np.random.default_rng(7).permutation(len(rows))]
+    units = {name: "BTC" if name != "x" else "bps" for name in feature_order}
+    policy, report = train_chronological_ridge(
+        rows, feature_units=units, validation_start_ns=3 * 86_400_000_000_000,
+    )
+    assert report["train_rows"] == 43
+    assert policy["features"]["quantity"] == {"unit": "BTC", "mean": 0.001, "scale": 1.0}
+    assert policy["models"]["E:BUY"]["coefficients"]["quantity"] == 0.0
+    matrix = np.asarray([[row["features"][name] for name in feature_order] for row in rows])
+    means, scales = matrix.mean(axis=0), matrix.std(axis=0)
+    for name in ("x", "near_constant"):
+        index = feature_order.index(name)
+        assert policy["features"][name]["mean"] == means[index]
+        assert policy["features"][name]["scale"] == scales[index]
+    assert 0 < policy["features"]["near_constant"]["scale"] < 1e-15

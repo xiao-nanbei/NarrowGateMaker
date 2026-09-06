@@ -104,6 +104,11 @@ def train_chronological_ridge(
                              for row in groups["train"]], dtype=float)
         means = matrix.mean(axis=0)
         scales = matrix.std(axis=0)
+        # Repeated decimal values can leave roundoff in mean/std reductions.
+        # Identify constants from the inputs, without collapsing small signals.
+        constant = np.all(matrix == matrix[0], axis=0)
+        means[constant] = matrix[0, constant]
+        scales[constant] = 1.0
         scales[scales == 0] = 1.0
     else:
         means, scales = np.zeros(len(features)), np.ones(len(features))
