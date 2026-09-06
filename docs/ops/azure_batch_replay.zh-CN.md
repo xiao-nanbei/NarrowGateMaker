@@ -2,7 +2,7 @@
 
 <p><a href="azure_batch_replay.md">English</a> | <a href="azure_batch_replay.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-06
 
 本文定义离线 NarrowGate replay 的可复用私有 Azure Batch executor，不包含 subscription、
 account、region、resource ID、storage locator、private path、策略参数、dataset identity
@@ -104,9 +104,12 @@ Resize 是 asynchronous；request accepted 不代表 node ready。
 count、terminal accounting、wall time、peak memory 和 output contract。只有兼容性验证
 通过后才 fan-out；它不授予任何策略权限。
 
-## 每个 task 只运行一个 UTC day
+## 每个 task 运行一个独立 replay 区段
 
-每个 formal task 精确对应一个注册 UTC day：
+Daily fresh-start 研究中，每个 task 对应一个注册 UTC day。连续账户研究中，一个 task
+应在同一次 simulator 调用中运行完整连续区段，让订单、cooldown、campaign 与风险状态
+在内存中跨越零点。不能把相互依赖的日期分散到不同 node，也不能拼接不连续日期并称为
+连续 replay。只并行具有各自独立执行状态的区段或 arm。
 
 - task ID 是一个 job 内确定的日期 identity；
 - 一个 task 使用一个 task slot；
@@ -132,11 +135,66 @@ az batch task create \
   --task-id <utc-day-task-id> \
   --max-task-retry-count <bounded-retry-count> \
   --max-wall-clock-time <bounded-duration> \
-  --command-line "<private-single-day-runner-command>"
+  --json-file <private-task-json>
 ```
 
 Private runner 必须在进入 event loop 前验证 runtime root、input-manifest root、registered
 plan、frozen date、warmup 与所有引用 closure。公共代码不解析私有 command 或 artifact。
+
+## 释放节点前持久保存任务文件
+
+**每个** task 都必须配置 Batch `outputFiles`，包括开发验证。节点删除后，task 的
+`retentionTime` 不会保留文件。不能依靠监控恰好赶在 autoscale 删除节点之前下载日志。
+
+任务在 `artifacts/` 下写入测试 XML、非敏感环境摘要（源码版本、Python、安装包版本和
+CPU）及命令退出码。不要完整打印环境变量，其中可能包含凭据。退出零之前，命令必须
+检查必需报告存在且非空；glob 没有匹配任何文件，本身不会让 Batch 上传失败。
+
+在私有 task JSON 中使用以下字段，占位符由本地解析：
+
+```json
+{
+  "outputFiles": [
+    {
+      "filePattern": "artifacts/*",
+      "destination": {"container": {
+        "containerUrl": "<existing-output-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    },
+    {
+      "filePattern": "../std*.txt",
+      "destination": {"container": {
+        "containerUrl": "<existing-failure-log-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    }
+  ],
+  "exitConditions": {
+    "fileUploadError": {"jobAction": "terminate"},
+    "default": {"jobAction": "terminate"}
+  }
+}
+```
+
+Job 使用 `onTaskFailure=performExitOptionsJobAction`。现有 pool 必须绑定引用的 managed
+identity，拥有容器范围 Blob 写权限，并通过存储防火墙允许的网络路径访问。不要将 SAS
+或存储密钥放入 Git。Batch 在命令结束后上传，包括失败的命令，上传处理结束后 task 才
+进入 completed 状态。上传失败写入 `executionInfo.failureInfo`；仅 `exitCode=0` **不算
+成功**。必须同时满足 `executionInfo.result=success`、无 `failureInfo`、命令退出零，以及
+必需 Blob 文件可访问。报告测试数量前解析已经上传的 XML。缺少报告是证据不完整，不是
+测试通过。
+
+Batch 不保证各 `outputFiles` 的上传顺序。不能借此无序上传列表提前发布 replay 的
+`_SUCCESS`；现有 replay publisher 仍必须最后写该标记。
+
+先用小任务验证：pool **归零之后**仍能读取 XML 和日志。另行测试一次上传失败，确认
+它不能被报告为验证成功。参考 Microsoft 的
+[任务输出持久化说明](https://learn.microsoft.com/en-us/azure/batch/batch-task-output-files)。
 
 ## Output publication 与 `_SUCCESS`
 
@@ -183,16 +241,19 @@ input。
 
 ## 一批结束后缩容到零
 
-Queue 排空且每个 admitted day 都存在匹配 `_SUCCESS` 后：
+配置有上限的 autoscale，使用 `taskcompletion` 回收方式。Queue 排空后，Batch 完成输出
+上传才让节点归零；本机下载不应成为释放计算节点的前提。上传失败保留在 task metadata
+中明确可见，不应因此无限期保留付费节点。
 
-1. 下载 output、manifest 与 failure log；
-2. 运行同一个本地 finalizer 与 aggregation boundary；
-3. 按 retention policy disable 或删除 completed job；
-4. 两种 node class 都 resize 为零；
-5. poll 直到 current 与 target node count 都为零；
+1. 确认 completed task 结果、上传状态和必需 Blob 对象；
+2. 确认 current 与 target node count 自动归零；
+3. 从 Blob 下载 output、manifest 与 failure log，不依赖节点本地文件；
+4. 运行同一个本地 finalizer 与 aggregation boundary；
+5. 在失败与输出核对完成之前保留 completed task metadata；
 6. 验证没有意外保留 compute、disk、public IP、load balancer 或 logging resource。
 
 ```bash
+# 仅当空闲 pool 未自动归零时使用的手动兜底：
 az batch pool resize \
   --pool-id <pool-id> \
   --target-dedicated-nodes 0 \

@@ -2,7 +2,7 @@
 
 <p><a href="azure_batch_replay.md">English</a> | <a href="azure_batch_replay.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-06
 
 This runbook defines a reusable private Azure Batch executor for offline
 NarrowGate replay. It contains no subscription, account, region, resource ID,
@@ -118,9 +118,14 @@ action counts, terminal accounting, wall time, peak memory, and output contract
 with the same local run. Only that compatibility check authorizes fan-out; it
 does not authorize a strategy.
 
-## One UTC day per task
+## One independent replay segment per task
 
-Each formal task represents exactly one registered UTC day:
+For daily fresh-start research, each task represents one registered UTC day.
+For continuous-account research, one task runs an entire contiguous segment in
+one simulator invocation: orders, cooldowns, campaigns and risk state cross
+midnight in memory. Do not split dependent days across nodes or concatenate
+non-contiguous dates and call that continuous replay. Parallelize only independent
+segments or arms, with their own execution state.
 
 - task ID is a deterministic day identity within one job;
 - one task uses one task slot;
@@ -147,12 +152,74 @@ az batch task create \
   --task-id <utc-day-task-id> \
   --max-task-retry-count <bounded-retry-count> \
   --max-wall-clock-time <bounded-duration> \
-  --command-line "<private-single-day-runner-command>"
+  --json-file <private-task-json>
 ```
 
 The private runner must verify the runtime root, input-manifest root, registered
 plan, frozen date, warmup, and every referenced closure before entering the event
 loop. Public code does not resolve the private command or its artifacts.
+
+## Persist task files before node release
+
+Configure Batch `outputFiles` on **every** task, including development checks.
+Task `retentionTime` does not preserve files after a node is removed. Monitoring
+must never be the only way to retrieve logs before autoscale deletes a node.
+
+The task writes test XML, a non-secret environment summary (source revision,
+Python, package versions and CPU), and command exit codes under `artifacts/`.
+Do not dump the environment: it can contain credentials. Before exiting zero,
+the command must require its expected reports to exist and be nonempty; a glob
+matching no files does not itself make Batch upload fail.
+
+Use these fields in the private task JSON, resolving the placeholders locally:
+
+```json
+{
+  "outputFiles": [
+    {
+      "filePattern": "artifacts/*",
+      "destination": {"container": {
+        "containerUrl": "<existing-output-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    },
+    {
+      "filePattern": "../std*.txt",
+      "destination": {"container": {
+        "containerUrl": "<existing-failure-log-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    }
+  ],
+  "exitConditions": {
+    "fileUploadError": {"jobAction": "terminate"},
+    "default": {"jobAction": "terminate"}
+  }
+}
+```
+
+The job uses `onTaskFailure=performExitOptionsJobAction`. The existing pool must
+have the referenced managed identity, scoped Blob write permission, and a network
+route permitted by the storage firewall. Do not put a SAS or storage key in Git.
+Batch uploads on task completion, including when the command fails, before the
+task reaches its completed state. Upload failure is reported in
+`executionInfo.failureInfo`; `exitCode=0` alone is **not** success. Require
+`executionInfo.result=success`, no `failureInfo`, command exit zero, and the
+expected accessible Blob files. Parse the uploaded XML before reporting test
+counts. Missing reports are incomplete evidence, not passing tests.
+
+Batch does not promise upload order between `outputFiles` entries. Do not use
+this unordered upload list to publish a replay `_SUCCESS` marker ahead of its
+results; the existing replay publisher must still write that marker last.
+
+Qualify the setup with a small task: retrieve its XML and logs **after** the pool
+has returned to zero. Also test an upload failure and confirm it cannot be
+reported as a successful validation. See Microsoft's
+[task output persistence documentation](https://learn.microsoft.com/en-us/azure/batch/batch-task-output-files).
 
 ## Output publication and `_SUCCESS`
 
@@ -202,17 +269,21 @@ do not mutate an already admitted input in place.
 
 ## Scale to zero after a batch
 
-After the queue drains and every admitted day has a matching `_SUCCESS` marker:
+Configure bounded autoscale with `taskcompletion` deallocation. Once the queue
+drains, nodes return to zero after Batch has finished output upload; local
+download is not a prerequisite for releasing compute. An upload failure must
+remain visible in task metadata, not keep paid nodes alive indefinitely.
 
-1. download outputs, manifests, and failure logs;
-2. run the same local finalizer and aggregation boundary;
-3. disable or delete the completed job according to retention policy;
-4. resize both node classes to zero;
-5. poll until current and target node counts are zero;
+1. confirm completed task results, upload status and required Blob objects;
+2. verify current and target node counts automatically reach zero;
+3. download outputs, manifests and failure logs from Blob, not node-local files;
+4. run the same local finalizer and aggregation boundary;
+5. retain completed task metadata until failures and outputs are accounted for;
 6. verify no unexpected compute, disk, public IP, load balancer, or logging
    resource remains allocated.
 
 ```bash
+# Manual fallback only if an idle pool has not automatically returned to zero:
 az batch pool resize \
   --pool-id <pool-id> \
   --target-dedicated-nodes 0 \
