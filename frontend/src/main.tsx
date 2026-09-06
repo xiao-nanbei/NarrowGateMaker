@@ -10,6 +10,8 @@ import { TraceCharts } from "./TraceCharts";
 import { TradeReplay } from "./TradeReplay";
 import { DataQuality } from "./DataQuality";
 import { ComputeResourcesView } from "./ComputeResources";
+import { ExecutionJob } from "./ExecutionJob";
+import { isRegisteredJob, isSyntheticJob } from "./executionPresentation";
 import {
   api,
   display,
@@ -17,6 +19,8 @@ import {
   getBaselineReport,
   getBaselineResults,
   getComputeResources,
+  getExecutionPlans,
+  getRegisteredExecutionReport,
   getReport,
   isCompleted,
   record,
@@ -28,6 +32,8 @@ import type {
   BaselineReport,
   BaselineResult,
   ComputeResources,
+  ExecutionPlanCatalog,
+  RegisteredExecutionReport,
   Job,
   Logs,
   Report,
@@ -999,7 +1005,9 @@ function SessionAuth({
 }
 
 function Compare({ jobs }: { jobs: Job[] }) {
-  const completed = jobs.filter(isCompleted);
+  const completed = jobs.filter(
+    (job) => isSyntheticJob(job) && isCompleted(job),
+  );
   const [left, setLeft] = useState("");
   const [right, setRight] = useState("");
   const [reports, setReports] = useState<[Report, Report] | null>(null);
@@ -1111,6 +1119,9 @@ function App() {
   const [computeResources, setComputeResources] =
     useState<ComputeResources | null>(null);
   const [computeError, setComputeError] = useState("");
+  const [executionPlans, setExecutionPlans] =
+    useState<ExecutionPlanCatalog | null>(null);
+  const [plansError, setPlansError] = useState("");
   const [runners, setRunners] = useState<Runner[]>([]);
   const [results, setResults] = useState<BaselineResult[]>([]);
   const [selectedResultId, setSelectedResultId] = useState("");
@@ -1122,6 +1133,8 @@ function App() {
   const [loadingBaseline, setLoadingBaseline] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  const [executionReport, setExecutionReport] =
+    useState<RegisteredExecutionReport | null>(null);
   const [logs, setLogs] = useState<Logs | null>(null);
   const [reportError, setReportError] = useState("");
   const [error, setError] = useState("");
@@ -1131,6 +1144,7 @@ function App() {
   const [section, setSection] = useState("results");
   const [reviewDay, setReviewDay] = useState<string>();
   const [filter, setFilter] = useState("all");
+  const [kindFilter, setKindFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [connected, setConnected] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -1142,9 +1156,7 @@ function App() {
   const selectedResult = results.find(
     (result) => result.id === selectedResultId,
   );
-  const readOnlySection = ["results", "replay", "quality", "nodes"].includes(
-    section,
-  );
+  const readOnlySection = ["results", "replay", "quality"].includes(section);
   const refresh = useCallback(async () => {
     if (refreshBusy.current) return;
     refreshBusy.current = true;
@@ -1175,6 +1187,15 @@ function App() {
           .catch((e) => {
             setComputeResources(null);
             setComputeError(errorText(e));
+          }),
+        getExecutionPlans()
+          .then((value) => {
+            setExecutionPlans(value);
+            setPlansError("");
+          })
+          .catch((e) => {
+            setExecutionPlans(null);
+            setPlansError(errorText(e));
           }),
       ]);
       setJobs(j.items);
@@ -1243,6 +1264,7 @@ function App() {
   }, [jobs, selectedId]);
   useEffect(() => {
     setReport(null);
+    setExecutionReport(null);
     setLogs(null);
     setReportError("");
   }, [selectedId]);
@@ -1250,11 +1272,26 @@ function App() {
     if (!selected) return;
     const controller = new AbortController();
     const id = selected.id;
-    setLoadingReport(isCompleted(selected));
-    if (isCompleted(selected))
+    setLoadingReport(
+      isCompleted(selected) &&
+        (isSyntheticJob(selected) || isRegisteredJob(selected)),
+    );
+    if (isCompleted(selected) && isSyntheticJob(selected))
       getReport(id, controller.signal)
         .then((value) => {
           setReport(value);
+          setReportError("");
+        })
+        .catch((e) => {
+          if (!controller.signal.aborted) setReportError(errorText(e));
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoadingReport(false);
+        });
+    if (isCompleted(selected) && isRegisteredJob(selected))
+      getRegisteredExecutionReport(id, controller.signal)
+        .then((value) => {
+          setExecutionReport(value);
           setReportError("");
         })
         .catch((e) => {
@@ -1271,10 +1308,17 @@ function App() {
         if (!controller.signal.aborted) setReportError(errorText(e));
       });
     return () => controller.abort();
-  }, [selected?.id, selected?.status, selected?.updated_at, authVersion]);
+  }, [
+    selected?.id,
+    selected?.status,
+    selected?.updated_at,
+    selected?.classification,
+    authVersion,
+  ]);
   const visible = jobs.filter(
     (job) =>
       (filter === "all" || job.status.toLowerCase() === filter) &&
+      (kindFilter === "all" || job.classification === kindFilter) &&
       `${titleOf(job)} ${job.id} ${job.arm ?? ""}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -1309,7 +1353,7 @@ function App() {
             ["results", "▥", "真实 B0 结果"],
             ["replay", "⌁", "K 线交易复盘"],
             ["quality", "▦", "数据质量"],
-            ["runs", "▤", "合成回放任务"],
+            ["runs", "▤", "任务队列"],
             ["compare", "⇄", "合成结果比较"],
             ["nodes", "▦", "计算资源"],
           ].map(([key, icon, label]) => (
@@ -1355,7 +1399,7 @@ function App() {
                 : section === "quality"
                   ? "数据质量 / UTC 日历"
                   : section === "runs"
-                    ? "合成回放任务"
+                    ? "任务队列 / 分类执行"
                     : section === "compare"
                       ? "合成结果比较"
                       : "计算资源 / 真实作业"}
@@ -1399,13 +1443,17 @@ function App() {
               </h1>
               <p>
                 {section === "nodes"
-                  ? "查看真实主机、云资源与外部研究进度，合成进程心跳单独展示。"
-                  : readOnlySection
-                    ? "读取已有回测结果与行情记录，不重新运行回测。"
-                    : "运行合成演示、查看事件路径和原始报告。"}
+                  ? "查看资源与外部研究进度，或选择已登记离线计划排队；不自动开启云资源。"
+                  : section === "runs"
+                    ? "合成示例与已登记离线计划分开标记，共用持久队列；外部运行不被接管。"
+                    : readOnlySection
+                      ? "读取已有回测结果与行情记录，不重新运行回测。"
+                      : "运行合成演示、查看事件路径和原始报告。"}
               </p>
             </div>
-            {readOnlySection ? (
+            {section === "nodes" ? (
+              <span className="tag real-tag">REGISTERED · 离线执行</span>
+            ) : readOnlySection ? (
               <span className="tag real-tag">
                 READ ONLY · {section === "nodes" ? "资源与作业" : "已有结果"}
               </span>
@@ -1421,20 +1469,24 @@ function App() {
           <div className="boundary-strip">
             <span className={`tag ${readOnlySection ? "real-tag" : ""}`}>
               {section === "nodes"
-                ? "资源状态 · 只读观测"
-                : readOnlySection
-                  ? "历史记录 · 只读查看"
-                  : "合成执行能力"}
+                ? "已登记离线计划"
+                : section === "runs"
+                  ? "持久任务队列"
+                  : readOnlySection
+                    ? "历史记录 · 只读查看"
+                    : "合成执行能力"}
             </span>
             <span>
               {section === "nodes"
                 ? "资源在线、任务运行、worker 心跳是三种不同状态。"
-                : readOnlySection
-                  ? "B0 成交来自历史回测，并非实盘成交。"
-                  : "replay-demo / synthetic-demo"}
+                : section === "runs"
+                  ? "真实离线任务不使用合成报告或合成比较。"
+                  : readOnlySection
+                    ? "B0 成交来自历史回测，并非实盘成交。"
+                    : "replay-demo / synthetic-demo"}
             </span>
             <span className="muted">
-              真实研究作业仅接入状态；任务提交和数据同步仍由现有执行器负责。
+              只执行 owner 登记计划；既有外部回测只读，不接管、不重复启动。
             </span>
           </div>
           <div className="auth-bar">
@@ -1543,7 +1595,7 @@ function App() {
                   需处理
                 </span>
                 <span>
-                  <strong>{workers.length}</strong>已登记节点
+                  <strong>{workers.length}</strong>已登记执行进程（非主机数）
                 </span>
                 <span className="counter-caption">
                   状态来自服务端 · UTC 时间
@@ -1561,6 +1613,17 @@ function App() {
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                     />
+                    <select
+                      aria-label="筛选任务类别"
+                      value={kindFilter}
+                      onChange={(e) => setKindFilter(e.target.value)}
+                    >
+                      <option value="all">全部类别</option>
+                      <option value="operator_registered_offline">
+                        已登记离线计划
+                      </option>
+                      <option value="synthetic_non_economic">合成演示</option>
+                    </select>
                     <select
                       aria-label="筛选状态"
                       value={filter}
@@ -1580,7 +1643,7 @@ function App() {
                     <thead>
                       <tr>
                         <th>实验 / 任务</th>
-                        <th>Arm</th>
+                        <th>类别 / Arm</th>
                         <th>状态</th>
                         <th>执行节点</th>
                         <th>创建时间 / UTC</th>
@@ -1605,12 +1668,35 @@ function App() {
                             </button>
                           </td>
                           <td>
+                            <span
+                              className={`small-tag ${isRegisteredJob(job) ? "real-tag" : ""}`}
+                            >
+                              {isRegisteredJob(job)
+                                ? "已登记离线"
+                                : isSyntheticJob(job)
+                                  ? "合成示例"
+                                  : "未知类别"}
+                            </span>
                             <span className="arm">{display(job.arm)}</span>
                           </td>
                           <td>
                             <Status value={job.status} />
                           </td>
-                          <td className="mono">{display(job.worker_id)}</td>
+                          <td>
+                            {computeResources?.items.find(
+                              (item) => item.id === job.resource_id,
+                            )?.label ??
+                              (job.resource_id
+                                ? "指定资源（目录未连接）"
+                                : job.requested_resource_id === "auto"
+                                  ? "按计划等待资源"
+                                  : job.worker_id
+                                    ? "合成执行进程"
+                                    : "待分配")}
+                            {job.queue_reason && (
+                              <p className="muted">{job.queue_reason}</p>
+                            )}
+                          </td>
                           <td className="mono">
                             {stamp(job.created_at, true)}
                           </td>
@@ -1640,11 +1726,20 @@ function App() {
                   >
                     {jobs.length
                       ? "调整筛选条件以查看任务。"
-                      : "新建一个合成实验，验证执行、归档与结果检查的完整流程。"}
+                      : "在计算资源页选择已登记离线计划，或新建合成实验验证工具链。"}
                   </Empty>
                 )}
               </section>
-              {selected && (
+              {selected && isRegisteredJob(selected) ? (
+                <ExecutionJob
+                  job={selected}
+                  report={executionReport}
+                  logs={logs}
+                  loading={loadingReport}
+                  error={reportError}
+                  onCancel={() => void cancel()}
+                />
+              ) : selected && isSyntheticJob(selected) ? (
                 <ResultView
                   job={selected}
                   report={report}
@@ -1653,7 +1748,11 @@ function App() {
                   error={reportError}
                   onCancel={() => void cancel()}
                 />
-              )}
+              ) : selected ? (
+                <Notice error>
+                  此任务类别未被当前界面识别，没有将它当作合成示例显示。
+                </Notice>
+              ) : null}
             </>
           )}
           {section === "compare" && <Compare jobs={jobs} />}
@@ -1663,6 +1762,13 @@ function App() {
               workers={workers}
               error={computeError}
               loading={loading}
+              plans={executionPlans}
+              plansError={plansError}
+              onCreated={(id) => {
+                if (id) setSelectedId(id);
+                setSection("runs");
+                void refresh();
+              }}
             />
           )}
           <footer className="page-footer">

@@ -9,9 +9,9 @@ Last materially synchronized: 2026-09-07
 
 Replay Studio 已提供浏览器工作台、持久化控制服务和独立 HTTP worker。首个适配器执行已有的[公开合成回放](../../examples/replay_demo/README.zh-CN.md)，没有另写撮合引擎。浏览器或 SSH 断线不会取消已提交的实验；只要状态目录仍在，控制进程重启后可以恢复任务和已发布结果。
 
-这是能运行的第一阶段交付，不是已经完成的研究平台。已完成的 owner 私有 B0 结果现可导入并只读查看，与合成任务分开。真实行情 F01/F10 执行和训练后的 E/C 候选仍关闭。创建两个演示臂会在独立输出目录运行同一 fixture；臂的名字不会自动产生不同经济策略。
+已完成的 owner 私有 B0 结果可导入并只读查看，与合成任务分开。可选的 owner 登记离线适配器现可将已经准备好的研究、训练或数据处理计划排入注册资源，调用现有 CLI，不另写回放引擎。公共 clone 不预置已启用的真实计划。创建两个演示臂仍是在独立输出目录运行同一 fixture；臂的名字不会自动产生不同经济策略。
 
-服务不会启动 maker、读取实盘凭据、导入 current-live pointer、创建云资源或晋级策略。任务提交只接受内置合成数据集，不要通过演示适配器上传私有行情、账户或研究工件。B0 结果导入是 owner 本地 CLI 操作，不提供 HTTP 上传或任意路径读取接口。
+服务不提供 maker、云资源创建或策略晋级动作。合成提交只接受内置合成数据集；独立的离线提交只接受已登记计划 ID 和资源 ID。Owner 计划必须是已审查的可信离线程序，不是运行不可信脚本的沙箱；其环境不应包含实盘凭据或 live 启动。不要通过演示适配器上传私有行情、账户或研究工件。B0 结果导入仍是 owner 本地 CLI 操作，不提供 HTTP 上传或任意路径读取接口。
 
 ## 跑通完整链路
 
@@ -33,7 +33,7 @@ python -m narrowgate.studio worker \
 
 打开 `http://127.0.0.1:8080`，创建演示实验，检查订单、事件轨迹、campaign、账本和日志原文。第二个 worker 使用不同 ID 和工作目录。每个 worker 最多持有一个未完成任务；两个 worker 可以并行运行两个独立臂，但不能由此把连续库存路径随意拆成每天 fresh-start 再拼接。
 
-前端开发和可复现构建见 [frontend/README.zh-CN.md](../../frontend/README.zh-CN.md)。真实数据诊断暂时仍通过公开[一日数据教程](../opensource/one_day_data_pipeline.zh-CN.md)运行，不走 Studio。
+前端开发和可复现构建见 [frontend/README.zh-CN.md](../../frontend/README.zh-CN.md)。公开[一日数据教程](../opensource/one_day_data_pipeline.zh-CN.md)仍是准备真实数据诊断的入口；将已有完整调用接入 Studio 时，使用下文的 owner 登记计划。
 
 ## 只导入已完成 B0，不重跑
 
@@ -102,7 +102,7 @@ python -m narrowgate.studio serve \
 
 已有作业通过选定的小型状态文件和进程检查接入观察；它们是外部作业，不属于 Studio 队列。观察器不启动这些作业，也不读取未完成的经济结果。合成 worker 记录单独保留用于演示诊断，同一台 Mac 上的两个演示进程不能被计为两台物理资源。角色标签只是任务分配偏好，不证明性能、副本已就绪或真实行情执行器已接通。
 
-分配任务应考虑当前负载、可用内存、数据位置、已验证的运行环境兼容性和实测吞吐。Owner 当前偏好 Mac M4 用于训练、LAN 用于适合的回放和数据准备，Azure 则按当前授权预算与到期日按需使用。M4 不代表每个模型库都使用 Metal。不得靠重启迁移正在运行的任务、为填满空闲资源重复运行 baseline，或把连续状态依赖的日期拆到不同主机。此资源视图不新增任意 shell 执行、自动创建云资源或真实行情任务提交；后者仍需要下文的有界 runner 适配器。
+分配任务应考虑当前负载、可用内存、数据位置、已验证的运行环境兼容性和实测吞吐。Owner 当前偏好 Mac M4 用于训练、LAN 用于适合的回放和数据准备，Azure 则按当前授权预算与到期日按需使用。M4 不代表每个模型库都使用 Metal。不得靠重启迁移正在运行的任务、为填满空闲资源重复运行 baseline，或把连续状态依赖的日期拆到不同主机。下文的登记适配器支持明确提交计划，不接受任意 shell 或自动创建云资源；现有外部作业保持只读，不由该队列接管。
 
 ```text
 浏览器 ── HTTP / SSH 隧道 ── 控制 API + 本地 SQLite + 已发布结果
@@ -123,9 +123,38 @@ ssh -NT -o ExitOnForwardFailure=yes \
 
 然后访问 `http://127.0.0.1:18080`。`control-host` 是操作者配置的 SSH 别名，不是项目附带服务器。服务故意只监听 loopback，不要为了访问它开放云防火墙或改为监听所有网卡。
 
-另一台主机上的 worker 也先建立到控制主机的隧道，再把 `--url` 指向该主机自己的转发端口。worker 通过 API 通信，不能共享挂载并写入控制服务的 SQLite 文件。内置数据随包分发；任意私有数据登记、按数据位置调度仍是后续适配能力。
+另一台主机上的 worker 也先建立到控制主机的隧道，再把 `--url` 指向该主机自己的转发端口。worker 通过 API 通信，不能共享挂载并写入控制服务的 SQLite 文件。合成数据随包分发；登记离线计划的精确本地输入和运行环境由 owner 预先准备。Studio 不下载数据、替换 feed，也不把文件存在当作数据质量通过。
 
 可选环境变量 `NARROWGATE_STUDIO_TOKEN` 开启 Bearer 验证。控制服务和 worker 使用同一份操作者生成的 token；浏览器“访问凭据”对话框只将它留在页面内存，不写 URL 或 Git。启用凭据后界面使用带认证的轮询，不把 token 放进 SSE URL。这是单 owner、SSH 隧道内的服务，不是公开多用户服务。
+
+## 排队执行 owner 登记的离线计划
+
+在控制端与各执行主机准备审查过的 owner-only 执行清单（`0600`、`visibility: local_only_do_not_publish`）。[`Catalog`](../../narrowgate/studio_execution.py) 格式定义资源分工及带稳定 `id`、`revision`、`role`、`targets`、`preferred_resources` 顺序的计划。每个 target 固定 Python 参数列表、工作目录、必需输入、输出目录、必需输出文件、小型 JSON 摘要、可用内存要求、超时及可选冲突进程检查。命令、环境值和路径不由浏览器填写。这是运维调用约定，不新增研究审批或 SHA 链。
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/execution-plans.json" \
+  --port 8080
+
+python -m narrowgate.studio worker \
+  --url http://127.0.0.1:8080 \
+  --worker-id research-worker-a \
+  --resource-id research-host-a \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/worker-execution-plans.json" \
+  --work-dir "${NARROWGATE_RESULTS_DIR}/studio-research-worker"
+```
+
+以上 ID 是示例；控制端和 worker 使用同一逻辑资源与计划版本，各自主机路径按实际准备。不加新增参数的旧 worker 命令仍是合成 demo worker。资源探测、离线执行 worker 心跳及外部任务观察是三个独立信号。
+
+在**计算资源**页选择启用的计划，以及一个获准资源或计划已登记的优先顺序。`GET /api/execution-plans` 返回选择项、就绪状态和已有 `attempt`；`POST /api/executions` 只接收 `plan_id`、`resource_id`，并沿用 `Idempotency-Key` 请求头。页面没有 shell、路径、策略参数、日期或凭据输入框。一份完整计划对应一个任务，连续日期不跨主机拆分。原幂等键重试同一请求会返回原任务；换一个键再次提交同一计划／版本返回 HTTP 409，包括原任务失败、取消或 worker 失联的情况。界面禁用重复提交并提供已有任务链接，不静默另跑一轮经济研究。
+
+提交和执行不同。获准资源没有已连接 worker、可用内存不足、缺少必需输入或执行器忙时，任务留在持久队列并说明原因，不因 LAN 或 Azure 不可用就回退到 Mac。训练优先配置的训练资源，并禁止派往 LAN；回放／数据处理遵循计划目标顺序。Azure 节点数为零时保持未就绪，适配器不会扩容。冲突的外部进程或已存在输出目录会阻止新调用，不接管、不覆盖、不自动续跑。
+
+Worker 执行固定 Python 调用前重新检查 target，实施登记超时，完成后确认必需输出再发布。完整 stdout/stderr 和大型产物保留在 worker 持久盘；控制端保存有界终态日志尾部（各最多 256 KB）、登记 JSON 摘要（每份最多 256 KB）、输出文件元数据和执行环境，受现有发布大小上限约束。上传失败不能标记 `completed`；同一 worker 保留 outbox 以恢复上传，不重跑计算。这不等于大型输出的完整备份，释放云节点前仍须通过现有 owner 流程归档。
+
+**任务队列**将 `operator_registered_offline` 与 `synthetic_non_economic` 分开标注。离线计划完成后打开独立的 `registered_execution_report.v1`，只显示登记摘要、产物清单、终态日志和环境，不进入 demo 订单／trace 图表或合成比较表。空摘要表示没有登记摘要，不是零 PnL。执行完成不等于经济验证通过、策略晋级、live 精确一致或任意主机崩溃可恢复。新 B0 或 E/C 回测仍需准备对应 canonical 计划；登记主机本身不会创建研究。
 
 ## 进程与存储
 
@@ -168,7 +197,7 @@ WantedBy=default.target
 | 重启后已有执行目录但没有 outbox | 明确报执行状态未知；不能猜旧子进程已死，也不能重复运行。 |
 | 重复发布 | 同一任务相同内容幂等；不同内容或其他 attempt 不能覆盖终态结果。 |
 
-控制服务只有在 summary、trace、receipt、stdout、stderr、环境信息全部落盘并同步，且数据库事务提交后才标记完成。合成结果进入结果库时检查一次参考字节，不在每次查看图表时重读和哈希。没有新增研究 SHA 或许可层级。
+合成任务只有在 summary、trace、receipt、stdout、stderr、环境信息全部落盘并同步，且数据库事务提交后才标记完成。登记离线任务使用上文自己的输出约定和有界发布，不套用合成参考字节。合成结果进入结果库时检查一次参考字节，不在每次查看图表时重读和哈希。没有新增研究 SHA 或许可层级。
 
 演示 worker 实施 600 秒执行上限，上传大小有界。运行中日志仍在 worker 上；浏览器显示的是终态归档日志，不是实时 stdout。进度仅展示真实生命周期状态，不编造完成百分比。
 
@@ -190,11 +219,11 @@ WantedBy=default.target
 | 工作 | 当前状态／下一步验收 |
 | --- | --- |
 | 公开入门文档 | 已将无账户 demo 前置，补一笔订单的完整例子、数据状态表，并区分研究状态与工具可用性。 |
-| 远程执行基础 | 已实现合成 demo 的持久队列、独立 worker、取消／失联状态、结果发布和浏览器检查。 |
-| 当前 B0 接入 | 已完成私有 B0 摘要可只读导入，保留连续段会计与导入一致性检查；真实行情任务执行仍关闭。 |
+| 远程执行基础 | 持久队列、独立 worker、取消／失联和结果发布支持 demo 与可选 owner 登记离线计划；不自动创建云资源。 |
+| 当前 B0 接入 | 已完成私有 B0 摘要保持只读；新 B0 需单独登记 canonical 计划，不接管或重复现有外部 baseline。 |
 | E/C 研究 | 独立研究分支已有完整机会采集及单干预配对标签组装；不等于已有训练或通过经济验证的选择策略。 |
-| 真实数据登记 | 提交真实市场任务之前，需要明确 Development／Validation／holdout 角色、不可变逻辑数据映射、源覆盖，以及禁止静默替换 backend/feed。 |
-| 有界真实执行 | 接入白名单 canonical runner、CPU／RSS／磁盘预算及工件流式发布，绝不从浏览器接受任意 shell 命令。 |
+| 真实数据登记 | 通用数据浏览／替换不是执行就绪。Owner 使用现有 canonical 工具准备精确 Development 输入、切分和运行环境；必需文件检查不替代质量或因果检查。 |
+| 有界真实执行 | 已实现固定 Python 计划、资源角色、输入／内存／输出检查、超时和有界终态发布；不提供大产物完整复制或任意实验编辑器。 |
 | 完整分析 | 复用 campaign、资金费、scorecard、时序统计；补真实轨迹分页、分源延迟视图和不兼容原因说明。 |
 | 多主机验证 | 在目标主机验证 wheel 服务、SSH 隧道、节点丢失、原 finalizer 接收后，才能宣称远程真实行情就绪。 |
 
@@ -208,4 +237,4 @@ python -m pytest tests/test_replay_studio.py tests/test_public_replay_demo.py te
 python -m ruff check narrowgate examples --select E,F,I,UP,B
 ```
 
-Studio 测试覆盖并发领取、幂等、重开控制数据库、失联／取消 worker、工件失败、原 demo CLI 执行以及 loopback/API 边界。这不等于 native queue 资格、经济回测或任意主机崩溃恢复证明。浏览器验收应创建两项任务、运行两个 worker、重新打开页面、查看未成交订单和 campaign、取消排队任务，并确认无法提交真实市场或 live runner。
+Studio 测试覆盖并发领取、幂等、重开控制数据库、失联／取消 worker、工件失败、原 demo CLI 执行以及 loopback/API 边界。登记计划测试还需覆盖禁派资源、资源不可用保持 queued、输出冲突、进程所有权及非 demo 报告分类。这不等于 native queue 资格、经济回测或任意主机崩溃恢复证明。浏览器使用无害登记离线检查验收 ID 提交与分类，再检查原有合成订单／campaign；未知计划与 live 启动仍不由页面提供。

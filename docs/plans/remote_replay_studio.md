@@ -9,9 +9,9 @@ Last materially synchronized: 2026-09-07
 
 Replay Studio now provides a browser workbench, a durable control service and an independent HTTP worker. The first adapter executes the existing [public synthetic replay](../../examples/replay_demo/README.md); it does not implement another matching engine. A submitted experiment survives a browser or SSH disconnect. Control state and published artifacts survive a control-process restart when its state directory is retained.
 
-This is a working first delivery, not the completed research platform. Completed owner-private B0 results can now be imported for read-only inspection, separately from synthetic jobs. Real-market F01/F10 execution and learned E/C candidates are still disabled. Creating two demo arms runs the same fixture twice with separate output directories; their names do not create different economic policies.
+Completed owner-private B0 results can be imported for read-only inspection, separately from synthetic jobs. An optional operator-registered offline adapter can now queue fixed, already-prepared research, training or data-processing plans on registered resources. It invokes the existing CLI rather than implementing another replay engine. No real plan ships enabled in a public clone. Creating two demo arms still runs the same fixture twice with separate output directories; their names do not create different economic policies.
 
-The service never starts a maker, reads live credentials, imports a current-live pointer, creates cloud resources or promotes a strategy. Job submission accepts only the built-in synthetic dataset. Do not upload private market, account or research artifacts through this demo adapter. B0 result import is an owner-local CLI operation, not an HTTP upload or arbitrary-path endpoint.
+The service exposes no maker, cloud-provisioning or strategy-promotion action. Demo submission accepts only the built-in synthetic dataset; the separate offline submission accepts only a registered plan ID and resource ID. Operator plans are trusted, reviewed offline programs, not untrusted scripts running in a sandbox. Keep live credentials and live startup out of their runtime. Do not upload private market, account or research artifacts through the demo adapter. B0 result import is an owner-local CLI operation, not an HTTP upload or arbitrary-path endpoint.
 
 ## Run the closed loop
 
@@ -102,7 +102,7 @@ The manifest has `visibility: local_only_do_not_publish` and a `resources` list.
 
 Existing jobs can be observed through selected small status files and process checks. These are external jobs, not tasks owned by the Studio queue; the observer neither launches them nor reads partial economic results. Synthetic worker records remain available separately for demo diagnostics. Two demo processes on one Mac must not be counted as two physical resources. Role labels are placement guidance, not proof of a benchmark, a dataset replica or a ready real-market executor.
 
-Choose placement using current load, usable memory, data locality, verified runtime compatibility and measured throughput. The owner's present preference is Mac M4 for training and LAN for suitable replay/data preparation, with Azure optional under the currently authorized budget and expiry. M4 does not imply that every model library uses Metal. Do not migrate active work by restarting it, duplicate a baseline to fill idle capacity, or split dependent continuous days across hosts. This resource view does not add arbitrary shell execution, automatic cloud provisioning or real-market job submission; those still require the bounded runner adapter described below.
+Choose placement using current load, usable memory, data locality, verified runtime compatibility and measured throughput. The owner's present preference is Mac M4 for training and LAN for suitable replay/data preparation, with Azure optional under the currently authorized budget and expiry. M4 does not imply that every model library uses Metal. Do not migrate active work by restarting it, duplicate a baseline to fill idle capacity, or split dependent continuous days across hosts. The registered adapter below adds explicit plan submission, not arbitrary shell execution or automatic cloud provisioning. Existing external jobs remain read-only and are never taken over by that queue.
 
 ```text
 Browser ── HTTP over SSH tunnel ── Control API + local SQLite + published outputs
@@ -123,7 +123,36 @@ ssh -NT -o ExitOnForwardFailure=yes \
 
 Open `http://127.0.0.1:18080`. `control-host` is an operator-configured SSH alias, not a bundled server. The service intentionally listens only on loopback. Do not expose it by changing cloud firewall rules or binding to all interfaces.
 
-For a worker on another host, establish an equivalent tunnel from that worker host to the control host, then point `--url` at its local forwarded port. Workers communicate through the API; they never mount or write the control SQLite file. The built-in dataset is shipped with each worker. Arbitrary private dataset registration and data-aware scheduling are future adapters, not current features.
+For a worker on another host, establish an equivalent tunnel from that worker host to the control host, then point `--url` at its local forwarded port. Workers communicate through the API; they never mount or write the control SQLite file. The built-in demo dataset ships with each worker. Registered offline plans instead require the operator to prepare their exact worker-local inputs and runtime; Studio does not download data, substitute another feed or turn file existence into data-quality qualification.
+
+## Queue an operator-registered offline plan
+
+Use a reviewed owner-only execution manifest (`0600`, `visibility: local_only_do_not_publish`) on control and each execution host. The [`Catalog`](../../narrowgate/studio_execution.py) format defines resource roles and plans with stable `id`, `revision`, `role`, `targets` and an explicit `preferred_resources` order. A target fixes its Python argument list, working directory, required input files, output directory, required output names, small JSON summary names, available-memory requirement, timeout and optional conflicting-process check. Commands, environment values and local paths are never entered by the browser. This registration is an operational invocation contract, not a new research approval or hash hierarchy.
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/execution-plans.json" \
+  --port 8080
+
+python -m narrowgate.studio worker \
+  --url http://127.0.0.1:8080 \
+  --worker-id research-worker-a \
+  --resource-id research-host-a \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/worker-execution-plans.json" \
+  --work-dir "${NARROWGATE_RESULTS_DIR}/studio-research-worker"
+```
+
+The IDs are examples; configure the same logical resource and plan revision on control and its worker, with the correct local paths on each host. The old worker command without these options remains a synthetic-demo worker. Resource probes, offline worker heartbeats and observed external jobs are three separate signals in the UI.
+
+In **计算资源**, choose an enabled plan and either one permitted resource or the plan's registered priority order. `GET /api/execution-plans` supplies choices, readiness and any existing `attempt`; `POST /api/executions` accepts exactly `plan_id` and `resource_id`, plus the existing `Idempotency-Key` header. There are no browser fields for shell, paths, strategy parameters, dates or credentials. One plan is one complete task: continuous days are not split between hosts. Retrying an identical request with its original idempotency key returns the original task. Submitting the same plan/revision with a different key returns HTTP 409, including after a failure, cancellation or lost worker. The UI disables duplicate submission and links to the existing task; it never silently reruns an economic plan.
+
+Submitting and executing are distinct. An allowed target without a connected worker, sufficient available memory, required inputs or free execution capacity stays queued with a reason. It does not fall back to the Mac solely because LAN or Azure is unavailable. Training placement prefers the configured training resource and rejects LAN training; replay/data placement follows the registered target order. Azure with zero nodes stays unready and is not expanded by this adapter. A conflicting external process or an already-existing output directory prevents a new invocation; it is not adopted, overwritten or resumed.
+
+The worker rechecks the target before running its fixed Python invocation, enforces the registered timeout, and validates required outputs before publishing. Original stdout/stderr and large result files remain on the worker's persistent disk. The control stores bounded terminal log tails (up to 256 KB each), registered JSON summaries (up to 256 KB each), output-file metadata and execution-environment metadata within the existing publication bound. Publication failure cannot become `completed`; the same worker retains the outbox for upload recovery without rerunning the computation. This archive is not a full backup of large output files; archive those through the existing owner workflow before releasing a cloud node.
+
+The **任务队列** labels `operator_registered_offline` separately from `synthetic_non_economic`. A completed offline plan opens `registered_execution_report.v1`, showing only its registered summaries, artifact list, terminal logs and environment. It never enters demo order/trace charts or the synthetic comparison table. Empty summaries mean none were registered, not zero PnL. Execution completion is not economic validation, research promotion, exact live parity or complete host-crash recovery. New B0 or E/C runs still need the appropriate already-prepared canonical plan; merely registering a host does not create one.
 
 The optional `NARROWGATE_STUDIO_TOKEN` environment variable enables Bearer authentication. Set the same operator-generated token on control and workers; the browser's “访问凭据” dialog keeps it only in page memory. Tokens must not appear in URLs or source control. With authentication the UI uses authenticated polling rather than putting tokens into an SSE URL. This is a single-owner SSH-tunnel service, not a public multi-user service.
 
@@ -168,7 +197,7 @@ Keep the control state directory and worker work directories on durable private 
 | Worker restarts with an existing execution directory but no outbox | Stops with an explicit uncertain-execution error. It cannot safely infer that the old child is dead or start a duplicate. |
 | Repeated publication | Identical same-attempt publication is idempotent; changed or other-attempt content cannot overwrite a terminal result. |
 
-The control marks a result completed only after required summary, trace, receipt, stdout, stderr and environment information have been saved and synchronized, and the database transaction commits. Reference bytes are checked once when the synthetic output enters the result store, not on every chart read. No additional research SHA/permission hierarchy is created.
+For synthetic jobs, the control marks a result completed only after required summary, trace, receipt, stdout, stderr and environment information have been saved and synchronized, and the database transaction commits. Registered offline jobs use their own output contract and bounded publication described above, not synthetic reference bytes. Reference bytes are checked once when synthetic output enters the result store, not on every chart read. No additional research SHA/permission hierarchy is created.
 
 Demo execution has a 600-second worker-enforced timeout and a bounded upload size. Running logs currently remain on the worker; the browser shows terminal archived logs, not a live stdout stream. Task progress is lifecycle status, not an invented completion percentage.
 
@@ -190,11 +219,11 @@ Real-market adapters must preserve these boundaries before being enabled:
 | Workstream | Current status / next acceptance |
 | --- | --- |
 | Public onboarding | Product-first no-account demo; worked order example; data-state table; research status separated from tooling availability. |
-| Remote execution foundation | Implemented for synthetic demo: durable queue, independent workers, cancel/lost states, output publication and browser result inspection. |
-| Current B0 integration | Completed private B0 summaries are importable for read-only viewing with segment accounting and import consistency checks. Real-market job execution remains disabled. |
+| Remote execution foundation | Durable queue, independent workers, cancel/lost states and output publication support demo and optional operator-registered offline plans; no automatic cloud provisioning. |
+| Current B0 integration | Completed private B0 summaries remain read-only. A new B0 run requires a separately registered canonical plan; existing external baselines are not taken over or repeated. |
 | E/C research | The separate research branch collects complete E/C opportunities and assembles single-intervention paired labels. This does not yet constitute a trained or validated selection policy. |
-| Real dataset registry | Required before market-run submission: explicit Development/Validation/holdout roles, immutable logical dataset mapping, source coverage and no silent backend/feed substitution. |
-| Bounded real execution | Add an allowlisted canonical runner adapter, CPU/RSS/disk budgets and artifact streaming. Never accept arbitrary shell commands from the browser. |
+| Real dataset registry | Generic data browsing/substitution is not execution readiness. The owner prepares a plan's exact Development inputs, splits and runtime using existing canonical tools; required-file checks do not replace data-quality or causal checks. |
+| Bounded real execution | Fixed registered Python plans, target roles, input/memory/output checks, timeout and bounded terminal publication are implemented. Full large-artifact replication and an arbitrary experiment editor are not. |
 | Full analysis | Reuse existing campaign, funding, scorecard and chronological statistics. Add real trace pagination, source-aware latency views and compatibility explanations. |
 | Multi-host qualification | Verify the packaged service, SSH tunnels, node loss and original finalizer acceptance on target hosts before declaring remote real-market readiness. |
 
@@ -208,4 +237,4 @@ python -m pytest tests/test_replay_studio.py tests/test_public_replay_demo.py te
 python -m ruff check narrowgate examples --select E,F,I,UP,B
 ```
 
-The Studio tests exercise concurrent claims, idempotency, control-store reopening, lost/canceled workers, artifact failures, original demo CLI execution and loopback/API boundaries. They are not native queue qualification, an economic backtest or proof of arbitrary host-crash recovery. Browser verification should create two tasks, run two workers, reopen the page, inspect the unfilled order and campaign, cancel a queued task, and confirm the API cannot submit a real-market or live runner.
+The Studio tests exercise concurrent claims, idempotency, control-store reopening, lost/canceled workers, artifact failures, original demo CLI execution and loopback/API boundaries. Registered-plan tests must also cover forbidden placement, unavailable resources staying queued, fixed-output conflicts, process ownership and non-demo report classification. They are not native queue qualification, an economic backtest or proof of arbitrary host-crash recovery. Browser verification should use a harmless registered offline check, confirm plan-only submission and classification, then verify the unchanged synthetic order/campaign flow. Unknown plans and live launchers remain unavailable through the UI.

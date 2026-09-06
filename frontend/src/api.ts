@@ -9,6 +9,12 @@ export type Job = {
   created_at?: string | number | null;
   updated_at?: string | number | null;
   error?: unknown;
+  classification?: "operator_registered_offline" | "synthetic_non_economic";
+  plan_id?: string | null;
+  revision?: string | null;
+  requested_resource_id?: string | null;
+  resource_id?: string | null;
+  queue_reason?: string | null;
 };
 export type Runner = {
   id: string;
@@ -22,7 +28,131 @@ export type Worker = {
   online?: boolean;
   capabilities?: unknown[];
   datasets?: unknown[];
+  classification?: "offline_execution_worker" | "synthetic_demo_worker";
+  resource_id?: string | null;
+  plans?: {
+    id: string;
+    revision: string;
+    ready: boolean;
+    reason: string | null;
+  }[];
 };
+export type ExecutionPlanResource = {
+  id: string;
+  label: string;
+  eligible: boolean;
+  online: boolean;
+  ready: boolean;
+  reason: string | null;
+};
+export type ExecutionPlan = {
+  id: string;
+  revision: string;
+  label: string;
+  role: "training" | "replay" | "data_processing";
+  enabled: boolean;
+  eligible_resources: ExecutionPlanResource[];
+  requirements: { continuous_plan: boolean; required_output_count: number };
+  warnings: string[];
+  attempt: { job_id: string; status: string } | null;
+};
+export type ExecutionPlanCatalog = {
+  items: ExecutionPlan[];
+  limitations: string[];
+};
+export type RegisteredExecutionReport = {
+  schema_version: "registered_execution_report.v1";
+  classification: "operator_registered_offline";
+  plan_id: string;
+  revision: string;
+  resource_id: string;
+  role: ExecutionPlan["role"];
+  summary: Row;
+  artifacts: { name: string; size_bytes: number }[];
+  environment: {
+    python: string;
+    platform: string;
+    runner: "operator-registered-offline";
+    elapsed_seconds: number;
+    returncode: number;
+    resource_id: string;
+  };
+  limitations: string[];
+};
+
+export async function getRegisteredExecutionReport(
+  id: string,
+  signal?: AbortSignal,
+): Promise<RegisteredExecutionReport> {
+  const report = await api<RegisteredExecutionReport>(
+    `/jobs/${encodeURIComponent(id)}/report`,
+    { signal },
+  );
+  if (
+    report.schema_version !== "registered_execution_report.v1" ||
+    report.classification !== "operator_registered_offline" ||
+    typeof report.plan_id !== "string" ||
+    typeof report.revision !== "string" ||
+    typeof report.resource_id !== "string" ||
+    !report.summary ||
+    Array.isArray(report.summary) ||
+    typeof report.summary !== "object" ||
+    !Array.isArray(report.artifacts) ||
+    !report.environment ||
+    report.environment.runner !== "operator-registered-offline" ||
+    !Array.isArray(report.limitations)
+  )
+    throw new Error("离线执行报告格式不受支持；不能作为合成回放报告展示。");
+  return report;
+}
+
+export async function getExecutionPlans(
+  signal?: AbortSignal,
+): Promise<ExecutionPlanCatalog> {
+  const value = await api<ExecutionPlanCatalog>("/execution-plans", { signal });
+  if (
+    !Array.isArray(value.items) ||
+    !Array.isArray(value.limitations) ||
+    value.items.some(
+      (plan) =>
+        typeof plan.id !== "string" ||
+        typeof plan.revision !== "string" ||
+        typeof plan.enabled !== "boolean" ||
+        !["training", "replay", "data_processing"].includes(plan.role) ||
+        !Array.isArray(plan.eligible_resources) ||
+        !Array.isArray(plan.warnings) ||
+        (plan.attempt !== null &&
+          (!plan.attempt ||
+            typeof plan.attempt.job_id !== "string" ||
+            typeof plan.attempt.status !== "string")) ||
+        !plan.requirements ||
+        plan.eligible_resources.some(
+          (resource) =>
+            typeof resource.id !== "string" ||
+            typeof resource.eligible !== "boolean" ||
+            typeof resource.online !== "boolean" ||
+            typeof resource.ready !== "boolean",
+        ),
+    )
+  )
+    throw new Error("离线执行计划目录格式不受支持。");
+  return value;
+}
+
+export function submitExecution(
+  planId: string,
+  resourceId: string,
+  idempotencyKey: string,
+) {
+  return api<{ id: string; jobs: Job[] }>("/executions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({ plan_id: planId, resource_id: resourceId }),
+  });
+}
 export type ComputeResource = {
   id: string;
   label: string;

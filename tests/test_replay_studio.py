@@ -119,17 +119,42 @@ def test_resource_registration_rejects_unsafe_or_ambiguous_probes(resource_manif
         resources.ResourceCatalog(resource_manifest)
 
 
-def test_actual_local_metadata_probe_reads_only_explicit_status_json(resource_manifest, tmp_path):
+@pytest.mark.parametrize(
+    "status,terminal",
+    [
+        ({"exit_code": 0}, "completed"),
+        ({"status": "partial", "exit_code": None}, "partial"),
+        ({"status": "partial", "exit_code": 0}, "partial"),
+        ({"status": "partial", "exit_code": 1}, "partial"),
+    ],
+)
+@pytest.mark.parametrize("still_running", [False, True])
+def test_actual_local_metadata_probe_reads_only_explicit_status_json(
+    resource_manifest, tmp_path, status, terminal, still_running
+):
     from narrowgate import studio_resources as resources
 
-    (tmp_path / "process_status.json").write_text(json.dumps({"exit_code": 0}))
+    (tmp_path / "process_status.json").write_text(json.dumps(status))
     # Nothing follows or scans adjacent economic/artifact files.
     (tmp_path / "economic.partial.csv").write_text("never read this payload")
     item = json.loads(resource_manifest.read_text())["resources"][0]
-    observed = resources.observe(item)
+    marker = f"probe-test-{tmp_path.name}-canonical-runner"
+    item["jobs"][0]["process_contains"] = [marker]
+    process = (
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", marker])
+        if still_running
+        else None
+    )
+    try:
+        observed = resources.observe(item)
+    finally:
+        if process is not None:
+            process.terminate()
+            process.wait(timeout=5)
     assert observed["state"] == "online"
     assert observed["hardware"]["vcpu"] > 0 and observed["hardware"]["memory_gib"] > 0
-    assert observed["jobs"][0]["status"] == "completed"
+    assert observed["jobs"][0]["status"] == ("unknown" if still_running else terminal)
+    assert ("terminal_status_conflicts_with_live_process" in observed["notes"]) == still_running
     assert str(tmp_path) not in json.dumps(observed)
 
 

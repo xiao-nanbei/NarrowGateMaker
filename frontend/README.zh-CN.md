@@ -5,7 +5,7 @@ Last materially synchronized: 2026-09-07
 
 [English（权威版本）](README.md)
 
-用于 Python 安装包内置 Studio 界面的 React + TypeScript 工作目录。当前唯一可执行的 runner 是 `replay-demo`，使用内置 `synthetic-demo` 数据集。独立默认页展示通过 [owner 本地 CLI](../docs/plans/remote_replay_studio.zh-CN.md#只导入已完成-b0不重跑) 导入的已有私有 B0 摘要。界面不能提交真实 F01、current B0 或 E/C 研究，不能执行任意 shell，也不会创建云资源。
+用于 Python 安装包内置 Studio 界面的 React + TypeScript 工作目录。公共默认 runner 是 `replay-demo`，使用内置 `synthetic-demo` 数据集。可选 owner 登记离线适配器可排队执行已准备的研究、训练或数据处理计划，浏览器不暴露命令、路径或参数；公共 clone 不预启用真实计划。独立默认页展示通过 [owner 本地 CLI](../docs/plans/remote_replay_studio.zh-CN.md#只导入已完成-b0不重跑) 导入的已有私有 B0 摘要，查看不会启动新 baseline。界面不执行任意 shell，也不创建云资源。
 
 真实结果使用只读 `/api/results` 接口，与合成任务、报告及比较保持分离。浏览器展示已保存金额和连续段覆盖，不制造每日 PnL 或 Sharpe；交易 PnL 已扣的手续费不再次扣除，资金费只加一次。Local/Azure 来源及既有跨主机核验描述历史出处，不代表当前云连接。队列缺失覆盖和模型证据限制仍明确显示。前端包不包含私有证据。
 
@@ -19,7 +19,11 @@ BUY / SELL 标记是模拟成交方向，不表示开仓 / 平仓。每笔成交
 
 ## 开发与构建
 
-计算资源页面使用 `/api/compute-resources` 显示 owner 配置的物理／云资源，不以合成 worker 数量代替主机数。友好别名、固定后台探测、外部作业观察与分配角色通过控制服务的 `--resources-manifest` 配置，见[资源接入说明](../docs/plans/remote_replay_studio.zh-CN.md#真实计算资源与合成-worker-分开)。已缩容到零的池、陈旧观测和不可达主机与在线 worker 分别展示。页面只观察已有研究，不新增真实行情提交适配器或云资源创建功能。
+计算资源页面使用 `/api/compute-resources` 显示 owner 配置的物理／云资源，不以 worker 数量代替主机数。友好别名、固定后台探测、外部作业观察与分配角色通过 `--resources-manifest` 配置，见[资源接入说明](../docs/plans/remote_replay_studio.zh-CN.md#真实计算资源与合成-worker-分开)。已缩容到零的池、陈旧观测和不可达主机与执行 worker 心跳分别展示。现有外部研究仍只读，不接管或重复启动。
+
+控制端和 worker 配置 owner `--execution-manifest` 后，资源页读取 `/api/execution-plans`，只向 `/api/executions` 提交 `plan_id`、`resource_id`；相同计划／版本和目标重试保留同一幂等键。已有 attempt 的计划／版本显示原任务链接并禁用重复提交；换键提交会返回 HTTP 409，不会重跑失败或失联的执行。获准但未就绪／离线的 worker 会让任务留在队列，不开启 Azure 节点或静默回退至 Mac。训练优先配置的训练资源且不派 LAN；回放／数据处理遵循登记的资源顺序。具体步骤见[登记离线执行](../docs/plans/remote_replay_studio.zh-CN.md#排队执行-owner-登记的离线计划)。
+
+任务队列明确区分合成任务与 owner 登记任务。只有合成任务进入 demo trace／订单／campaign 和合成比较；已完成离线任务使用 `registered_execution_report.v1`，显示登记的 JSON 摘要、输出元数据、有界终态日志和环境。空摘要保持空，不转换成 PnL；大型输出和完整日志保留在原 worker 持久盘。Worker 未就绪与资源离线不是同一个状态。
 
 使用 Node.js 22.12+ 和固定的 pnpm 11.19.0。依赖变更需同时更新
 `pnpm-lock.yaml`。`pnpm-workspace.yaml` 已显式批准 esbuild 的标准安装钩子，
@@ -69,7 +73,9 @@ pnpm run build
 1. 仅在 `frontend/**` 或 Studio API/静态资源打包变化时触发 Linux 前端作业，
    执行冻结依赖安装、类型检查、trace-series 测试、格式检查和一次构建。
 2. 使用临时状态目录启动 loopback API 和一个合成 worker，浏览器验收创建、
-   取消、已完成报告、订单/trace 联动、比较和窄屏布局。不要提交真实研究或云任务。
+   取消、已完成报告、订单/trace 联动、比较和窄屏布局。另用无害登记离线检查验证
+   只按计划提交、不可用资源保持 queued、真实 worker 心跳和非 demo 报告；
+   不为填充页面启动经济研究或云资源。
 3. UI 构建后打包 Python wheel，验证安装后的 wheel 能直接提供 HTML 和
    带摘要文件名的 CSS/JS，不依赖前端开发服务器。
 

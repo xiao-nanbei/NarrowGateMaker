@@ -7,6 +7,7 @@ import {
   resourceRole,
   schedulerLabel,
   workerLabel,
+  researchJobStatus,
 } from "./resourcePresentation.ts";
 
 const resource = (changes = {}) => ({
@@ -84,6 +85,15 @@ test("stale or unknown historical observations do not count as currently running
   assert.notEqual(
     RESOURCE_STATE.scaled_to_zero.label,
     RESOURCE_STATE.offline.label,
+  );
+});
+
+test("partial external outputs are not completed or counted as active computation", () => {
+  assert.equal(researchJobStatus("partial"), "不完整 · 未完成");
+  assert.equal(
+    resourceCounts([resource({ jobs: [{ id: "partial", status: "partial" }] })])
+      .activeJobs,
+    0,
   );
 });
 

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import platform
+import re
 import signal
 import sqlite3
 import subprocess
@@ -26,7 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
-from narrowgate import studio_market, studio_resources
+from narrowgate import studio_execution, studio_market, studio_resources
 
 LEASE_SECONDS = 45
 ARTIFACT_LIMIT = 2_000_000
@@ -220,8 +221,7 @@ def b0_projection(summary_path: Path) -> dict:
             "overlap_days": overlap,
             "passed": True,
             "description": (
-                "既有摘要记录的本地 / Azure 跨主机核验；"
-                "本次只读导入，没有重跑或重新核验远端。"
+                "既有摘要记录的本地 / Azure 跨主机核验；本次只读导入，没有重跑或重新核验远端。"
             ),
         },
         "limitations": [
@@ -295,8 +295,9 @@ def atomic_text(path: Path, content: str):
 
 
 class Store:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, execution_manifest: Path | None = None):
         self.root = root.resolve()
+        self.execution = studio_execution.Catalog(execution_manifest)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.db_path = self.root / "studio.sqlite3"
         with self.connect() as db:
@@ -321,6 +322,7 @@ class Store:
                     id TEXT PRIMARY KEY, report TEXT NOT NULL, imported_at REAL NOT NULL);
             """)
             studio_market.initialize(db)
+            studio_execution.initialize(db)
 
     @contextlib.contextmanager
     def connect(self):
@@ -337,6 +339,7 @@ class Store:
     def event(db, job_id: str):
         row = dict(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
         row.pop("session", None)
+        row.update(studio_execution.job_metadata(db, job_id))
         db.execute("INSERT INTO events(kind,data) VALUES ('job_changed',?)", (dumps(row),))
 
     def create(self, specification: dict, key: str) -> dict:
@@ -402,14 +405,117 @@ class Store:
                 )
                 self.event(db, row["id"])
 
+    def create_execution(self, specification: dict, key: str) -> dict:
+        identifier(key)
+        if not isinstance(specification, dict) or set(specification) != {"plan_id", "resource_id"}:
+            raise ValueError("execution requests accept only registered plan_id and resource_id")
+        plan_id = identifier(specification["plan_id"])
+        requested = identifier(specification["resource_id"])
+        plan = self.execution.plans.get(plan_id)
+        if not plan or not plan.get("enabled", True):
+            raise ValueError("registered offline plan is unavailable")
+        if requested != "auto" and requested not in plan["targets"]:
+            raise ValueError("resource is not an eligible fixed plan target")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM experiments WHERE request_key=?", (key,)
+            ).fetchone()
+            if existing:
+                if existing["specification"] != dumps(specification):
+                    raise Conflict("idempotency key already belongs to a different request")
+                experiment_id = existing["id"]
+            else:
+                if db.execute(
+                    "SELECT 1 FROM execution_jobs WHERE plan_id=? AND revision=?",
+                    (plan_id, plan["revision"]),
+                ).fetchone():
+                    raise Conflict(
+                        "fixed plan revision already has an attempt; "
+                        "no duplicate or automatic retry"
+                    )
+                experiment_id, job_id = uuid.uuid4().hex, uuid.uuid4().hex
+                now = time.time()
+                db.execute(
+                    "INSERT INTO experiments VALUES (?,?,?,?)",
+                    (experiment_id, key, dumps(specification), now),
+                )
+                db.execute(
+                    "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?,0)",
+                    (
+                        job_id,
+                        experiment_id,
+                        studio_resources.safe_text(plan.get("label", plan_id)),
+                        plan_id,
+                        "queued",
+                        None,
+                        None,
+                        now,
+                        now,
+                        None,
+                    ),
+                )
+                db.execute(
+                    "INSERT INTO execution_jobs VALUES (?,?,?,?,?,NULL)",
+                    (
+                        job_id,
+                        plan_id,
+                        plan["revision"],
+                        requested,
+                        dumps(self.execution.contract(plan)),
+                    ),
+                )
+                self.event(db, job_id)
+            rows = db.execute(
+                "SELECT id FROM jobs WHERE experiment_id=?", (experiment_id,)
+            ).fetchall()
+        return {"id": experiment_id, "jobs": [self.job(row["id"]) for row in rows]}
+
+    def execution_plans(self):
+        self.expire()
+        with self.connect() as db:
+            workers = studio_execution.worker_view(db, LEASE_SECONDS)
+            attempts = {
+                (r["plan_id"], r["revision"]): {"job_id": r["job_id"], "status": r["status"]}
+                for r in db.execute(
+                    "SELECT e.plan_id,e.revision,e.job_id,j.status FROM execution_jobs e "
+                    "JOIN jobs j ON j.id=e.job_id"
+                )
+            }
+        return studio_execution.plans_view(self.execution, workers, attempts)
+
+    def claimed_job(self, job_id):
+        job = self.job(job_id)
+        if job["plan_id"] and job["resource_id"]:
+            with self.connect() as db:
+                contract = json.loads(
+                    db.execute(
+                        "SELECT contract FROM execution_jobs WHERE job_id=?", (job_id,)
+                    ).fetchone()["contract"]
+                )
+            job["target_signature"] = contract["targets"][job["resource_id"]]["signature"]
+        return job
+
     def job(self, job_id: str) -> dict:
         identifier(job_id)
         with self.connect() as db:
             row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            metadata = studio_execution.job_metadata(db, job_id)
+            if row and row["status"] == "queued" and metadata["plan_id"]:
+                detail = db.execute(
+                    "SELECT contract FROM execution_jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                _, metadata["queue_reason"] = studio_execution.selection(
+                    self.execution,
+                    json.loads(detail["contract"]),
+                    metadata["requested_resource_id"],
+                    studio_execution.worker_view(db, LEASE_SECONDS),
+                )
         if row is None:
             raise KeyError(job_id)
         result = dict(row)
         result.pop("session", None)
+        result.update(metadata)
         return result
 
     def jobs(self) -> list[dict]:
@@ -457,9 +563,44 @@ class Store:
             for report in (self.result(row["id"]) for row in rows)
         ]
 
-    def register(self, worker_id: str, session: str) -> dict:
+    def register(self, worker_id: str, session: str, execution: dict | None = None) -> dict:
         identifier(worker_id)
         identifier(session)
+        if execution is not None:
+            if set(execution) != {"resource_id", "plans"}:
+                raise ValueError("invalid execution worker registration")
+            rid = identifier(execution["resource_id"])
+            if rid not in self.execution.resources:
+                raise ValueError("worker resource is not registered on the control")
+            if not isinstance(execution["plans"], list) or len(execution["plans"]) > 100:
+                raise ValueError("invalid worker plan capabilities")
+            plans = []
+            for item in execution["plans"]:
+                plan_id, revision = identifier(item["id"]), identifier(item["revision"])
+                plan = self.execution.plans.get(plan_id)
+                if not plan or rid not in plan["targets"] or not self.execution.allowed(plan, rid):
+                    raise ValueError("worker advertised an unregistered or forbidden plan")
+                if not isinstance(item["ready"], bool):
+                    raise ValueError("worker readiness must be boolean")
+                signature = item.get("signature")
+                if not isinstance(signature, str) or not re.fullmatch(r"[a-f0-9]{64}", signature):
+                    raise ValueError("worker must declare its fixed target configuration signature")
+                matches = revision == plan[
+                    "revision"
+                ] and signature == studio_execution.target_signature(plan["targets"][rid])
+                plans.append(
+                    {
+                        "id": plan_id,
+                        "revision": revision,
+                        "signature": signature,
+                        "ready": item["ready"] and matches,
+                        "reason": (studio_resources.safe_text(item.get("reason")) or None)
+                        if matches
+                        else "registered_plan_configuration_changed",
+                    }
+                )
+            if len({p["id"] for p in plans}) != len(plans):
+                raise ValueError("duplicate worker plan capability")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute("SELECT * FROM nodes WHERE id=?", (worker_id,)).fetchone()
@@ -471,10 +612,26 @@ class Store:
                 ).fetchone()
                 if active or previous["last_seen"] > time.time() - LEASE_SECONDS:
                     raise Conflict("worker id is still owned; use its original worker or a new id")
+            binding = db.execute(
+                "SELECT * FROM execution_workers WHERE worker_id=?", (worker_id,)
+            ).fetchone()
+            if binding and (execution is None or binding["resource_id"] != rid):
+                raise Conflict("worker resource binding cannot change; use a new worker id")
             db.execute(
                 "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?)",
-                (worker_id, session, time.time(), dumps([RUNNER]), dumps([DATASET])),
+                (
+                    worker_id,
+                    session,
+                    time.time(),
+                    dumps([studio_execution.RUNNER] if execution is not None else [RUNNER]),
+                    dumps([] if execution is not None else [DATASET]),
+                ),
             )
+            if execution is not None:
+                db.execute(
+                    "INSERT OR REPLACE INTO execution_workers VALUES (?,?,?)",
+                    (worker_id, rid, dumps(plans)),
+                )
         return {"registered": True}
 
     @staticmethod
@@ -495,10 +652,36 @@ class Store:
             ).fetchone()
             if old:
                 # A lost claim response must resolve to the same job, never another one.
-                return self.job(old["id"])
-            row = db.execute(
-                "SELECT id FROM jobs WHERE status='queued' ORDER BY created_at,id LIMIT 1"
+                return self.claimed_job(old["id"])
+            binding = db.execute(
+                "SELECT * FROM execution_workers WHERE worker_id=?", (worker_id,)
             ).fetchone()
+            row = None
+            if binding:
+                workers = studio_execution.worker_view(db, LEASE_SECONDS)
+                for candidate in db.execute(
+                    "SELECT e.* FROM execution_jobs e JOIN jobs j ON j.id=e.job_id "
+                    "WHERE j.status='queued' ORDER BY j.created_at,j.id"
+                ):
+                    selected, _ = studio_execution.selection(
+                        self.execution,
+                        json.loads(candidate["contract"]),
+                        candidate["requested_resource_id"],
+                        workers,
+                    )
+                    if selected == worker_id:
+                        row = {"id": candidate["job_id"]}
+                        db.execute(
+                            "UPDATE execution_jobs SET resource_id=? WHERE job_id=?",
+                            (binding["resource_id"], row["id"]),
+                        )
+                        break
+            else:
+                row = db.execute(
+                    "SELECT j.id FROM jobs j LEFT JOIN execution_jobs e ON e.job_id=j.id "
+                    "WHERE j.status='queued' AND e.job_id IS NULL "
+                    "ORDER BY j.created_at,j.id LIMIT 1"
+                ).fetchone()
             if row is None:
                 return None
             job_id = row["id"]
@@ -507,7 +690,7 @@ class Store:
                 (worker_id, session, time.time(), job_id),
             )
             self.event(db, job_id)
-        return self.job(job_id)
+        return self.claimed_job(job_id)
 
     def heartbeat(self, job_id, worker_id, session) -> dict:
         with self.connect() as db:
@@ -547,14 +730,25 @@ class Store:
             raise ValueError("invalid completion payload")
         if payload.get("error") is not None and not isinstance(payload["error"], str):
             raise ValueError("error must be text or null")
-        if set(files) - set(FILES) or any(not isinstance(v, str) for v in files.values()):
+        job = self.job(job_id)
+        allowed = studio_execution.FILES if job["plan_id"] else set(FILES)
+        if set(files) - allowed or any(not isinstance(v, str) for v in files.values()):
             raise ValueError("only known text artifacts may be published")
         if sum(len(v.encode()) for v in files.values()) > ARTIFACT_LIMIT:
             raise ValueError("demo artifacts exceed bounded upload size")
         if not {"stdout.log", "stderr.log", "environment.json"} <= files.keys():
             raise ValueError("logs and environment must be durable before completion")
         if status == "completed":
-            validate_demo_artifacts(files)
+            if job["plan_id"]:
+                with self.connect() as db:
+                    contract = json.loads(
+                        db.execute(
+                            "SELECT contract FROM execution_jobs WHERE job_id=?", (job_id,)
+                        ).fetchone()["contract"]
+                    )
+                studio_execution.validate_publication(files, job, contract)
+            else:
+                validate_demo_artifacts(files)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self.authenticate_worker(db, worker_id, session)
@@ -596,7 +790,7 @@ class Store:
         output = self.root / "outputs" / identifier(job_id)
         return {
             name: (output / name).read_text(encoding="utf-8")
-            for name in FILES
+            for name in set(FILES) | studio_execution.FILES
             if (output / name).is_file()
         }
 
@@ -612,13 +806,18 @@ def validate_demo_artifacts(files: dict):
             raise ValueError(f"demo reference mismatch: {name}")
 
 
-def create_app(root: Path, token: str = "", resources_manifest: Path | None = None):
+def create_app(
+    root: Path,
+    token: str = "",
+    resources_manifest: Path | None = None,
+    execution_manifest: Path | None = None,
+):
     from fastapi import FastAPI
     from fastapi import Request as WebRequest
     from fastapi.responses import JSONResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
 
-    store = Store(root)
+    store = Store(root, execution_manifest)
     resources = studio_resources.ResourceCatalog(resources_manifest)
 
     @contextlib.asynccontextmanager
@@ -705,24 +904,68 @@ def create_app(root: Path, token: str = "", resources_manifest: Path | None = No
     def nodes():
         with store.connect() as db:
             rows = db.execute("SELECT * FROM nodes ORDER BY id").fetchall()
+            bindings = {w["id"]: w for w in studio_execution.worker_view(db, LEASE_SECONDS)}
         return {
             "classification": "synthetic_worker_registry_not_physical_resources",
             "items": [
                 {
                     "id": r["id"],
-                    "classification": "synthetic_demo_worker",
+                    "classification": "offline_execution_worker"
+                    if r["id"] in bindings
+                    else "synthetic_demo_worker",
+                    "resource_id": bindings.get(r["id"], {}).get("resource_id"),
+                    "plans": [
+                        {k: p[k] for k in ("id", "revision", "ready", "reason")}
+                        for p in bindings.get(r["id"], {}).get("plans", [])
+                    ],
+                    "busy": bindings.get(r["id"], {}).get("busy", False),
                     "last_seen": r["last_seen"],
                     "online": r["last_seen"] >= time.time() - LEASE_SECONDS,
                     "capabilities": json.loads(r["capabilities"]),
                     "datasets": json.loads(r["datasets"]),
                 }
                 for r in rows
-            ]
+            ],
         }
 
     @app.get("/api/compute-resources")
     def compute_resources():
-        return resources.snapshot()
+        snapshot = resources.snapshot()
+        with store.connect() as db:
+            workers = studio_execution.worker_view(db, LEASE_SECONDS)
+        plans = store.execution_plans()["items"]
+        for resource in snapshot["items"]:
+            connected = [w for w in workers if w["resource_id"] == resource["id"]]
+            if connected:
+                resource["worker_ids"] = sorted(
+                    set(resource["worker_ids"]) | {w["id"] for w in connected}
+                )
+                registered = any(
+                    any(
+                        r["id"] == resource["id"] and r["eligible"] for r in p["eligible_resources"]
+                    )
+                    and p["enabled"]
+                    and not p["attempt"]
+                    for p in plans
+                )
+                resource["scheduler"] = {
+                    "mode": "studio_worker",
+                    "can_submit": registered,
+                    "reason": "仅执行已登记的完整离线计划；离线或忙时排队，不接管外部任务。"
+                    if registered
+                    else "真实 worker 已接入；目前没有尚未提交的适用登记计划。",
+                }
+        return snapshot
+
+    @app.get("/api/execution-plans")
+    def execution_plans():
+        return store.execution_plans()
+
+    @app.post("/api/executions")
+    async def create_execution(request: WebRequest):
+        return store.create_execution(
+            await body(request), request.headers.get("idempotency-key", "")
+        )
 
     @app.get("/api/jobs")
     def jobs():
@@ -790,9 +1033,12 @@ def create_app(root: Path, token: str = "", resources_manifest: Path | None = No
 
     @app.get("/api/jobs/{job_id}/report")
     def report(job_id: str):
-        if store.job(job_id)["status"] != "completed":
+        job = store.job(job_id)
+        if job["status"] != "completed":
             raise Conflict("report is unavailable until artifacts are verified and durable")
         artifacts = store.read_artifacts(job_id)
+        if job["plan_id"]:
+            return studio_execution.report(artifacts)
         return {
             "schema_version": "backtest_report.v1",
             "classification": "synthetic_non_economic",
@@ -807,13 +1053,28 @@ def create_app(root: Path, token: str = "", resources_manifest: Path | None = No
 
     @app.get("/api/jobs/{job_id}/logs")
     def logs(job_id: str):
-        store.job(job_id)
+        job = store.job(job_id)
         artifacts = store.read_artifacts(job_id)
+        if job["plan_id"]:
+            artifacts = {
+                key: studio_resources.safe_text(value, limit=studio_execution.LOG_LIMIT)
+                for key, value in artifacts.items()
+                if key in {"stdout.log", "stderr.log"}
+            }
         return {
             "stdout": artifacts.get("stdout.log", ""),
             "stderr": artifacts.get("stderr.log", ""),
             "scope": "published terminal logs; running logs remain on the worker",
         }
+
+    @app.get("/api/owner/jobs/{job_id}/locators")
+    def owner_locators(job_id: str):
+        if not token:
+            return JSONResponse(
+                {"detail": "owner locators require explicit token authentication"}, status_code=403
+            )
+        store.job(job_id)
+        return json.loads(store.read_artifacts(job_id).get("owner-locators.json", "{}"))
 
     @app.get("/api/events")
     async def events(request: WebRequest, after: int = 0):
@@ -843,7 +1104,7 @@ def create_app(root: Path, token: str = "", resources_manifest: Path | None = No
     @app.post("/api/workers/{worker_id}/register")
     async def register(worker_id: str, request: WebRequest):
         payload = await body(request)
-        return store.register(worker_id, payload["session"])
+        return store.register(worker_id, payload["session"], payload.get("execution"))
 
     @app.post("/api/workers/{worker_id}/claim")
     async def claim(worker_id: str, request: WebRequest):
@@ -898,6 +1159,60 @@ def stop_child(process):
             process.wait()
 
 
+def run_child(client, route, payload, command, cwd, environment, directory, stopping, max_seconds):
+    """Shared bounded child, cancellation, heartbeat and durable-log lifecycle."""
+    started = time.monotonic()
+    status, error, process = "failed", None, None
+    with (
+        (directory / "stdout.log").open("w") as stdout,
+        (directory / "stderr.log").open("w") as stderr,
+    ):
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=environment,
+                stdout=stdout,
+                stderr=stderr,
+                start_new_session=True,
+            )
+            next_heartbeat = 0.0
+            while process.poll() is None:
+                if stopping() or time.monotonic() - started > max_seconds:
+                    status = "canceled" if stopping() else "failed"
+                    error = "worker stopped" if stopping() else "runner wall-clock limit exceeded"
+                    break
+                if time.monotonic() >= next_heartbeat:
+                    try:
+                        state = client.post(route + "/heartbeat", payload)
+                        if state["cancel"]:
+                            status, error = "canceled", "owner cancellation or expired lease"
+                            break
+                    except (URLError, TimeoutError):
+                        # Connectivity cannot extend the fixed plan timeout.
+                        pass
+                    next_heartbeat = time.monotonic() + 2
+                time.sleep(0.2)
+            else:
+                status = "completed" if process.returncode == 0 else "failed"
+                error = None if status == "completed" else f"runner exit {process.returncode}"
+        except Exception as exc:
+            status, error = "failed", f"runner lifecycle failed ({type(exc).__name__})"
+        finally:
+            if process is not None:
+                stop_child(process)
+                process.wait()
+            for stream in (stdout, stderr):
+                stream.flush()
+                os.fsync(stream.fileno())
+    return (
+        status,
+        error,
+        process.returncode if process is not None else None,
+        time.monotonic() - started,
+    )
+
+
 def execute_demo(client, worker_id, session, job, root: Path, stopping) -> None:
     job_id = identifier(job["id"])
     directory = root / job_id
@@ -927,41 +1242,17 @@ def execute_demo(client, worker_id, session, job, root: Path, stopping) -> None:
         "--output-dir",
         str(output),
     ]
-    started = time.time()
-    status, error = "failed", None
-    with (
-        (directory / "stdout.log").open("w") as stdout,
-        (directory / "stderr.log").open("w") as stderr,
-    ):
-        process = subprocess.Popen(
-            command,
-            cwd=Path(__file__).resolve().parents[1],
-            env=environment,
-            stdout=stdout,
-            stderr=stderr,
-            start_new_session=True,
-        )
-        try:
-            while process.poll() is None:
-                if stopping() or time.time() - started > 600:
-                    status = "canceled" if stopping() else "failed"
-                    error = "worker stopped" if stopping() else "demo wall-clock limit exceeded"
-                    break
-                try:
-                    state = client.post(route + "/heartbeat", payload)
-                    if state["cancel"]:
-                        status, error = "canceled", "owner cancellation or expired lease"
-                        break
-                except (URLError, TimeoutError):
-                    # Keep the child alive during a bounded control interruption, not forever.
-                    if time.time() - started > 600:
-                        raise
-                time.sleep(0.2)
-            else:
-                status = "completed" if process.returncode == 0 else "failed"
-                error = None if status == "completed" else f"runner exit {process.returncode}"
-        finally:
-            stop_child(process)
+    status, error, code, elapsed = run_child(
+        client,
+        route,
+        payload,
+        command,
+        Path(__file__).resolve().parents[1],
+        environment,
+        directory,
+        stopping,
+        600,
+    )
     files = {name: (directory / name).read_text() for name in ("stdout.log", "stderr.log")}
     for name in ("summary.json", "trace.jsonl", "receipt.json"):
         if (output / name).exists():
@@ -971,8 +1262,8 @@ def execute_demo(client, worker_id, session, job, root: Path, stopping) -> None:
             "python": sys.version.split()[0],
             "platform": platform.platform(),
             "runner": RUNNER,
-            "elapsed_seconds": time.time() - started,
-            "returncode": process.returncode,
+            "elapsed_seconds": elapsed,
+            "returncode": code,
         }
     )
     payload.update({"status": status, "error": error, "files": files})
@@ -1028,6 +1319,11 @@ def retry_control(client, route, body, *, deadline=None):
 
 
 def worker(args) -> int:
+    execution_manifest = getattr(args, "execution_manifest", None)
+    resource_id = getattr(args, "resource_id", None)
+    if bool(execution_manifest) != bool(resource_id):
+        raise ValueError("execution workers require both --execution-manifest and --resource-id")
+    catalog = studio_execution.Catalog(execution_manifest)
     root = args.work_dir.resolve()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     client = Client(args.url, os.environ.get("NARROWGATE_STUDIO_TOKEN", ""))
@@ -1052,7 +1348,14 @@ def worker(args) -> int:
             raise Conflict("work directory belongs to a different worker id")
         session = identifier(state["session"])
         base = f"/api/workers/{args.worker_id}"
-        retry_control(client, base + "/register", {"session": session})
+
+        def register_execution():
+            packet = {"session": session}
+            if execution_manifest:
+                packet["execution"] = studio_execution.registration(catalog, resource_id)
+            retry_control(client, base + "/register", packet)
+
+        register_execution()
         while not stopped:
             result = retry_control(client, base + "/claim", {"session": session})
             if result["job"]:
@@ -1082,12 +1385,25 @@ def worker(args) -> int:
                         },
                     }
                     publish_outbox(client, base + f"/jobs/{job['id']}", payload, root)
+                elif job.get("plan_id"):
+                    studio_execution.execute(
+                        client,
+                        args.worker_id,
+                        session,
+                        job,
+                        root,
+                        lambda: stopped,
+                        catalog,
+                        resource_id,
+                    )
                 else:
                     execute_demo(client, args.worker_id, session, job, root, lambda: stopped)
             if args.once:
                 return 0
             if not result["job"]:
                 time.sleep(2)
+            if execution_manifest:
+                register_execution()
     return 0
 
 
@@ -1098,8 +1414,14 @@ def main(argv=None) -> int:
     serve.add_argument("--state-dir", type=Path, required=True)
     serve.add_argument("--port", type=int, default=8080)
     serve.add_argument(
-        "--resources-manifest", type=Path,
+        "--resources-manifest",
+        type=Path,
         help="owner-only host/pool inventory; fixed read-only background probes, no allocation",
+    )
+    serve.add_argument(
+        "--execution-manifest",
+        type=Path,
+        help="operator-private fixed offline plans; no browser commands",
     )
     imported = sub.add_parser(
         "import-b0", help="import existing private B0 results; never run replay"
@@ -1118,11 +1440,19 @@ def main(argv=None) -> int:
     run.add_argument("--worker-id", required=True)
     run.add_argument("--work-dir", type=Path, required=True)
     run.add_argument("--once", action="store_true")
+    run.add_argument("--execution-manifest", type=Path)
+    run.add_argument(
+        "--resource-id", help="physical resource bound by the private execution manifest"
+    )
     args = parser.parse_args(argv)
     if args.command == "connect-b0":
-        print(dumps(studio_market.connect_b0(
-            Store(args.state_dir), args.result_id, args.summary, args.bars_dir
-        )))
+        print(
+            dumps(
+                studio_market.connect_b0(
+                    Store(args.state_dir), args.result_id, args.summary, args.bars_dir
+                )
+            )
+        )
         return 0
     if args.command == "import-b0":
         report = Store(args.state_dir).import_b0(args.summary)
@@ -1142,7 +1472,10 @@ def main(argv=None) -> int:
     import uvicorn
 
     app = create_app(
-        args.state_dir, os.environ.get("NARROWGATE_STUDIO_TOKEN", ""), args.resources_manifest
+        args.state_dir,
+        os.environ.get("NARROWGATE_STUDIO_TOKEN", ""),
+        args.resources_manifest,
+        args.execution_manifest,
     )
     uvicorn.run(
         app, host="127.0.0.1", port=args.port, access_log=False, timeout_graceful_shutdown=5

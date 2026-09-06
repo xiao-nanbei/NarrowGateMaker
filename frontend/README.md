@@ -5,7 +5,7 @@ Last materially synchronized: 2026-09-07
 
 This English page is canonical; [简体中文](README.zh-CN.md).
 
-React + TypeScript workspace for the packaged Studio UI. The only executable runner is `replay-demo` with the built-in `synthetic-demo` dataset. A separate default tab displays existing private B0 summaries imported through the [owner-local CLI](../docs/plans/remote_replay_studio.md#import-completed-b0-results-without-replay). This interface does not submit real F01, current B0 or E/C research, invoke shell commands, or provision cloud resources.
+React + TypeScript workspace for the packaged Studio UI. The public default runner is `replay-demo` with the built-in `synthetic-demo` dataset. An optional owner-registered offline adapter queues already-prepared research, training or data-processing plans without exposing commands, paths or parameters in the browser. No real plan is enabled by a public clone. A separate default tab displays existing private B0 summaries imported through the [owner-local CLI](../docs/plans/remote_replay_studio.md#import-completed-b0-results-without-replay); viewing them never starts a new baseline. The interface does not provide arbitrary shell execution or cloud provisioning.
 
 Real results use read-only `/api/results` endpoints and remain separate from synthetic jobs, reports and comparison. The browser displays saved amounts and continuous-segment coverage without manufacturing daily PnL or Sharpe; fees already in trading PnL are not deducted again, and funding is added once. Local/Azure origin and existing cross-host verification describe historical provenance, not current cloud connectivity. Missing queue coverage and modeled-evidence limitations stay visible. No private evidence ships in the frontend bundle.
 
@@ -19,7 +19,11 @@ The separate UTC quality calendar includes the entire requested inclusive date r
 
 ## Developer build
 
-The compute page uses `/api/compute-resources` for owner-configured physical/cloud resources, not the number of synthetic workers. Friendly labels, fixed background probes, external job observations and placement roles are configured through the control service's `--resources-manifest`; see the [resource connection guide](../docs/plans/remote_replay_studio.md#actual-compute-resources-separate-from-demo-workers). A scaled-to-zero pool, stale observation and unreachable host are distinct from an online worker. The page observes existing research; it does not add a real-market submit adapter or cloud provisioning.
+The compute page uses `/api/compute-resources` for owner-configured physical/cloud resources, not the number of workers. Friendly labels, fixed background probes, external job observations and placement roles use `--resources-manifest`; see the [resource connection guide](../docs/plans/remote_replay_studio.md#actual-compute-resources-separate-from-demo-workers). A scaled-to-zero pool, stale observation and unreachable host are distinct from an execution worker heartbeat. External research remains read-only, without takeover or duplicate execution.
+
+With an owner `--execution-manifest` on control and workers, the compute page reads `/api/execution-plans` and submits only `plan_id` and `resource_id` to `/api/executions`. The plan/revision and target retain one idempotency key across retries. Once a plan/revision has an attempt, the UI links to that job and disables another submission; a different request key receives HTTP 409, not a retry of failed or lost execution. A permitted but unready/offline worker leaves the job queued; this does not start Azure nodes or silently fall back to the Mac. Training prefers configured training resources and excludes LAN, while replay/data plans follow their registered resource order. See [registered execution setup](../docs/plans/remote_replay_studio.md#queue-an-operator-registered-offline-plan).
+
+The task queue explicitly separates synthetic and operator-registered jobs. Only synthetic jobs enter demo trace/order/campaign views or the synthetic comparison. Completed offline jobs use `registered_execution_report.v1` and show registered JSON summaries, output metadata, bounded terminal logs and environment; empty summaries stay empty and are not converted into PnL. Large outputs and complete logs remain on the original worker's persistent disk. Missing worker readiness and an offline resource are not the same state.
 
 Use Node.js 22.12+ and the pinned pnpm 11.19.0. Commit `pnpm-lock.yaml` together
 with dependency changes. `pnpm-workspace.yaml` explicitly permits the standard
@@ -74,7 +78,10 @@ documentation. `pnpm run format:check` checks formatting without editing files.
   and build once on a Linux runner.
 - Start the loopback API with a temporary state directory and one synthetic
   worker. Browser-smoke create, cancel, completed report, order/trace linkage,
-  comparison, and mobile overflow. Do not submit real research or cloud tasks.
+  comparison, and mobile overflow. Separately use a harmless registered offline
+  check to test plan-only submission, unavailable resources remaining queued,
+  real-worker heartbeats and non-demo reporting. Do not start an economic run or
+  cloud resource just to populate the UI.
 - Build the Python wheel after the UI build, then verify the installed wheel
   serves its HTML and hashed CSS/JS assets without a frontend development server.
 

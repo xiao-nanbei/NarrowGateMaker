@@ -70,13 +70,15 @@ for item in cfg.get('jobs',[]):
                 status=json.loads(path.read_text())
                 code=status.get('exit_code',status.get('returncode'))
                 terminal=status.get('state',status.get('status'))
-                if code is not None:
+                if terminal=='partial':
+                    state='partial'
+                elif code is not None:
                     state='completed' if code==0 else 'failed'
                 elif terminal in ('completed','failed','canceled'):
                     state=terminal
                 elif terminal=='running' and not found:
                     state='unknown'
-                if found and state in ('completed','failed','canceled'):
+                if found and state in ('completed','failed','canceled','partial'):
                     state='unknown'
                     error='terminal_status_conflicts_with_live_process'
                 updated=status.get('ended_unix_s',status.get('completed_unix_s'))
@@ -318,6 +320,7 @@ def observe(item):
                 if row["status"] not in {
                     "running",
                     "completed",
+                    "partial",
                     "failed",
                     "canceled",
                     "not_started",
