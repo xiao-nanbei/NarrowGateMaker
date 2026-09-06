@@ -1,8 +1,8 @@
 # E/C 配对标签训练
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-07
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-07
 
 [English](risk_selection_training.md)
 
@@ -36,6 +36,8 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 `feature_units.json` 明确记录冻结的特征名及单位。模型使用已经记录的字段，不猜单位、不把缺失值补成零。特征选择和 Ridge alpha 必须在查看验证结果之前固定。八行只是可配置的工程最低支持量，不是统计样本量建议或经济门槛。
 
 均值和尺度仅使用训练行。标签结果区间延伸到验证边界的训练行会剔除，同一订单不允许分到两侧。不提供随机行切分：许多机会共享同一行情路径和终点。单窗口小批可验证拟合流程，不能提供独立验证区间。
+
+报告还逐表面列出训练结果窗口数、UTC 决策小时覆盖，以及各特征的不同取值数、范围和是否为常数；不足以拟合的表面也保留这些信息。无样本是未知，不是零值特征。这些字段不改变样本选择、归一化、阈值或拟合。开仓时库存与固定订单量可能都是常数，因此三个输入字段实际上可能只有一个变化信号。训练时段集中或缺少某一侧时，应按不依赖结果的规则扩充 Development 机会覆盖，而不是降低支持数量要求或在已评估时期重新拟合。参与对照的概率为零或一时，该表面实际是确定性动作，应明确披露，不能称为随机化证据。
 
 `policy.json` 可由 `strategy.risk_selection.RiskSelectionPolicy` 加载。 `training_report.json` 记录排除原因、各侧支持量、相对仅用过去均值的预测 MSE，以及是否仅为训练结果。支持不足的模型不写入 policy，不与另一侧混合补足。输出使用新的私有目录，不覆盖既有产物。
 

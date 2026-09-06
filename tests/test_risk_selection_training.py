@@ -98,6 +98,30 @@ def test_constant_feature_scaling_and_past_intercept_reference():
     assert model["intercept_usdc"] == pytest.approx(.045)
     surface = report["surfaces"]["E:BUY"]
     assert surface["validation_mse"] == surface["past_only_intercept_mse"]
+    assert surface["train_feature_support"]["x"] == {
+        "unique_values": 1, "minimum": 2.0, "maximum": 2.0, "constant": True,
+    }
+    assert surface["train_decision_utc_hours"] == {"0": 10}
+
+
+def test_support_report_keeps_sparse_and_absent_surfaces_without_validation_leakage():
+    rows = [label(1, surface="C:BUY", x=0.001),
+            label(2, surface="C:BUY", x=np.nextafter(0.001, np.inf)),
+            label(1, surface="C:BUY", day=3, x=1e9)]
+    policy, report = fit(rows)
+    assert not policy["models"]
+    sparse = report["surfaces"]["C:BUY"]
+    assert sparse["train_outcome_windows"] == 1
+    support = sparse["train_feature_support"]["x"]
+    assert support["unique_values"] == 2
+    assert support["constant"] is False
+    assert support["maximum"] == np.nextafter(0.001, np.inf)
+    absent = report["surfaces"]["E:SELL"]
+    assert absent["train_feature_support"]["x"] == {
+        "unique_values": 0, "minimum": None, "maximum": None, "constant": None,
+    }
+    assert absent["train_outcome_windows"] == 0
+    assert absent["train_decision_utc_hours"] == {}
 
 
 @pytest.mark.parametrize("feature_order", [

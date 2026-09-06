@@ -134,6 +134,22 @@ def train_chronological_ridge(
         train, validation = selected["train"], selected["validation"]
         details: dict[str, Any] = {"train_rows": len(train), "validation_rows": len(validation)}
         report["surfaces"][surface] = details
+        # Descriptive training support only: never select features or adjust the
+        # model using these counts, and never borrow validation variation.
+        details["train_outcome_windows"] = len({(r["replay_start_ts_ms"], r["terminal_mark_ts_ms"])
+                                                for r in train})
+        details["train_decision_utc_hours"] = dict(sorted(Counter(
+            str(int(r["decision_ts_ns"]) // 3_600_000_000_000 % 24) for r in train
+        ).items()))
+        details["train_feature_support"] = {}
+        for name in features:
+            values = {float(r["features"][name]) for r in train}
+            details["train_feature_support"][name] = {
+                "unique_values": len(values),
+                "minimum": min(values) if values else None,
+                "maximum": max(values) if values else None,
+                "constant": len(values) == 1 if values else None,
+            }
         if len(train) < min_train_rows:
             details["status"] = "insufficient_training_rows"
             continue
@@ -151,8 +167,6 @@ def train_chronological_ridge(
             "coefficients": dict(zip(features, map(float, coefficients), strict=True)),
         }
         details["status"] = "chronological_prediction_diagnostic" if validation else "training_only"
-        details["train_outcome_windows"] = len({(r["replay_start_ts_ms"], r["terminal_mark_ts_ms"])
-                                                for r in train})
         if validation:
             vx = (np.asarray([[r["features"][name] for name in features] for r in validation])
                   - means) / scales

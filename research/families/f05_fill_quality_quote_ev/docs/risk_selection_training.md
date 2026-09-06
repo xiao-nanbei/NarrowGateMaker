@@ -1,8 +1,8 @@
 # E/C paired-label training
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-07
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-07
 
 [中文说明](risk_selection_training.zh-CN.md)
 
@@ -36,6 +36,8 @@ PYTHON="$NARROWGATE_ROOT/.venv/bin/python"
 `feature_units.json` explicitly maps frozen feature names to their units. The model uses those fields as recorded; it does not guess units or replace missing values with zeros. Feature choice and Ridge alpha must be fixed before validation results. Eight rows is a configurable engineering minimum, not a statistical sample-size recommendation or economic threshold.
 
 Training means and scales use training rows only. Labels whose outcome reaches the validation boundary are purged. The same order cannot occur in both sets. No random row split is provided: many opportunities can share one market path and terminal value. A one-window pilot can verify fitting but cannot supply an independent validation period.
+
+The report also describes each surface's training outcome-window count, UTC decision-hour coverage and per-feature distinct values/range/constant status, including surfaces too sparse to fit. Empty support is unknown, not a zero-valued feature. These fields do not alter selection, normalization, thresholds or fitting. An opener's inventory and a fixed order quantity can both be constant, so three named inputs may provide only one varying signal. Concentrated training hours or a missing side call for broader outcome-blind Development opportunity coverage, not a lower support threshold or a refit on the evaluated period. A participation control with probabilities zero or one is deterministic on that surface; report that explicitly instead of calling it randomized evidence.
 
 `policy.json` is loadable by `strategy.risk_selection.RiskSelectionPolicy`. `training_report.json` records exclusions, per-surface support, prediction MSE against a past-only intercept, and whether a surface is training-only. Unsupported surfaces are absent from the policy, not silently pooled with another side. The output directory is new and private; existing artifacts are not overwritten.
 
