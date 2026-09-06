@@ -203,6 +203,105 @@ def test_risk_opportunities_cli_rejects_unsupported_backend_before_loading_data(
         ])
 
 
+@pytest.mark.parametrize("truncate_trace", [False, True])
+def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
+    monkeypatch, tmp_path, truncate_trace,
+):
+    from dataclasses import replace
+
+    from tests.test_python_planned_maintenance_replay import _async_fifo_params, _inputs, _params
+
+    day = "2026-01-01"
+    start_ms = int((campaign_audit._day_start_ts(day) + 86400) * 1000) - 2000
+    trades, bbo = _inputs(crossing_fill_ts_ms=500)
+    trades.loc[trades["transact_time"] == 500, "quantity"] = .001
+    trades.loc[trades["transact_time"] == 700, ["price", "quantity"]] = [96., 10.]
+    trades["transact_time"] += start_ms
+    bbo = replace(bbo, ts_ms=bbo.ts_ms + start_ms)
+    window = {"trades": trades, "bbo_data": bbo, "var_ts_ms": np.array([start_ms]),
+              "var_ssq": np.array([1.]), "l2_data": None, "ml_data": None,
+              "var_ti": None, "var_retsq": None}
+    loads, calls = [], []
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window",
+                        lambda *_args: loads.append(_args) or window)
+    monkeypatch.setattr(campaign_audit, "build_configured_cooldown_policy_adapter",
+                        lambda **_kw: None)
+    original = campaign_audit.bt._simulate_tick_with_engine
+
+    def simulate(engine, trades, *args, **kwargs):
+        calls.append((trades, args[-1]))
+        return original(engine, trades, *args, **kwargs)
+
+    monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
+    base = {**_params(), **_async_fifo_params(new=(2., 5., 30.)),
+            "risk_selection_collect_opportunities": True, "planned_quote_stop_ts_ms": 0,
+            "requote_threshold_bps": 1., "maker_fee": .0001, "order_size": .002,
+            "_private_fill_visibility_latency_samples_ms": [35.],
+            "trace_fills_max": 1 if truncate_trace else 100,
+            "replay_event_clock_start_ts_ms": start_ms,
+            "replay_event_clock_end_ts_ms": start_ms + 4000}
+    funding = [{"fundingTime": start_ms + 2500, "markPrice": 100., "fundingRate": .01}]
+    baseline_arm = campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")
+    arguments = dict(day=day, symbol="BTCUSDC", base=base, engine="python",
+                     day_initial={}, day_live_state=None, use_initial_state=False,
+                     funding_events=funding)
+    discovery = campaign_audit._run_day_campaign_audit(arms=[baseline_arm], **arguments)
+    target = next(row for row in discovery["risk_selection_opportunity_rows"]
+                  if row["kind"] == "E" and row["side"] == "BUY")
+    alternative_arm = campaign_audit.smoke.SmokeArm("wait", "synthetic", {
+        "risk_selection_intervention": {
+            "opportunity_id": target["opportunity_id"], "action": "WAIT",
+        },
+    }, "")
+    loads.clear()
+    calls.clear()
+    if truncate_trace:
+        with pytest.raises(ValueError, match="complete fill and terminal ledger"):
+            campaign_audit._run_day_campaign_audit(
+                arms=[alternative_arm, baseline_arm], risk_pair_baseline_arm="B", **arguments,
+            )
+        return
+    result = campaign_audit._run_day_campaign_audit(
+        arms=[alternative_arm, baseline_arm], risk_pair_baseline_arm="B", **arguments,
+    )
+    assert len(loads) == 1 and len(calls) == 2
+    assert calls[0][0] is calls[1][0]
+    assert calls[0][1] is not calls[1][1]
+    assert calls[0][1]["_serial_rest_return_samples_by_operation"] is calls[1][1][
+        "_serial_rest_return_samples_by_operation"
+    ]
+    label, = result["risk_selection_paired_labels"]
+    baseline, alternative = result["daily_rows"]
+    assert label["baseline_funding_usdc"] == pytest.approx(-.002)
+    assert label["alternative_funding_usdc"] == 0.
+    assert label["value_difference_usdc"] == pytest.approx(
+        baseline["replay_net_pnl"] - alternative["replay_net_pnl"]
+    )
+    assert label["terminal_mark_ts_ms"] == start_ms + 4000
+    assert label["terminal_mark_ts_ms"] > start_ms + 2000  # same continuous midnight crossing
+    assert label["baseline_arm"] == "B" and label["alternative_arm"] == "wait"
+    campaign_audit._write_partial_day_outputs(tmp_path, "synthetic", result)
+    exported = tmp_path / f"synthetic.partial.{day}.risk_paired_labels.jsonl"
+    assert json.loads(exported.read_text()) == label
+
+
+@pytest.mark.parametrize("extra", [{"gamma": .2}, {"rng_seed": 99},
+                                  {"rest_gateway_timing_mode": "sampled_serial"}])
+def test_risk_pair_arms_cannot_change_policy_or_environment(extra):
+    base = campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")
+    candidate = campaign_audit.smoke.SmokeArm("E", "synthetic", {
+        "risk_selection_intervention": {"opportunity_id": "target", "action": "WAIT"}, **extra,
+    }, "")
+    with pytest.raises(ValueError, match="may differ only"):
+        campaign_audit._risk_pair_arms([base, candidate], "B")
+
+
+def test_risk_pair_cli_requires_explicit_continuous_funding_before_data_load():
+    with pytest.raises(SystemExit, match="--continuous and --funding-history"):
+        campaign_audit_main(["--days", "2026-01-01", "--risk-pair-baseline-arm", "baseline"])
+
+
 @pytest.mark.parametrize("opening_fee", [0.1, -0.1, 0.0])
 def test_campaign_ledger_uses_execution_price_and_both_signed_fees(opening_fee):
     fills = [

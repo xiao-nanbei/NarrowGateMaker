@@ -52,6 +52,10 @@ from models.exchange_book_replay import (  # noqa: E402
     build_configured_cooldown_policy_adapter,
 )
 from models.replay.continuous_accounting import funding_cashflow_usdc  # noqa: E402
+from models.replay.risk_selection import (  # noqa: E402
+    ReplayRiskSelection,
+    assemble_paired_label,
+)
 from models.replay_contract import (  # noqa: E402
     DEFAULT_LATENCY_ENVIRONMENT,
     configure_fixed_latency_distribution,
@@ -2031,6 +2035,11 @@ def _write_partial_day_outputs(out_dir: Path, stem: str, day_result: dict[str, A
             out_dir / f"{stem}.partial.{safe_day}.risk_opportunities.jsonl",
             risk_opportunities,
         )
+    if day_result.get("risk_selection_paired_labels"):
+        _write_risk_opportunities(
+            out_dir / f"{stem}.partial.{safe_day}.risk_paired_labels.jsonl",
+            day_result["risk_selection_paired_labels"],
+        )
 
 
 def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -2038,6 +2047,24 @@ def _write_risk_opportunities(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as stream:
         for row in rows:
             stream.write(json.dumps(row, allow_nan=False, sort_keys=True) + "\n")
+
+
+def _risk_pair_arms(arms: list[smoke.SmokeArm], baseline_name: str) -> list[smoke.SmokeArm]:
+    """Reuse one baseline; every other arm may change exactly one E/C opportunity."""
+    baselines = [arm for arm in arms if arm.name == baseline_name]
+    if len(baselines) != 1 or len(arms) < 2:
+        raise ValueError("risk pairs need one named baseline and at least one intervention arm")
+    baseline = baselines[0]
+    if "risk_selection_intervention" in baseline.overrides:
+        raise ValueError("risk pair baseline cannot contain an intervention")
+    alternatives = [arm for arm in arms if arm is not baseline]
+    for arm in alternatives:
+        overrides = dict(arm.overrides)
+        intervention = overrides.pop("risk_selection_intervention", None)
+        if not intervention or overrides != baseline.overrides:
+            raise ValueError("risk pair arms may differ only by one risk_selection_intervention")
+        ReplayRiskSelection(intervention=intervention)
+    return [baseline, *alternatives]
 
 
 def _run_day_campaign_audit(
@@ -2068,6 +2095,7 @@ def _run_day_campaign_audit(
     runtime_compute_clock: str | None = None,
     funding_events: list[dict[str, Any]] | None = None,
     continuous_days: list[str] | None = None,
+    risk_pair_baseline_arm: str = "",
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -2092,6 +2120,21 @@ def _run_day_campaign_audit(
         start_ms = int(_day_start_ts(day) * 1000)
         base.setdefault("replay_event_clock_start_ts_ms", start_ms)
         base.setdefault("replay_event_clock_end_ts_ms", start_ms + 86_400_000 - 1)
+    if risk_pair_baseline_arm:
+        arms = _risk_pair_arms(arms, risk_pair_baseline_arm)
+        if engine != "python" or funding_events is None:
+            raise ValueError("risk pairs require Python replay and an explicit frozen funding tape")
+        if base.get("replay_event_clock") not in {"merged", "empirical"} or any(
+            field not in base for field in (
+                "replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms",
+            )
+        ):
+            raise ValueError("risk pairs need a non-trade clock and an explicit common window")
+        if base.get("risk_selection_intervention") or base.get("_risk_selection_opportunity_sink"):
+            raise ValueError(
+                "risk pair base must have no intervention or external opportunity sink"
+            )
+        base = {**base, "risk_selection_collect_opportunities": True}
     # 中文说明：worker 进程是全新 Python 解释器时，裸 configure_symbol(symbol)
     # 会把 MODEL_DIR 退回 symbol 默认目录（例如 models/saved_btcusdc）。
     # parent 里 load_tick_base_params() 可能已经按 live/config.yaml 选择了
@@ -2175,6 +2218,9 @@ def _run_day_campaign_audit(
     funding_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
     risk_selection_opportunity_rows: list[dict[str, Any]] = []
+    risk_selection_paired_labels: list[dict[str, Any]] = []
+    paired_baseline = None
+    paired_baseline_funding = 0.0
     campaign_repair_model = (
         CampaignRepairModel.from_dict(campaign_repair_model_payload)
         if campaign_repair_model_payload
@@ -2420,6 +2466,39 @@ def _run_day_campaign_audit(
             initial_entry_price=initial_entry_price,
         )
         funding_value = sum(row["funding_cashflow_usdc"] for row in arm_funding_trace)
+        if risk_pair_baseline_arm:
+            # Labels use the completed canonical fill/funding/terminal ledger,
+            # not a sum of repeated campaign values or a truncated debug tape.
+            if len(fill_trace) != result["fills_total"] or not trades:
+                raise ValueError("risk pair label requires the complete fill and terminal ledger")
+            ledger_value = trades[-1].realized_pnl + trades[-1].unrealized_pnl
+            if not math.isclose(ledger_value, result["pnl"] + funding_value,
+                                abs_tol=1e-8, rel_tol=1e-10):
+                raise ValueError("risk pair funding ledger does not reconcile with replay PnL")
+            if arm.name == risk_pair_baseline_arm:
+                # Keep only fields consumed by the assembler, not a second
+                # copy of the full order/fill/debug histories for every arm.
+                paired_baseline = {key: value for key, value in result.items() if key in {
+                    "_risk_selection_opportunities", "risk_selection_opportunity_counts",
+                    "risk_selection_intervention_count", "risk_selection_opportunities_streamed",
+                    "economic_pnl_complete", "private_fill_pending_visibility_count",
+                    "terminal_liquidation_applied", "terminal_mark_price", "final_inventory",
+                    "cash_before_terminal", "pnl",
+                    "risk_selection_start_ts_ms", "risk_selection_end_ts_ms",
+                }}
+                paired_baseline_funding = funding_value
+            else:
+                label = assemble_paired_label(
+                    paired_baseline, result, intervention=params["risk_selection_intervention"],
+                    start_ts_ms=int(params["replay_event_clock_start_ts_ms"]),
+                    end_ts_ms=int(params["replay_event_clock_end_ts_ms"]),
+                    baseline_funding_usdc=paired_baseline_funding,
+                    alternative_funding_usdc=funding_value,
+                )
+                risk_selection_paired_labels.append({
+                    **label, "segment_start_day": day, "baseline_arm": risk_pair_baseline_arm,
+                    "alternative_arm": arm.name,
+                })
         daily.update({
             "accounting_window": (
                 "continuous_segment" if continuous_days else "daily_fresh_start"
@@ -2468,6 +2547,7 @@ def _run_day_campaign_audit(
         "funding_trace_rows": funding_trace_rows,
         "decision_trace_rows": decision_trace_rows,
         "risk_selection_opportunity_rows": risk_selection_opportunity_rows,
+        "risk_selection_paired_labels": risk_selection_paired_labels,
         "risk_selection_collect_opportunities": bool(
             base.get("risk_selection_collect_opportunities")
         ),
@@ -2587,6 +2667,15 @@ def main(argv: list[str] | None = None) -> None:
             "Save all eligible E POST / C KEEP opportunities as JSONL, including unfilled "
             "orders. Single-opportunity WAIT/CANCEL experiments use arm-spec overrides; "
             "this is modeled counterfactual research, not live authority. Python only."
+        ),
+    )
+    parser.add_argument(
+        "--risk-pair-baseline-arm", default="",
+        help=(
+            "Assemble E/C labels against this arm; every other arm may change only one "
+            "risk_selection_intervention. Reuses this baseline once, then reruns each target "
+            "from the same initial state. Requires --continuous and --funding-history. "
+            "Writes complete opportunities and modeled paired labels, not promotion evidence."
         ),
     )
     parser.add_argument(
@@ -2997,6 +3086,10 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.risk_pair_baseline_arm:
+        if not args.continuous or args.funding_history is None:
+            raise SystemExit("risk pairs require --continuous and --funding-history")
+        args.save_risk_opportunities = True
     if args.continuous:
         if args.workers != 1 or args.engine != "python" or args.arm_chunk_size:
             raise SystemExit(
@@ -3162,6 +3255,8 @@ def main(argv: list[str] | None = None) -> None:
     if not requested:
         raise SystemExit("Provide --arms and/or --fill-cooldown-grid")
     arms = [arms_by_name[name] for name in requested]
+    if args.risk_pair_baseline_arm:
+        arms = _risk_pair_arms(arms, args.risk_pair_baseline_arm)
     if args.replay_locator_projection is not None:
         locator_fields = {name.split(".", 1)[1] for name in REPLAY_LOCATOR_FIELDS}
         locator_fields.update({"resolved_model_dir", "_replay_locator_projection"})
@@ -3607,6 +3702,7 @@ def main(argv: list[str] | None = None) -> None:
     native_exchange_book_identities: dict[str, dict[str, Any]] = {}
     funding_trace_rows: list[dict[str, Any]] = []
     risk_selection_opportunity_rows: list[dict[str, Any]] = []
+    risk_selection_paired_labels: list[dict[str, Any]] = []
     out_dir = Path(os.environ.get("MM_RESULTS_DIR", str(bt.RESULTS_DIR))).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"campaign_outcome_replay_{args.tag}_{args.symbol.lower()}"
@@ -3645,6 +3741,7 @@ def main(argv: list[str] | None = None) -> None:
         risk_selection_opportunity_rows.extend(
             day_result.get("risk_selection_opportunity_rows", [])
         )
+        risk_selection_paired_labels.extend(day_result.get("risk_selection_paired_labels", []))
         identity = day_result.get("native_exchange_book_identity") or {}
         if identity:
             native_exchange_book_identities[str(day_result.get("day", ""))] = identity
@@ -3666,6 +3763,7 @@ def main(argv: list[str] | None = None) -> None:
                         else funding_by_day.get(day)
                     ),
                     continuous_days=days if args.continuous else None,
+                    risk_pair_baseline_arm=args.risk_pair_baseline_arm,
                     base=base,
                     arms=arms,
                     engine=args.engine,
@@ -3834,6 +3932,9 @@ def main(argv: list[str] | None = None) -> None:
     risk_opportunities_path = out_dir / f"{stem}.risk_opportunities.jsonl"
     if args.save_risk_opportunities:
         _write_risk_opportunities(risk_opportunities_path, risk_selection_opportunity_rows)
+    risk_pairs_path = out_dir / f"{stem}.risk_paired_labels.jsonl"
+    if args.risk_pair_baseline_arm:
+        _write_risk_opportunities(risk_pairs_path, risk_selection_paired_labels)
     random_null_df = _random_passive_null_table(daily_df) if random_arms else pd.DataFrame()
     random_null_df.to_csv(random_null_path, index=False)
     if cpp_parity_rows:
@@ -4091,6 +4192,9 @@ def main(argv: list[str] | None = None) -> None:
             "risk_opportunities_jsonl": (
                 str(risk_opportunities_path) if args.save_risk_opportunities else ""
             ),
+            "risk_paired_labels_jsonl": (
+                str(risk_pairs_path) if args.risk_pair_baseline_arm else ""
+            ),
             "random_passive_null_csv": str(random_null_path),
             "cpp_baseline_parity_csv": (
                 str(cpp_parity_path) if cpp_parity_rows else ""
@@ -4115,6 +4219,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Saved {decision_trace_path}")
     if args.save_risk_opportunities:
         print(f"Saved {risk_opportunities_path}")
+    if args.risk_pair_baseline_arm:
+        print(f"Saved {risk_pairs_path}")
     if random_arms:
         print(f"Saved {random_null_path}")
     if cpp_parity_rows:

@@ -2045,6 +2045,93 @@ def test_risk_selection_positive_dust_retains_quantity_and_cancel_identity():
     assert row["quantity_btc"] == quantity and row["order_id"] == "old"
 
 
+@pytest.mark.parametrize("kind", ["E", "C"])
+def test_risk_paired_label_uses_single_intervention_and_independent_future(kind):
+    from models.replay.risk_selection import assemble_paired_label
+
+    params = {**_async_fifo_params(new=(2., 5., 30.), cancel=(100., 150., 200.)),
+              "risk_selection_collect_opportunities": True, "planned_quote_stop_ts_ms": 0,
+              "_private_fill_visibility_latency_samples_ms": [35.], "maker_fee": .0001}
+    if kind == "C":
+        params.update(initial_inventory=.002, initial_entry_price=100.)
+    crossing = 500 if kind == "E" else 1200
+    baseline = _run(keep_until_stop=True, crossing_fill_ts_ms=crossing, param_overrides=params)
+    target = next(row for row in baseline["_risk_selection_opportunities"]
+                  if row["kind"] == kind and row["side"] == "BUY")
+    intervention = {"opportunity_id": target["opportunity_id"],
+                    "action": "WAIT" if kind == "E" else "CANCEL"}
+    alternative = _run(keep_until_stop=True, crossing_fill_ts_ms=crossing, param_overrides={
+        **params, "risk_selection_intervention": intervention,
+    })
+    label = assemble_paired_label(
+        baseline, alternative, intervention=intervention, start_ts_ms=0, end_ts_ms=4000,
+        baseline_funding_usdc=-.03, alternative_funding_usdc=.02,
+    )
+    assert label["value_difference_usdc"] == pytest.approx(
+        baseline["pnl"] - alternative["pnl"] - .05
+    )
+    assert label["alternative_action"] == intervention["action"]
+    assert label["additive_portfolio_return"] is False
+    assert baseline["fills_total"] > alternative["fills_total"]
+    assert target["action"] == target["baseline_action"]  # no shared arm mutation
+    assert label["features"] == target["features"]
+
+
+@pytest.mark.parametrize("change,match", [
+    ("target_feature", "prefix or target"), ("prefix_feature", "prefix or target"),
+    ("prefix_missing", "incomplete"), ("early_end", "complete common window"),
+    ("duplicate", "exactly once"), ("extra_action", "outside the single target"),
+    ("late_feature", "future-visible"), ("incomplete", "incomplete economic"),
+    ("pending_fill", "incomplete economic"), ("different_mark", "market mark differs"),
+    ("bad_accounting", "do not reconcile"), ("nonfinite", "nonfinite"),
+])
+def test_risk_paired_label_rejects_incomparable_or_incomplete_paths(change, match):
+    from copy import deepcopy
+
+    from models.replay.risk_selection import assemble_paired_label
+
+    params = {"risk_selection_collect_opportunities": True, "planned_quote_stop_ts_ms": 0,
+              "initial_inventory": .002, "initial_entry_price": 100.}
+    baseline = _run(keep_until_stop=True, param_overrides=params)
+    target = baseline["_risk_selection_opportunities"][1]
+    intervention = {"opportunity_id": target["opportunity_id"], "action": "CANCEL"}
+    alternative = deepcopy(_run(keep_until_stop=True, param_overrides={
+        **params, "risk_selection_intervention": intervention,
+    }))
+    rows = alternative["_risk_selection_opportunities"]
+    if change == "target_feature":
+        rows[1]["features"]["mid"] += 1.
+    elif change == "prefix_feature":
+        rows[0]["features"]["mid"] += 1.
+    elif change == "early_end":
+        alternative["risk_selection_end_ts_ms"] -= 1000
+    elif change == "prefix_missing":
+        del rows[0]
+    elif change == "duplicate":
+        rows.insert(0, deepcopy(rows[0]))
+        alternative["risk_selection_opportunity_counts"]["C"] += 1
+    elif change == "extra_action":
+        rows[0]["action"] = "CANCEL"
+    elif change == "late_feature":
+        rows[1]["feature_ready_ts_ns"] = rows[1]["decision_ts_ns"] + 1
+    elif change == "incomplete":
+        alternative["economic_pnl_complete"] = False
+    elif change == "pending_fill":
+        alternative["private_fill_pending_visibility_count"] = 1
+    elif change == "different_mark":
+        alternative["terminal_mark_price"] += 1
+        alternative["pnl"] += alternative["final_inventory"]
+    elif change == "bad_accounting":
+        alternative["cash_before_terminal"] += 1
+    elif change == "nonfinite":
+        alternative["pnl"] = float("nan")
+    with pytest.raises(ValueError, match=match):
+        assemble_paired_label(
+            baseline, alternative, intervention=intervention, start_ts_ms=0, end_ts_ms=4000,
+            baseline_funding_usdc=0., alternative_funding_usdc=0.,
+        )
+
+
 @pytest.mark.parametrize("source_ready,prediction_ready,expected", [
     ({"depth": 800, "bbo": 850}, 900, 900),
     ({"depth": 950, "bbo": 850}, 900, 950),

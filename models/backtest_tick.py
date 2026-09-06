@@ -34895,6 +34895,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     if risk_selection is not None:
         result.update(risk_selection.finish())
+        result["risk_selection_start_ts_ms"] = int(trade_ts[0])
+        result["risk_selection_end_ts_ms"] = replay_end_ts
     return result
 
 
