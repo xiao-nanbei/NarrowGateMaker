@@ -199,3 +199,43 @@ def test_complete_policy_arms_share_input_not_account_and_never_create_pair_labe
         if row["arm"] in {"R", "Flat", "R_missing"}:
             assert row["value_delta_usdc"] is None
             assert row["policy_id"] == ""
+
+
+@pytest.mark.parametrize("selected_arm", [
+    arm("B"), arm("E", risk_selection_mode="E"), arm("C", risk_selection_mode="C"),
+    arm("EC", risk_selection_mode="EC"), arm("R", **random_overrides()),
+    arm("Flat", risk_selection_mode="E", risk_selection_control="flat"),
+], ids=lambda value: value.name)
+def test_every_full_path_arm_rejects_truncated_fill_trace_before_accounting(
+    monkeypatch, selected_arm,
+):
+    from tests.test_python_planned_maintenance_replay import _inputs, _params
+
+    day = "2026-01-01"
+    start_ms = int(audit._day_start_ts(day) * 1000)
+    trades, bbo = _inputs()
+    trades["transact_time"] += start_ms
+    window = {"trades": trades, "bbo_data": replace(bbo, ts_ms=bbo.ts_ms + start_ms),
+              "var_ts_ms": np.array([start_ms]), "var_ssq": np.array([1.]),
+              "l2_data": None, "ml_data": None, "var_ti": None, "var_retsq": None}
+    monkeypatch.setattr(audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    monkeypatch.setattr(audit.smoke, "_load_window", lambda *_a: window)
+    monkeypatch.setattr(audit, "build_configured_cooldown_policy_adapter", lambda **_kw: None)
+    # Inject an inconsistent completed result, including Flat: accounting must
+    # reject missing execution rows even if the selected control expects zero.
+    monkeypatch.setattr(audit.bt, "_simulate_tick_with_engine", lambda *_a, **_kw: {
+        "fills_total": 2, "_fill_trace": [{}],
+    })
+
+    def must_not_reconstruct(*_args, **_kwargs):
+        pytest.fail("truncated fills reached funding/campaign reconstruction")
+
+    monkeypatch.setattr(audit, "_fills_to_trade_rows", must_not_reconstruct)
+    with pytest.raises(ValueError, match="complete fill trace.*rows=1, fills_total=2"):
+        audit._run_day_campaign_audit(
+            day=day, symbol="BTCUSDC",
+            base={**_params(), "risk_selection_policy": policy_payload()},
+            arms=[selected_arm], engine="python", day_initial={}, day_live_state=None,
+            use_initial_state=False, continuous_days=[day], replay_end_ts_ms=start_ms + 4000,
+            funding_events=[],
+        )

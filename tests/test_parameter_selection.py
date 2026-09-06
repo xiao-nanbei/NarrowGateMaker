@@ -144,7 +144,7 @@ def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatc
 
     def simulate(engine, trades, var_ts, var_ssq, params, **kwargs):
         calls.append((trades, params))
-        result = {"pnl": 3., "_fill_trace": []}
+        result = {"pnl": 3., "_fill_trace": [], "fills_total": 0}
         if collect_risk:
             result.update({
                 "_risk_selection_opportunities": [{
@@ -243,7 +243,7 @@ def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
             "risk_selection_collect_opportunities": True, "planned_quote_stop_ts_ms": 0,
             "requote_threshold_bps": 1., "maker_fee": .0001, "order_size": .002,
             "_private_fill_visibility_latency_samples_ms": [35.],
-            "trace_fills_max": 1 if truncate_trace else 100,
+            "trace_fills_max": 100,
             "replay_event_clock_start_ts_ms": start_ms,
             "replay_event_clock_end_ts_ms": start_ms + 4000}
     funding = [{"fundingTime": start_ms + (4000 if prefix else 2500),
@@ -267,7 +267,8 @@ def test_risk_pair_runner_reuses_window_and_values_cross_midnight_funding(
     loads.clear()
     calls.clear()
     if truncate_trace:
-        with pytest.raises(ValueError, match="complete fill and terminal ledger"):
+        base["trace_fills_max"] = 1
+        with pytest.raises(ValueError, match="complete fill trace"):
             campaign_audit._run_day_campaign_audit(
                 arms=[alternative_arm, baseline_arm], risk_pair_baseline_arm="B", **arguments,
             )
@@ -918,6 +919,7 @@ def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monk
     def simulate(_engine, _trades, _var_ts, _var_ssq, params, **kwargs):
         captures.append(params)
         return {
+            "fills_total": 0,
             "runtime_compute_clock": params["runtime_compute_clock"],
             "runtime_compute_path_counts": {"cached_no_new_bucket": 1, "new_bucket": 2},
             "exec_message_delivery_sources": {"depth": {"messages": 3}},

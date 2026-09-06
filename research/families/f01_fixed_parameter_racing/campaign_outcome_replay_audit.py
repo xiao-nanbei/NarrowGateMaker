@@ -2557,6 +2557,11 @@ def _run_day_campaign_audit(
                 }
             )
         fill_trace = result.get("_fill_trace", [])
+        if len(fill_trace) != result["fills_total"]:
+            raise ValueError(
+                f"campaign/funding reconstruction requires complete fill trace: "
+                f"arm={arm.name!r}, rows={len(fill_trace)}, fills_total={result['fills_total']}"
+            )
         if save_quote_trace:
             quote_trace_rows.extend(
                 {"day": day, "arm": arm.name, "group": arm.group, **row}
@@ -2620,7 +2625,7 @@ def _run_day_campaign_audit(
         if risk_pair_baseline_arm:
             # Labels use the completed canonical fill/funding/terminal ledger,
             # not a sum of repeated campaign values or a truncated debug tape.
-            if len(fill_trace) != result["fills_total"] or not trades:
+            if not trades:
                 raise ValueError("risk pair label requires the complete fill and terminal ledger")
             ledger_value = trades[-1].realized_pnl + trades[-1].unrealized_pnl
             if not math.isclose(ledger_value, result["pnl"] + funding_value,
