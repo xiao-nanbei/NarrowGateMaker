@@ -8,6 +8,16 @@ Last materially synchronized: 2026-09-06
 
 NarrowGate research is organized into ten strategy/evidence families, one system-engineering line, and four shared infrastructure layers. All research source, evidence, shared contracts, and governance metadata live under this single `research/` subtree.
 
+## Using Tools Versus Reading Research Results
+
+Start with the [account-free replay demo](../examples/replay_demo/README.md) to inspect an order's queue, fills, and inventory path, or the [one-day data tutorial](../docs/opensource/one_day_data_pipeline.md) to use your own market data. Those entry points do not require approval of a historical strategy hypothesis.
+
+The table below reports research status, not installation status. `active` means work continues on the named question; `closed` means the recorded candidate or hypothesis did not justify continuation under its tested conditions. Neither means that every reusable data loader, simulator, label builder, or diagnostic in that directory is enabled, disabled, profitable, or ready for live deployment. Read the unit's current README and command help for its supported inputs; exact historical reproduction may still require unpublished artifacts.
+
+For new work, reuse a suitable current implementation and report the actual data, latency, queue, and initial-state assumptions. Do not import an old conclusion into a different environment, or use a failed experiment as a reason to block unrelated tool use. A working CLI and passing implementation tests demonstrate software behavior, not economic value or permission to trade.
+
+## Layout And Research History
+
 Public research documents and owner-only evidence are separated by the repository-wide [Public Research and Private Evidence Layout](PRIVATE_EVIDENCE.md). Every concrete research unit keeps public methods and conclusions in its tracked README/docs and resolves non-published artifacts through its ignored local `private/` catalog.
 
 Historical family-owned paths under `models/`, `models/audit/`, `features/`, `docs/`, `cpp/narrowgate_cpp/`, and the former root `research_*` directories have been removed. Active imports, commands, tests, and build files use the canonical `research.*` packages directly; no compatibility symlinks or duplicate source files are retained.
@@ -16,7 +26,7 @@ Versioned migration contracts live in `governance/migrations/`. `layout_v1.json`
 
 A rerun does not automatically create a new research identity. Ordinary defect, cache, serialization, or performance repairs retain it while the frozen sample, baseline/candidates, folds, estimand, and statistical contract are unchanged; a new formal run records its own execution attempt and actual source/input identities. Changes to those scientific elements require a new research identity. Reusing a shared algorithm does not inherit a historical family's consumed panel, conclusions, or permissions. See [Contributing](../CONTRIBUTING.md#research-identity-and-formal-execution).
 
-| ID | Directory | Status | Shared layers |
+| ID | Directory | Research status | Shared layers |
 |---|---|---|---|
 | F01 | `families/f01_fixed_parameter_racing/` | alpha family closed; screening only | D, R, S, G |
 | F02 | `families/f02_empirical_p3_touch/` | frozen replay/operational comparator dependency; successor prediction infrastructure is research-only | D, S |

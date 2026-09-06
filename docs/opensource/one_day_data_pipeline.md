@@ -10,7 +10,7 @@ Status: Current public acquisition and diagnostic-replay tutorial.
 
 ## Scope
 
-This tutorial takes one UTC day through public Binance trade download, deterministic one-second-bar normalization, raw-trade audit, and a diagnostic replay summary. It does not make the day formal research evidence: strict queue or action work additionally needs an admitted BBO/L2 source, its previous-day warmup when required, a frozen quality manifest, and the study's own evidence contract.
+Use this path after the bundled demo when you want to inspect your own day of market data. It takes one UTC day through public Binance trade download, deterministic one-second-bar normalization, raw-trade audit, and a diagnostic replay summary. The public trade-download route needs no exchange trading account or API key, but does require network access to the archives. Strict queue or action work additionally needs a suitable best-bid/ask (BBO) and price-level order-book (L2) source, previous-day warmup when required, and the study's data-quality checks.
 
 For a zero-network walkthrough of the complete queue, fill denominator, campaign, terminal-accounting, and evidence-gate mechanics, run the [synthetic replay demo](../../examples/replay_demo/README.md) first.
 
@@ -64,7 +64,21 @@ python pipeline.py audit-raw \
   --file "$DAY"
 ```
 
-Expected outputs are `${NARROWGATE_DATA_ROOT}/bars_1s/BTCUSDC-1s-${DAY}.parquet`, `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-raw-trades-audit.csv`, and `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-eligible-days.csv`. With trades and bars but no admitted BBO/L2, `raw_ok` and `has_bars` may pass while `eligible` correctly remains false with `missing_bbo;missing_l2`; do not edit that result or substitute another provider silently.
+Expected outputs are `${NARROWGATE_DATA_ROOT}/bars_1s/BTCUSDC-1s-${DAY}.parquet`, `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-raw-trades-audit.csv`, and `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-eligible-days.csv`.
+
+### Read The Data Status
+
+These are the actual fields produced by [`audit_raw_trades.py`](../../data/audit_raw_trades.py), not a universal yes/no permission to use NarrowGate:
+
+| Field or result | What it means | Next step |
+| --- | --- | --- |
+| `raw_ok=true` | One nonempty raw-trade file passed the audit's ID-order and side checks | Inspect the detailed audit; this does not certify a full book or all source hours |
+| `has_bars=true` | A matching one-second-bar file exists | Continue the bar-priced diagnostic below |
+| `has_bbo=false` / `has_l2=false` | Matching book files are absent in the expected data layout | Obtain or normalize those sources if the experiment needs book replay |
+| `eligible=false`, `missing_bbo;missing_l2` | Trades/bars are available, but the audit's combined book-input screen is incomplete | Trade/bar diagnostics remain usable; do not claim native queue or fill realism |
+| `eligible=true` | Raw checks, bars/BBO/L2 presence, and the audit's known-exclusion check pass | Still check the selected source's coverage, sequences, clocks, warmup, and study window before strict replay |
+
+Missing L2 is a data limitation, not a broken installation. Binance trade archives do not contain historical order-book changes. Keep the reported exclusions instead of editing `eligible` or silently substituting another source. File presence alone does not establish live/replay parity.
 
 ## Diagnostic Replay
 
@@ -82,7 +96,7 @@ python -m models.backtest_tick \
   --summary-json "$NARROWGATE_RESULTS_DIR/replay-${DAY}.json"
 ```
 
-Success writes the requested scalar summary plus replay diagnostics under `${NARROWGATE_RESULTS_DIR}`. This route is a mechanics diagnostic with fallback queue assumptions; it is not exact-book, live-parity, economic-admission, promotion, or deployment evidence.
+Success writes the requested scalar summary plus replay diagnostics under `${NARROWGATE_RESULTS_DIR}`. Inspect those fields alongside the data-status report. This explicitly trade-clock, bar-priced route uses fallback queue assumptions; no-trade gaps do not have the same timer behavior as a merged-event replay. Its PnL is a modeled diagnostic, not an exact-book fill estimate or a prediction of live profitability. It cannot establish research promotion or deployment readiness.
 
 ## Strict Book Path
 

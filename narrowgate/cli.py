@@ -196,7 +196,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_demo.set_defaults(func=cmd_replay_demo)
 
+    studio = sub.add_parser("studio", help="remote replay control service and worker")
+    studio.add_argument("studio_args", nargs=argparse.REMAINDER)
+    studio.set_defaults(func=cmd_studio)
+
     return parser
+
+
+def cmd_studio(args: argparse.Namespace) -> int:
+    from narrowgate.studio import main as studio_main
+
+    return studio_main(args.studio_args)
 
 
 def main(argv: list[str] | None = None) -> int:

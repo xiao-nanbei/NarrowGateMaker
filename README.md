@@ -1,16 +1,24 @@
 <div align="center">
   <h1>NarrowGate</h1>
-  <p>Maker-strategy research, causal replay, and implementation parity under stated assumptions.</p>
+  <p>Follow a maker order from submission and queueing to fills, inventory, and PnL.</p>
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-30
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-30
+Last materially synchronized: 2026-09-06
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
-NarrowGate is a maker-strategy research framework for studying passive quote selection, inventory campaigns, tick replay, and Python/C++ execution parity.
+NarrowGate is a maker-strategy research framework for studying passive quote selection, inventory campaigns, tick replay, and Python/C++ execution parity. Start with its bundled synthetic replay: no exchange account, API key, market-data download, or C++ build is needed after installation.
+
+## Start Here
+
+1. [Install and run the demo](#5-minute-quickstart), then [follow its first order](examples/replay_demo/README.md#follow-the-first-order). You get an event trace and an accounting summary, including an order that never fills.
+2. [Bring one day of market data](docs/opensource/one_day_data_pipeline.md). Trades and bars support a limited diagnostic; missing order-book data is reported explicitly rather than presented as an exact queue replay.
+3. [Explore the research tools](research/README.md). A closed strategy experiment does not disable the reusable replay or analysis code, and working software is not a claim of trading profitability.
+
+Prefer a browser? The development [Replay Studio](docs/plans/remote_replay_studio.md) runs the same synthetic demo through a durable control service and independent workers. It includes order, inventory and event views, plus a separate read-only importer for completed owner-private B0 results. It does not submit real-market B0 or E/C research. This interface is not included in the older `v0.1.1` tag.
 
 The source code is publicly available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Because that license limits licensed use to permitted noncommercial purposes, NarrowGate is **source-available**, not open source in the unrestricted-use sense. Commercial use requires separate written permission from the licensor.
 
@@ -148,16 +156,22 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 
 narrowgate doctor
-narrowgate quote-demo
-python examples/order_level_score_demo.py
-python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
+narrowgate replay-demo --output-dir results/replay_demo --verify-reference
 ```
 
 Expected result:
 
 - `narrowgate doctor` prints dependency and path status; optional research/C++ dependencies may report `false` in a Demo installation.
-- `narrowgate quote-demo` computes a no-data quote-core example.
-- the onboarding smoke test passes without pytest, network access, or private market data.
+- `replay-demo` writes `summary.json`, `trace.jsonl`, and `receipt.json` under `results/replay_demo`; `--verify-reference` checks the bundled expected output.
+- The fixture submits three orders: two fill, one is canceled unfilled, and inventory returns to zero. Its synthetic PnL illustrates accounting, not expected strategy returns. See the [step-by-step explanation](examples/replay_demo/README.md).
+
+Optional small checks, also without exchange access or private data:
+
+```bash
+narrowgate quote-demo
+python examples/order_level_score_demo.py
+python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
+```
 
 For the optional C++ extension:
 
@@ -168,9 +182,9 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
 The local demo above remains the five-minute entry point. To deploy the public code on a separately provisioned AWS EC2 instance, follow the placeholder-only [generic deployment flow and AWS EC2 example](docs/ops/README.md). That guide and the deployment kernel are public; the target address, credentials, active config, artifacts, hashes, release identity, and receipts must be supplied privately by the operator.
 
-## Official No-Data Validation
+## Offline Checks And Their Limits
 
-The public repository has exactly two canonical validation routes beyond the Quickstart smoke. The formal live-input dry-run is `bash live/run.sh dry-run`; it validates local configuration and the complete model contract, then exits before any network client, thread, engine, or order path exists. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). The synthetic replay demo is `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`; it exercises deterministic queue, fill, campaign, accounting, and fail-closed evidence mechanics without private data or economic authority. See the [Public Replay Demo](examples/replay_demo/README.md).
+The replay demo checks its synthetic queue, lifecycle, and accounting against published reference files. It does not simulate measured network latency or reconstruct an exchange's hidden order queue. The separate `bash live/run.sh dry-run` checks live inputs and exits before creating a network client, thread, engine, or order path; it does not start trading. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). Neither check certifies a profitable strategy or a deployment.
 
 ## Participate
 

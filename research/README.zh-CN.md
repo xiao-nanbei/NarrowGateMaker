@@ -8,6 +8,16 @@ Last materially synchronized: 2026-09-06
 
 NarrowGate 研究划分为十个策略/证据家族、一条系统工程线和四个共享基础设施层。所有研究源码、证据、共享合同及治理元数据都位于同一个 `research/` 子树下。
 
+## 使用工具与阅读研究结果是两件事
+
+先用[无需账户的回放示例](../examples/replay_demo/README.zh-CN.md)查看一笔订单的排队、成交与库存路径，或用[一日数据教程](../docs/opensource/one_day_data_pipeline.zh-CN.md)处理自己的行情。这些入口不要求某个历史策略假设已获研究通过。
+
+下表描述研究状态，不是安装状态。`active` 表示仍在研究所列问题，`closed` 表示记录中的候选或假设在已测试条件下没有获得继续推进的依据。它们都不代表目录里每个可复用的数据加载器、模拟器、标签构建器或诊断工具已启用、已禁用、能够盈利或可直接部署。支持哪些输入应以该单元当前 README 和命令帮助为准；精确复现历史实验仍可能需要未公开工件。
+
+新工作应复用合适的当前实现，并说明实际数据、延迟、排队和初始状态假设。不要把旧结论移植到不同环境，也不要用某个失败实验阻断无关的工具使用。CLI 可运行、实现测试通过，证明的是软件行为，不是经济价值或交易许可。
+
+## 目录与研究历史
+
 公共研究文档与仅所有者可见的证据按照仓库级[公共研究与私有证据布局](PRIVATE_EVIDENCE.md)分离。每个具体研究单元都在其受 Git 跟踪的 README/docs 中保存公共方法和结论，并通过其被忽略的本地 `private/` catalog 解析未公开的 artifact。
 
 过去由各家族拥有、位于 `models/`、`models/audit/`、`features/`、`docs/`、`cpp/narrowgate_cpp/` 以及原根目录 `research_*` 下的路径均已删除。活跃 import、命令、测试和构建文件直接使用规范的 `research.*` package；不保留兼容 symlink 或重复源码文件。
@@ -16,7 +26,7 @@ NarrowGate 研究划分为十个策略/证据家族、一条系统工程线和�
 
 重新运行并不自动产生新的研究身份。只要冻结样本、baseline/candidate、fold、估计目标和统计合同不变，普通缺陷、cache、序列化或性能修复就保持原研究身份；新的正式运行记录独立执行尝试及实际源码/输入身份。科学合同中的这些要素变化才需要新研究身份。复用共享算法并不继承历史家族已消耗的数据面板、结论或权限。见[贡献指南](../CONTRIBUTING.zh-CN.md#研究身份与正式执行)。
 
-| ID | 目录 | 状态 | 共享层 |
+| ID | 目录 | 研究状态 | 共享层 |
 |---|---|---|---|
 | F01 | `families/f01_fixed_parameter_racing/` | alpha 家族已关闭；仅用于筛选 | D, R, S, G |
 | F02 | `families/f02_empirical_p3_touch/` | 冻结的 replay/operational comparator 依赖；后继预测基础设施仅属于研究层 | D, S |
