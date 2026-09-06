@@ -10,7 +10,7 @@ Last materially synchronized: 2026-09-06
 
 ## 范围
 
-本教程将一个 UTC 日依次用于 Binance 公共成交下载、确定性一秒 bar 标准化、原始成交审计与诊断回放汇总。它不会将该日自动变成正式研究证据：严格排队或动作研究还需要满足研究合同的 BBO/L2 来源、必要的前一自然日 warmup、冻结质量清单和该研究的证据合同。
+体验随包 demo 后，如果想查看自己的一日行情，可以使用本教程：将一个 UTC 日依次用于 Binance 公共成交下载、确定性一秒 bar 标准化、原始成交审计与诊断回放汇总。公开成交下载不需要交易所交易账户或 API key，但需要能够联网访问归档。严格排队或动作研究还需要合适的最优买卖价（BBO）与价位级订单簿（L2）来源、必要的前一自然日 warmup，以及该研究的数据质量检查。
 
 若只想在零网络环境下体验排队、成交共同分母、campaign、终端记账和证据检查，请先运行[合成回放示例](../../examples/replay_demo/README.zh-CN.md)。
 
@@ -64,7 +64,21 @@ python pipeline.py audit-raw \
   --file "$DAY"
 ```
 
-预期输出为 `${NARROWGATE_DATA_ROOT}/bars_1s/BTCUSDC-1s-${DAY}.parquet`、`${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-raw-trades-audit.csv` 和 `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-eligible-days.csv`。只有成交/bar、没有接纳的 BBO/L2 时，`raw_ok` 和 `has_bars` 可以通过，但 `eligible` 应保持 false，原因包含 `missing_bbo;missing_l2`。不得手改结果或静默换用其他来源。
+预期输出为 `${NARROWGATE_DATA_ROOT}/bars_1s/BTCUSDC-1s-${DAY}.parquet`、`${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-raw-trades-audit.csv` 和 `${NARROWGATE_RESULTS_DIR}/raw-audit/BTCUSDC-eligible-days.csv`。
+
+### 如何阅读数据状态
+
+以下是 [`audit_raw_trades.py`](../../data/audit_raw_trades.py) 实际输出的字段，不是能否使用 NarrowGate 的统一权限开关：
+
+| 字段或结果 | 含义 | 下一步 |
+| --- | --- | --- |
+| `raw_ok=true` | 一个非空逐笔成交文件通过了审计中的 ID 顺序和方向检查 | 查看详细审计；这不证明完整订单簿或所有来源小时齐备 |
+| `has_bars=true` | 存在对应的一秒 bar 文件 | 可继续下文的 bar 定价诊断 |
+| `has_bbo=false` / `has_l2=false` | 预期数据目录中缺少对应订单簿文件 | 实验需要订单簿回放时，先获取或标准化这些来源 |
+| `eligible=false`，`missing_bbo;missing_l2` | 成交/bar 可用，但审计的订单簿组合输入检查未完成 | 仍可做成交/bar 诊断，不应声称具备 native queue 或真实成交精度 |
+| `eligible=true` | 原始成交检查、bar/BBO/L2 文件存在性和已知排除项检查通过 | 严格回放前仍需检查所选来源的覆盖、序列、时钟、warmup 与研究窗口 |
+
+缺少 L2 是数据限制，不是安装损坏。Binance 成交归档不包含历史订单簿变化。应保留实际排除原因，不要修改 `eligible` 或静默替换来源。仅有文件并不证明 live/replay 一致。
 
 ## 诊断回放
 
@@ -82,7 +96,7 @@ python -m models.backtest_tick \
   --summary-json "$NARROWGATE_RESULTS_DIR/replay-${DAY}.json"
 ```
 
-成功后在 `${NARROWGATE_RESULTS_DIR}` 写入指定标量汇总和回放诊断。这是采用替代排队假设的机制诊断，不是精确订单簿、live parity、经济准入、研究晋级或部署证据。
+成功后在 `${NARROWGATE_RESULTS_DIR}` 写入指定标量汇总和回放诊断，应结合数据状态报告阅读。这条路径明确使用成交时钟、bar 定价和替代排队假设；没有成交的时段，其定时器行为与合并事件回放不同。其 PnL 是模型诊断，不是精确订单簿成交估计或 live 盈利预测，也不能证明研究晋级或部署条件已满足。
 
 ## 严格订单簿路径
 

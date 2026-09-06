@@ -19,6 +19,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       python: ${{ steps.filter.outputs.python }}
       native: ${{ steps.filter.outputs.native }}
+      frontend: ${{ steps.filter.outputs.frontend }}
       full: ${{ steps.filter.outputs.full }}
     steps:
       - uses: actions/checkout@v7
@@ -38,12 +39,14 @@ jobs:
           docs=false
           python=false
           native=false
+          frontend=false
           full=false
 
           if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
             docs=true
             python=true
             native=true
+            frontend=true
             full=true
           else
             if [[ "$EVENT_NAME" == "pull_request" ]]; then
@@ -66,7 +69,7 @@ jobs:
               esac
               case "$path" in
                 *.py|*.sh|pyproject.toml|pytest.ini|requirements*.txt|Makefile|Dockerfile*|tests/*|narrowgate/*|live/*|strategy/*|execution/*|features/*|data/*|models/*|examples/*|research/*)
-                  if [[ "$path" != *.md ]]; then
+                  if [[ "$path" != *.md && "$path" != narrowgate/studio_static/* ]]; then
                     python=true
                   fi
                   ;;
@@ -76,10 +79,16 @@ jobs:
                   native=true
                   ;;
               esac
+              case "$path" in
+                frontend/*|narrowgate/studio_static/*|narrowgate/studio.py|narrowgate/replay_demo.py|narrowgate/fixtures/replay_demo/*|pyproject.toml)
+                  frontend=true
+                  ;;
+              esac
               if [[ "$path" == ".github/workflows/ci.yml" ]]; then
                 docs=true
                 python=true
                 native=true
+                frontend=true
               fi
               if [[ "$path" == "scripts/audit_public_documentation.py" ]]; then
                 docs=true
@@ -91,6 +100,7 @@ jobs:
             echo "docs=$docs"
             echo "python=$python"
             echo "native=$native"
+            echo "frontend=$frontend"
             echo "full=$full"
           } >> "$GITHUB_OUTPUT"
 
@@ -119,6 +129,55 @@ jobs:
 
       - name: Audit public documentation once
         run: python scripts/audit_public_documentation.py --repo-root .
+
+  frontend:
+    name: Studio frontend and packaged static assets
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: "11.19.0"
+          package_json_file: frontend/package.json
+          run_install: false
+          cache: true
+          cache_dependency_path: frontend/pnpm-lock.yaml
+
+      - name: Install frozen frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck, test and format-check frontend
+        run: |
+          pnpm run lint
+          pnpm test
+          pnpm run format:check
+
+      - name: Build packaged frontend once
+        run: pnpm run build
+
+      - name: Require committed static assets to match source
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- narrowgate/studio_static/
+          if [[ -n "$(git ls-files --others --exclude-standard -- narrowgate/studio_static/)" ]]; then
+            echo "::error::Frontend build produced uncommitted static assets; rebuild and commit narrowgate/studio_static/."
+            git status --short -- narrowgate/studio_static/
+            exit 1
+          fi
 
   base-install-smoke:
     name: Base install smoke
@@ -222,12 +281,13 @@ jobs:
 
   admission:
     name: CI admission
-    needs: [changes, quality, base-install-smoke, python, full-python]
+    needs: [changes, quality, frontend, base-install-smoke, python, full-python]
     if: always()
     runs-on: ubuntu-latest
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       QUALITY_RESULT: ${{ needs.quality.result }}
+      FRONTEND_RESULT: ${{ needs.frontend.result }}
       BASE_RESULT: ${{ needs['base-install-smoke'].result }}
       PYTHON_RESULT: ${{ needs.python.result }}
       NIGHTLY_RESULT: ${{ needs['full-python'].result }}
@@ -235,7 +295,7 @@ jobs:
       - name: Require every applicable boundary
         run: |
           test "$CHANGES_RESULT" = success
-          for result in "$QUALITY_RESULT" "$BASE_RESULT" "$PYTHON_RESULT" "$NIGHTLY_RESULT"; do
+          for result in "$QUALITY_RESULT" "$FRONTEND_RESULT" "$BASE_RESULT" "$PYTHON_RESULT" "$NIGHTLY_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) exit 1 ;;

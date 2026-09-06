@@ -271,6 +271,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
             | set(optional["data"])
             | set(optional["research"])
             | set(optional["live"])
+            | set(optional["studio"])
         )
         self.assertEqual(set(optional["all"]), expected)
         self.assertIn("requests>=2.28", optional["research"])
@@ -362,29 +363,29 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
 
     def test_readme_has_one_canonical_dry_run_and_replay_demo_route(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        section = readme.split("## Official No-Data Validation", 1)[1].split(
+        section = readme.split("## Offline Checks And Their Limits", 1)[1].split(
             "## What This Repo Is For", 1
         )[0]
 
         self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
-        self.assertEqual(readme.count("narrowgate replay-demo"), 1)
+        self.assertIn("narrowgate replay-demo", readme)
         self.assertEqual(readme.count("(docs/ops/live_dry_run.md)"), 1)
         self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)
         self.assertIn("docs/ops/live_dry_run.md", section)
-        self.assertIn("examples/replay_demo/README.md", section)
+        self.assertIn("examples/replay_demo/README.md", readme)
 
     def test_chinese_readme_matches_quickstart_and_canonical_routes(self) -> None:
         readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
         quickstart = readme.split("## 5 分钟快速开始", 1)[1].split(
-            "## 正式无数据验证", 1
+            "## 离线检查及其边界", 1
         )[0]
 
         self.assertIn("python -m pip install -e .", quickstart)
         self.assertIn("test_public_onboarding.py", quickstart)
         self.assertNotIn("test_parameter_selection.py", quickstart)
         self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
-        self.assertEqual(readme.count("narrowgate replay-demo"), 1)
-        self.assertEqual(readme.count("(docs/ops/live_dry_run.md)"), 1)
+        self.assertIn("narrowgate replay-demo", readme)
+        self.assertIn("(docs/ops/live_dry_run.zh-CN.md)", readme)
 
     def test_readme_links_public_participation_and_data_tutorial(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

@@ -1,0 +1,30 @@
+{
+  "name": "narrowgate-replay-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "node scripts/build.mjs",
+    "lint": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/traceSeries.test.mjs",
+    "format": "prettier --write src scripts vite.config.ts *.json *.md",
+    "format:check": "prettier --check src scripts vite.config.ts *.json *.md",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.9",
+    "prettier": "3.5.3",
+    "typescript": "5.8.3",
+    "vite": "6.3.5"
+  }
+}

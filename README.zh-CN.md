@@ -1,16 +1,22 @@
 <div align="center">
   <h1>NarrowGate</h1>
-  <p>Maker 策略研究、因果回放，以及在明确假设下的实现一致性框架。</p>
+  <p>沿一笔 maker 订单，查看报单、排队、成交、库存与 PnL。</p>
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-30
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-08-30
+Last materially synchronized: 2026-09-06
 
 > 发布说明：`${NARROWGATE_*}` 值和 deployment-epoch 名称是逻辑定位器。所有者侧数据与机器产物保存在私有证据存储中；除非文档提供仓库相对链接，否则这些字节不会随本仓库分发。参见[公开/私有文档合同](docs/public_private_documentation_contract.zh-CN.md)。
 
-NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择、库存 campaign、tick replay，以及 Python/C++ 执行一致性。
+NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择、库存 campaign、tick replay，以及 Python/C++ 执行一致性。可以先运行随包提供的合成回放：安装完成后，不需要交易所账户、API key、行情下载或 C++ 编译。
+
+## 从这里开始
+
+1. [安装并运行 demo](#5-分钟快速开始)，然后[跟随第一笔订单](examples/replay_demo/README.zh-CN.md#跟随第一笔订单)。你会得到事件轨迹和记账汇总，也能看到始终没有成交的订单。
+2. [带入一日真实行情](docs/opensource/one_day_data_pipeline.zh-CN.md)。逐笔成交和 bar 可用于有限诊断；缺少订单簿时会明确说明，不会冒充精确排队回放。
+3. [浏览研究工具](research/README.zh-CN.md)。某个策略实验关闭，不代表回放与分析代码不能复用；软件能运行，也不代表策略有盈利能力。
 
 源代码按 [PolyForm Noncommercial License 1.0.0](LICENSE) 公开可读。该许可证将受许可的使用限定为允许的非商业用途，因此 NarrowGate 属于**公开源码（source-available）**，不是通常意义上不限使用领域的开源软件。商业使用需要另行获得许可人的书面许可。
 
@@ -43,6 +49,8 @@ SHA 只能证明当前读取的字节与该 digest 指定的字节相同。它�
 当所有者侧证据提到 BUY E3 或 SELL owner cooldown 时，这些标签表示**已获 owner 授权的 live 风险实验**，并不表示策略通过了研究 hard gate。它们不是已经验证的最优策略；本公共仓库也不声明其中任何一个实验当前是否启用。
 
 通用部署代码和 provider 示例可以公开。只有具体 host、账户、credential、active config/release、runtime receipt、rollback selector 与当前运营状态属于所有者私有信息。公开说明和占位符绝不授予远端控制权；解析某一次具体部署时只能使用 Git 忽略的私有配置与证据，缺失权威时必须关闭失败。
+
+需要浏览器界面时，可使用开发中的 [Replay Studio](docs/plans/remote_replay_studio.zh-CN.md)：持久化控制服务和独立 worker 运行同一个合成演示，界面展示订单、库存和原始事件。目前尚不能从界面提交真实行情 B0 或 E/C 研究；旧 `v0.1.1` tag 不包含这一界面。
 
 ## 稳定公开版本
 
@@ -146,16 +154,22 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 
 narrowgate doctor
-narrowgate quote-demo
-python examples/order_level_score_demo.py
-python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
+narrowgate replay-demo --output-dir results/replay_demo --verify-reference
 ```
 
 预期结果：
 
 - `narrowgate doctor` 输出 dependency 和 path 状态；基础 Demo 未安装的可选 research/C++ 依赖可能显示 `false`；
-- `narrowgate quote-demo` 计算一个无需数据的 quote-core 示例；
-- onboarding smoke test 无需 pytest、网络或私有市场数据即可通过。
+- `replay-demo` 在 `results/replay_demo` 下写入 `summary.json`、`trace.jsonl` 和 `receipt.json`；`--verify-reference` 对照随包提供的预期输出；
+- fixture 提交三笔订单：两笔成交，一笔未成交撤销，最终库存归零。合成 PnL 用于说明记账，不代表策略预期收益，详见[逐步说明](examples/replay_demo/README.zh-CN.md)。
+
+以下小型检查同样不需要交易所访问或私有数据：
+
+```bash
+narrowgate quote-demo
+python examples/order_level_score_demo.py
+python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
+```
 
 可选 C++ extension：
 
@@ -166,9 +180,9 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
 上面的本地 demo 仍是五分钟入口。若要把公开代码部署到自行创建的 AWS EC2，请继续阅读[通用部署流程与 AWS EC2 示例](docs/ops/README.zh-CN.md)。部署 kernel 和占位符教程属于公共区域；目标地址、credential、active config、artifact、hash、release identity 与 receipt 由部署者私下提供。
 
-## 正式无数据验证
+## 离线检查及其边界
 
-除 Quickstart smoke 外，公开仓库恰好有两条正式验证路径。Live 输入的唯一正式 dry-run 是 `bash live/run.sh dry-run`；它完成本地配置与完整模型合同校验后，在创建任何网络客户端、线程、引擎或订单路径之前退出，详见 [Live / Dry-Run Boundary](docs/ops/live_dry_run.md)。Synthetic replay demo 的唯一入口是 `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`；它在不读取私有数据、不取得经济或 live authority 的前提下，确定性验证 queue、fill、campaign、accounting 与 fail-closed evidence mechanics，详见 [Public Replay Demo](examples/replay_demo/README.md)。
+Replay demo 将合成排队、生命周期和记账结果与公开参考文件对照。它不模拟实测网络延迟，也不重建交易所的隐藏订单队列。另一条 `bash live/run.sh dry-run` 检查 live 输入，并在创建网络客户端、线程、引擎或订单路径前退出，不会启动交易，详见 [Live / Dry-Run Boundary](docs/ops/live_dry_run.zh-CN.md)。两种检查都不证明策略盈利，也不代表完成实盘部署。
 
 ## 参与
 
