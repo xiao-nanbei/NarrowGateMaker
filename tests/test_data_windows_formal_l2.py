@@ -7,6 +7,35 @@ import pytest
 from models import data_windows
 
 
+def test_contiguous_window_keeps_first_preroll_without_replaying_second_preroll():
+    day_ms = 86_400_000
+    start = int(pd.Timestamp("2026-01-01", tz="UTC").value // 1_000_000)
+    windows = []
+    for offset in (0, day_ms):
+        ts = np.array([start + offset - 1000, start + offset, start + offset + 1000])
+        windows.append({
+            "trades": pd.DataFrame({"transact_time": ts[1:], "price": [100., 101.]}),
+            "var_ts_ms": ts, "var_ssq": np.ones(3), "var_ti": None, "var_retsq": None,
+            "bbo_data": data_windows.HistoricalBBOData(ts, *(np.ones(3) for _ in range(4))),
+            "l2_data": None, "ml_data": (ts, {"feature": np.array([9., 10., 11.])}),
+        })
+    merged = data_windows.concatenate_tick_windows(["2026-01-01", "2026-01-02"], windows)
+    expected = np.array([start - 1000, start, start + 1000, start + day_ms, start + day_ms + 1000])
+    np.testing.assert_array_equal(merged["var_ts_ms"], expected)
+    np.testing.assert_array_equal(merged["bbo_data"].ts_ms, expected)
+    np.testing.assert_array_equal(merged["ml_data"][0], expected)
+    np.testing.assert_array_equal(merged["ml_data"][1]["feature"], [9, 10, 11, 10, 11])
+    assert len(merged["trades"]) == 4
+    assert len(windows[1]["var_ts_ms"]) == 3  # inputs not mutated
+
+
+@pytest.mark.parametrize("days", [[], ["2026-01-02", "2026-01-01"],
+                                 ["2026-01-01", "2026-01-03"]])
+def test_contiguous_window_rejects_missing_or_reversed_days(days):
+    with pytest.raises(ValueError, match="contiguous"):
+        data_windows.concatenate_tick_windows(days, [{} for _ in days])
+
+
 def test_manifest_backed_quality_days_reach_every_window_loader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

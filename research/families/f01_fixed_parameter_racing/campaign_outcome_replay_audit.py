@@ -51,6 +51,7 @@ from models.exchange_book_replay import (  # noqa: E402
     CryptoHFTExchangeBookTape,
     build_configured_cooldown_policy_adapter,
 )
+from models.replay.continuous_accounting import funding_cashflow_usdc  # noqa: E402
 from models.replay_contract import (  # noqa: E402
     DEFAULT_LATENCY_ENVIRONMENT,
     configure_fixed_latency_distribution,
@@ -83,6 +84,23 @@ from strategy.campaign_repair import CampaignRepairModel  # noqa: E402
 
 def _normalize_days(days: list[str]) -> list[str]:
     return smoke._normalize_days(days)
+
+
+def _load_funding_history(path: Path, *, symbol: str) -> list[dict[str, Any]]:
+    """Read a frozen public funding-rate response; never fetch during replay."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError("funding history must be a list of settlement records")
+    last_ms = -1
+    for row in payload:
+        if row["symbol"] != symbol:
+            raise ValueError("funding history symbol differs from replay symbol")
+        ms = int(row["fundingTime"])
+        if ms <= last_ms:
+            raise ValueError("funding timestamps must be unique and strictly increasing")
+        funding_cashflow_usdc(0, row["markPrice"], row["fundingRate"])
+        last_ms = ms
+    return payload
 
 
 def _apply_runtime_timing_samples(
@@ -905,18 +923,61 @@ def _fills_to_trade_rows(
     day_start_ts: float = 0.0,
     terminal_ts: float | None = None,
     terminal_mark_price: float | None = None,
+    funding_events: list[dict[str, Any]] | None = None,
+    funding_trace: list[dict[str, Any]] | None = None,
 ) -> list[TradeRow]:
     """Reconstruct a minimal replay trade ledger from fill trace rows.
 
     Use execution price and signed commission, not the triggering public trade
     price. Cross-zero executions produce closing/opening economic legs. This
-    fill-marked ledger is not a funding ledger or a continuous market-MTM path.
+    Funding uses physical fill timestamps, not callback visibility. Settlement
+    precedes equal-ms fills (an explicit model convention, not exchange truth).
+    This fill/settlement-marked ledger is not a continuous market-MTM path.
     An explicit completed-window mark values residual inventory without a fill.
     """
     rows: list[TradeRow] = []
     q = float(initial_inventory or 0.0)
     entry = float(initial_entry_price or 0.0)
     cash = -q * entry if abs(q) > 1e-12 and entry > 0.0 else 0.0
+    settlements = list(funding_events or [])
+    settlement_index = 0
+    previous_funding_ms = -1
+    for event in settlements:
+        funding_ms = int(event["fundingTime"])
+        if funding_ms <= previous_funding_ms:
+            raise ValueError("funding timestamps must be unique and strictly increasing")
+        previous_funding_ms = funding_ms
+        funding_cashflow_usdc(0, event["markPrice"], event["fundingRate"])
+        if (funding_ms < day_start_ts * 1000 or terminal_ts is None
+                or funding_ms > terminal_ts * 1000):
+            raise ValueError("funding settlement is outside the explicit replay window")
+    ordered_fills = _ordered_fill_trace(fill_trace)
+    fill_counts_by_ms = Counter(
+        round(ts if ts > 10_000_000_000 else ts * 1000)
+        for row in ordered_fills for ts in [safe_float(row, "fill_ts")]
+    )
+
+    def apply_funding_through(ts_ms: int) -> None:
+        nonlocal cash, settlement_index
+        while (settlement_index < len(settlements)
+               and int(settlements[settlement_index]["fundingTime"]) <= ts_ms):
+            event = settlements[settlement_index]
+            settlement_index += 1
+            ms = int(event["fundingTime"])
+            mark, rate = float(event["markPrice"]), float(event["fundingRate"])
+            payment = funding_cashflow_usdc(q, mark, rate)
+            cash += payment
+            rows.append(TradeRow(
+                ts=ms / 1000, side="FUNDING", trade_type="SYNC_ADJUST", qty=0.0,
+                price=mark, position=q, realized_pnl=cash, unrealized_pnl=q * mark,
+            ))
+            if funding_trace is not None:
+                funding_trace.append({
+                    "funding_ts_ms": ms, "position_btc": q, "mark_price": mark,
+                    "funding_rate": rate, "funding_cashflow_usdc": payment,
+                    "same_ms_fill_count": fill_counts_by_ms[ms],
+                    "same_ms_ordering": "settlement_before_equal_ms_fills",
+                })
     if abs(q) > 1e-12 and day_start_ts > 0.0:
         rows.append(
             TradeRow(
@@ -930,7 +991,7 @@ def _fills_to_trade_rows(
                 unrealized_pnl=q * entry,
             )
         )
-    for raw in _ordered_fill_trace(fill_trace):
+    for raw in ordered_fills:
         side = norm_side(raw.get("side", ""))
         qty = safe_float(raw, "fill_qty", safe_float(raw, "quantity", 0.0))
         px = safe_float(
@@ -940,6 +1001,7 @@ def _fills_to_trade_rows(
         ts = ts_raw / 1000.0 if ts_raw > 10_000_000_000 else ts_raw
         if side not in {"BUY", "SELL"} or qty <= 0.0 or px <= 0.0 or ts <= 0.0:
             continue
+        apply_funding_through(round(ts * 1000))
         fee = float(raw.get("fill_fee_usdc", 0.0))
         if not math.isfinite(fee):
             raise ValueError("fill_fee_usdc must be finite")
@@ -970,6 +1032,7 @@ def _fills_to_trade_rows(
             or terminal_ts < (rows[-1].ts if rows else day_start_ts)
         ):
             raise ValueError("terminal mark has invalid time or price")
+        apply_funding_through(round(terminal_ts * 1000))
         rows.append(TradeRow(
             ts=terminal_ts, side="MARK", trade_type="SYNC_ADJUST", qty=0.0,
             price=terminal_mark_price, position=q, realized_pnl=cash,
@@ -1488,6 +1551,17 @@ def _rollup(daily: pd.DataFrame) -> pd.DataFrame:
             "arm": arm,
             "group": str(grp["group"].iloc[0]),
             "n_days": int(len(grp)),
+            "observation_unit": (
+                "continuous_segment"
+                if "accounting_window" in grp
+                and grp["accounting_window"].eq("continuous_segment").any()
+                else "utc_day"
+            ),
+            "covered_utc_days": int(sum_col("window_day_count"))
+            if "window_day_count" in grp else int(len(grp)),
+            "funding_cashflow_usdc": sum_col("funding_cashflow_usdc"),
+            "replay_net_pnl_sum": sum_col("replay_net_pnl")
+            if "replay_net_pnl" in grp else sum_col("replay_pnl"),
             "campaigns": int(pd.to_numeric(grp["campaigns"], errors="coerce").sum()),
             "closed_campaigns": int(pd.to_numeric(grp["closed_campaigns"], errors="coerce").sum()),
             "loss_tail": int(pd.to_numeric(grp["loss_tail"], errors="coerce").sum()),
@@ -1979,6 +2053,8 @@ def _run_day_campaign_audit(
     native_exchange_book_warmup_hours: int = 24,
     runtime_compute_calibration: dict[str, Any] | None = None,
     runtime_compute_clock: str | None = None,
+    funding_events: list[dict[str, Any]] | None = None,
+    continuous_days: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -1986,6 +2062,15 @@ def _run_day_campaign_audit(
     并行能让每个 worker 只加载一次窗口，然后顺序跑该日所有 arms；这比按
     arm 并行更少重复读 cache/parquet，也更容易保持 daily fresh-start 语义。
     """
+    source_days = continuous_days or [day]
+    if continuous_days:
+        if day != continuous_days[0] or historical_global_flow_root:
+            raise ValueError("continuous segment needs its first day and no unmerged flow input")
+        base = dict(base)
+        base["replay_event_clock_start_ts_ms"] = int(_day_start_ts(day) * 1000)
+        base["replay_event_clock_end_ts_ms"] = int(
+            (_day_start_ts(source_days[-1]) + 86400) * 1000 - 1
+        )
     if runtime_compute_clock is not None:
         if runtime_compute_calibration is None:
             raise ValueError("runtime compute requires the already-loaded timing calibration")
@@ -2029,7 +2114,11 @@ def _run_day_campaign_audit(
             market_context_warmup_days,
         )
         if key not in window_cache:
-            window_cache[key] = smoke._load_window(day, params)
+            windows = [smoke._load_window(source_day, params) for source_day in source_days]
+            window_cache[key] = (
+                data_windows.concatenate_tick_windows(source_days, windows)
+                if continuous_days else windows[0]
+            )
         return window_cache[key]
 
     window = _window_for_params(base)
@@ -2038,7 +2127,19 @@ def _run_day_campaign_audit(
     if execution_message_profile:
         if market_data_latency_profile_payload is None or market_data_latency_mode != "profile_empirical":
             raise ValueError("execution message delivery requires the paired empirical profile")
-        parent_trades, parent_source_identity = data_windows.load_replay_aggregate_parents(day, base)
+        parent_parts, parent_source_identity = [], []
+        for source_day in source_days:
+            frame, identities = data_windows.load_replay_aggregate_parents(source_day, base)
+            parent_parts.append(frame)
+            parent_source_identity.extend(identities)
+        parent_trades = parent_parts[0]
+        if len(parent_parts) > 1:
+            parent_trades = pd.concat(parent_parts, ignore_index=True).drop_duplicates(
+                "agg_trade_id"
+            )
+            parent_source_identity = list(
+                {row["path"]: row for row in parent_source_identity}.values()
+            )
     campaign_rows_all: list[dict[str, Any]] = []
     label_rows_all: list[dict[str, Any]] = []
     daily_rows: list[dict[str, Any]] = []
@@ -2047,6 +2148,7 @@ def _run_day_campaign_audit(
     post_fill_quote_response_rows: list[dict[str, Any]] = []
     quote_trace_rows: list[dict[str, Any]] = []
     fill_trace_rows: list[dict[str, Any]] = []
+    funding_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
     campaign_repair_model = (
         CampaignRepairModel.from_dict(campaign_repair_model_payload)
@@ -2077,6 +2179,7 @@ def _run_day_campaign_audit(
             symbol=symbol,
             tick_size=float(base.get("tick_size", 0.1) or 0.1),
             warmup_hours=max(0, int(native_exchange_book_warmup_hours)),
+            continuation_hours=24 * (len(source_days) - 1),
             strict_complete=native_exchange_book_mode == "strict",
         )
         native_exchange_book_identity = native_exchange_book_tape.identity(
@@ -2248,11 +2351,14 @@ def _run_day_campaign_audit(
             )
         initial_inventory = float(params.get("initial_inventory", 0.0) or 0.0)
         initial_entry_price = float(params.get("initial_entry_price", 0.0) or 0.0)
+        arm_funding_trace: list[dict[str, Any]] = []
         trades = _fills_to_trade_rows(
             fill_trace,
             initial_inventory=initial_inventory,
             initial_entry_price=initial_entry_price,
             day_start_ts=_day_start_ts(day),
+            funding_events=funding_events,
+            funding_trace=arm_funding_trace,
             **({
                 "terminal_ts": float(params.get(
                     "replay_event_clock_end_ts_ms", (_day_start_ts(day) + 86400) * 1000,
@@ -2278,6 +2384,22 @@ def _run_day_campaign_audit(
             initial_inventory=initial_inventory,
             initial_entry_price=initial_entry_price,
         )
+        funding_value = sum(row["funding_cashflow_usdc"] for row in arm_funding_trace)
+        daily.update({
+            "accounting_window": (
+                "continuous_segment" if continuous_days else "daily_fresh_start"
+            ),
+            "window_end_day": source_days[-1],
+            "window_day_count": len(source_days),
+            "funding_mode": "frozen_settlement_tape" if funding_events is not None else "unmodeled",
+            "funding_cashflow_usdc": funding_value,
+            "replay_net_pnl": daily["replay_pnl"] + funding_value,
+            "funding_risk_feedback": "not_applied_current_live_uses_trading_pnl",
+            "funding_same_ms_fill_count": sum(row["same_ms_fill_count"] for row in arm_funding_trace),
+        })
+        funding_trace_rows.extend(
+            {"day": day, "arm": arm.name, **row} for row in arm_funding_trace
+        )
         daily_rows.append(daily)
         logs.append(
             f"      campaigns={daily['campaigns']} tail={daily['loss_tail']} "
@@ -2298,6 +2420,7 @@ def _run_day_campaign_audit(
         "post_fill_quote_response_rows": post_fill_quote_response_rows,
         "quote_trace_rows": quote_trace_rows,
         "fill_trace_rows": fill_trace_rows,
+        "funding_trace_rows": funding_trace_rows,
         "decision_trace_rows": decision_trace_rows,
         "native_exchange_book_identity": native_exchange_book_identity,
         "logs": logs,
@@ -2330,6 +2453,14 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument("--days", nargs="+", required=True)
+    parser.add_argument(
+        "--continuous", action="store_true",
+        help="Run contiguous --days in one state machine, without midnight strategy resets",
+    )
+    parser.add_argument(
+        "--funding-history", type=Path,
+        help="Frozen Binance fundingRate JSON; book settlement on each arm's physical inventory",
+    )
     parser.add_argument("--arms", nargs="+", default=[])
     parser.add_argument(
         "--arm-spec-json",
@@ -2809,6 +2940,13 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.continuous:
+        if args.workers != 1 or args.engine != "python" or args.arm_chunk_size:
+            raise SystemExit(
+                "--continuous currently requires --workers 1 --engine python, no chunks"
+            )
+        if args.initial_state_trades_csv or args.initial_live_state_json:
+            raise SystemExit("--continuous does not accept per-day initial state artifacts")
     if args.replay_locator_projection is not None and (
         args.replay_purpose != "diagnostic" or args.config is None
     ):
@@ -2871,6 +3009,22 @@ def main(argv: list[str] | None = None) -> None:
 
     bt.configure_symbol(args.symbol)
     days = _normalize_days(args.days)
+    if args.continuous:
+        stamps = [_day_start_ts(day) for day in days]
+        if any(b - a != 86400 for a, b in zip(stamps, stamps[1:], strict=False)):
+            raise SystemExit(
+                "--continuous requires contiguous UTC days; do not bridge missing days"
+            )
+    funding_history = (
+        _load_funding_history(args.funding_history.expanduser(), symbol=args.symbol)
+        if args.funding_history is not None else None
+    )
+    funding_by_day = {
+        day: [row for row in funding_history
+              if _day_start_ts(day) * 1000 <= int(row["fundingTime"])
+              < (_day_start_ts(day) + 86400) * 1000]
+        for day in days
+    } if funding_history is not None else {}
     arms_by_name = _arm_map()
     for arm in _load_arm_spec_json(args.arm_spec_json):
         arms_by_name[arm.name] = arm
@@ -3390,6 +3544,7 @@ def main(argv: list[str] | None = None) -> None:
     fill_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
     native_exchange_book_identities: dict[str, dict[str, Any]] = {}
+    funding_trace_rows: list[dict[str, Any]] = []
     out_dir = Path(os.environ.get("MM_RESULTS_DIR", str(bt.RESULTS_DIR))).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"campaign_outcome_replay_{args.tag}_{args.symbol.lower()}"
@@ -3423,6 +3578,7 @@ def main(argv: list[str] | None = None) -> None:
         post_fill_quote_response_rows.extend(day_result.get("post_fill_quote_response_rows", []))
         quote_trace_rows.extend(day_result.get("quote_trace_rows", []))
         fill_trace_rows.extend(day_result.get("fill_trace_rows", []))
+        funding_trace_rows.extend(day_result.get("funding_trace_rows", []))
         decision_trace_rows.extend(day_result.get("decision_trace_rows", []))
         identity = day_result.get("native_exchange_book_identity") or {}
         if identity:
@@ -3431,7 +3587,7 @@ def main(argv: list[str] | None = None) -> None:
     workers = max(1, int(args.workers or 1))
     arm_chunk_size = max(0, int(args.arm_chunk_size or 0))
     if workers <= 1:
-        for day in days:
+        for day in (days[:1] if args.continuous else days):
             day_initial = initial_states.get(
                 day, {"initial_inventory": 0.0, "initial_entry_price": 0.0}
             )
@@ -3439,6 +3595,12 @@ def main(argv: list[str] | None = None) -> None:
                 _run_day_campaign_audit(
                     day=day,
                     symbol=args.symbol,
+                    funding_events=(
+                        [row for source_day in days for row in funding_by_day[source_day]]
+                        if args.continuous and funding_history is not None
+                        else funding_by_day.get(day)
+                    ),
+                    continuous_days=days if args.continuous else None,
                     base=base,
                     arms=arms,
                     engine=args.engine,
@@ -3524,6 +3686,7 @@ def main(argv: list[str] | None = None) -> None:
                     _run_day_campaign_audit,
                     day=task["day"],
                     symbol=args.symbol,
+                    funding_events=funding_by_day.get(task["day"]),
                     base=base,
                     arms=task["arms"],
                     engine=args.engine,
@@ -3588,6 +3751,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     pd.DataFrame(campaign_rows_all).to_csv(campaigns_path, index=False)
     daily_df.to_csv(daily_path, index=False)
+    if funding_history is not None:
+        pd.DataFrame(funding_trace_rows).to_csv(out_dir / f"{stem}.funding.csv", index=False)
     rollup_df.to_csv(rollup_path, index=False)
     pd.DataFrame(adaptive_hit_rows).to_csv(adaptive_hits_path, index=False)
     pd.DataFrame(campaign_repair_rows).to_csv(campaign_repair_path, index=False)
@@ -3652,6 +3817,15 @@ def main(argv: list[str] | None = None) -> None:
         "replay_evidence_scope": str(base.get("replay_evidence_scope", "legacy_replay_diagnostic")),
         "runtime_timing_calibration": reported_timing_calibration,
         "runtime_compute_clock": args.runtime_compute_clock,
+        "accounting_window": "continuous_segment" if args.continuous else "daily_fresh_start",
+        "funding_history": {
+            "path": str(args.funding_history) if args.funding_history else "",
+            "sha256": _sha256(args.funding_history) if args.funding_history else "",
+            "settlement_count": len(funding_history) if funding_history is not None else None,
+            "mode": "frozen_settlement_tape" if funding_history is not None else "unmodeled",
+            "risk_feedback": "not_applied_current_live_uses_trading_pnl",
+            "same_ms_ordering": "settlement_before_equal_ms_fills",
+        },
         **({
             "economic_pnl_complete": False,
             "economic_pnl_incomplete_day_arms": [

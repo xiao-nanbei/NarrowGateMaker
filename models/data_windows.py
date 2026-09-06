@@ -1450,6 +1450,91 @@ def load_tick_window_dict(day: str, params: dict[str, Any], **kwargs: Any) -> di
     return load_tick_window(day, params, **kwargs).to_dict()
 
 
+def concatenate_tick_windows(days: list[str], windows: list[dict[str, Any]]) -> dict[str, Any]:
+    """One contiguous market window; no strategy state is serialized at midnight.
+
+    Keep the first day's causal pre-roll. Later windows contribute only their
+    own UTC slice, so their duplicated warmup cannot reset or repeat inputs.
+    """
+    from models.replay.narrowgate_continuous_tick_adapter import (
+        _concat_ml_payloads,
+        _concat_timed_payloads,
+    )
+
+    starts = [int(pd.Timestamp(day, tz="UTC").value // 1_000_000) for day in days]
+    if (not starts or len(starts) != len(windows)
+            or any(b - a != 86_400_000 for a, b in zip(starts, starts[1:], strict=False))):
+        raise ValueError("continuous replay requires ordered, contiguous UTC days")
+    out = dict(windows[0])
+    for name in ("reference_event_tapes", "campaign_repair_data", "campaign_repair_model",
+                 "historical_global_flow_data"):
+        if any(window.get(name) is not None for window in windows):
+            raise ValueError(f"continuous window concatenation does not yet support {name}")
+    for name in ("execution_trade_source", "toxicity_horizon_s", "book_source_authority",
+                 "book_dataset_version", "formal_lifecycle_replay_eligible",
+                 "provider_sensitivity_replay_eligible", "exact_queue_policy_eligible"):
+        if any(window.get(name) != out.get(name) for window in windows):
+            raise ValueError(f"continuous windows disagree on {name}")
+
+    def mask_for(ts, index):
+        clock = np.asarray(ts)
+        return ((clock < starts[index] + 86_400_000)
+                & (True if index == 0 else clock >= starts[index]))
+
+    frames = []
+    variance = {name: [] for name in ("var_ts_ms", "var_ssq", "var_ti", "var_retsq")}
+    history = {name: [] for name in ("bbo_data", "l2_data", "ml_data")}
+    for index, window in enumerate(windows):
+        frame = window["trades"]
+        ts = frame["transact_time"]
+        frame = frame.loc[(ts >= starts[index]) & (ts < starts[index] + 86_400_000)]
+        if frame.empty:
+            raise ValueError(f"continuous replay has no execution trades on {days[index]}")
+        frames.append(frame)
+        mask = mask_for(window["var_ts_ms"], index)
+        for name in variance:
+            value = window.get(name)
+            variance[name].append(None if value is None else np.asarray(value)[mask])
+        for name in history:
+            payload = window.get(name)
+            if payload is None:
+                history[name].append(None)
+                continue
+            clock = payload[0] if name == "ml_data" else payload.ts_ms
+            mask = mask_for(clock, index)
+            if name == "ml_data":
+                history[name].append(tuple(
+                    {key: np.asarray(value)[mask] for key, value in item.items()}
+                    if isinstance(item, dict) else np.asarray(item)[mask]
+                    for item in payload
+                ))
+            elif name == "bbo_data":
+                history[name].append(HistoricalBBOData(
+                    payload.ts_ms[mask], payload.best_bid[mask], payload.best_ask[mask],
+                    payload.bid_qty[mask], payload.ask_qty[mask], payload.source,
+                ))
+            else:
+                history[name].append(HistoricalL2Data(
+                    payload.ts_ms[mask], payload.bid_px[mask], payload.bid_qty[mask],
+                    payload.ask_px[mask], payload.ask_qty[mask], payload.source,
+                ))
+    out["trades"] = pd.concat(frames, ignore_index=True)
+    for name, values in {**variance, **history}.items():
+        if any(value is None for value in values):
+            if not all(value is None for value in values):
+                raise ValueError(f"continuous window is missing {name} on only some days")
+            out[name] = None
+        elif name == "ml_data":
+            out[name] = _concat_ml_payloads(values)
+        elif name in history:
+            out[name] = _concat_timed_payloads(values)
+        else:
+            out[name] = np.concatenate(values)
+    out["ml_cache"] = {}
+    out["continuous_source_days"] = list(days)
+    return out
+
+
 def parse_bound(value: str | None, *, is_end: bool) -> int | None:
     if not value:
         return None

@@ -9,6 +9,7 @@ from models.replay.continuous_accounting import (
     CAMPAIGN_ACCOUNTING_SEMANTICS,
     FEE_ACCOUNTING_SEMANTICS,
     ContinuousAccountingLedger,
+    funding_cashflow_usdc,
 )
 from models.replay.replay_state_checkpoint import ContinuousReplayState
 
@@ -32,6 +33,61 @@ def _ledger() -> ContinuousAccountingLedger:
             cumulative_pnl_usdc=0.0,
         )
     )
+
+
+@pytest.mark.parametrize("q,rate,expected", [(2, .001, -.2), (-2, .001, .2),
+                                           (2, -.001, .2), (0, .001, 0)])
+def test_signed_funding_cashflow(q, rate, expected):
+    assert funding_cashflow_usdc(q, 100, rate) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("q,mark,rate", [(float("nan"), 100, .01), (1, 0, .01),
+                                        (1, 100, float("inf")), (1e308, 1e308, 1)])
+def test_funding_rejects_invalid_inputs(q, mark, rate):
+    with pytest.raises(ValueError):
+        funding_cashflow_usdc(q, mark, rate)
+
+
+def test_funding_survives_midnight_checkpoint_and_enters_campaign_value():
+    ledger = _ledger()
+    ledger.fill(ts_ms=_ts(1) + 1, side="BUY", quantity_btc=1, price=100,
+                new_campaign_id="long-1")
+    ledger.funding(ts_ms=_ts(1) + 2, mark_price=110, funding_rate=.01)
+    assert ledger.state.position_btc == 1
+    assert ledger.state.cumulative_realized_pnl_usdc == 0
+    assert ledger.state.cumulative_fees_usdc == 0
+    assert ledger.state.cumulative_funding_usdc == pytest.approx(-1.1)
+    first = ledger.close_utc_day(day_end_ts_ms=_ts(2), mark_price=105)
+    assert first.pnl_usdc == pytest.approx(3.9)
+    restored = ContinuousReplayState.from_dict(ledger.state.to_dict())
+    assert restored == ledger.state
+    ledger.funding(ts_ms=_ts(2), mark_price=105, funding_rate=-.01)
+    ledger.fill(ts_ms=_ts(2) + 1, side="SELL", quantity_btc=1, price=110)
+    second = ledger.close_utc_day(day_end_ts_ms=_ts(3), mark_price=110)
+    assert first.pnl_usdc + second.pnl_usdc == pytest.approx(9.95)
+    assert ledger.closed_campaigns[0].value_usdc == pytest.approx(9.95)
+    assert ledger.accounting_audit()["cumulative_funding_usdc"] == pytest.approx(-.05)
+
+
+def test_funding_duplicate_and_invalid_settlement_cannot_mutate_state():
+    ledger = _ledger()
+    ts = _ts(1) + 1
+    ledger.funding(ts_ms=ts, mark_price=100, funding_rate=.01)
+    before = ledger.state
+    for args in ({"ts_ms": ts, "mark_price": 100, "funding_rate": .01},
+                 {"ts_ms": ts - 1, "mark_price": 100, "funding_rate": .01},
+                 {"ts_ms": ts + 1, "mark_price": 0, "funding_rate": .01}):
+        with pytest.raises(ValueError):
+            ledger.funding(**args)
+        assert ledger.state == before
+
+
+def test_old_checkpoint_defaults_to_no_recorded_funding():
+    payload = _ledger().state.to_dict()
+    del payload["cumulative_funding_usdc"], payload["last_funding_ts_ms"]
+    restored = ContinuousReplayState.from_dict(payload)
+    assert restored.cumulative_funding_usdc == 0
+    assert restored.last_funding_ts_ms == -1
 
 
 def test_daily_slices_add_to_continuous_pnl_without_midnight_flatten() -> None:

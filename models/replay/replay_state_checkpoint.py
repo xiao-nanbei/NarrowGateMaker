@@ -166,6 +166,8 @@ class ContinuousReplayState:
     feature_warmup_ready: bool = False
     quoting_enabled: bool = False
     runtime_reset_fields: tuple[str, ...] = ()
+    cumulative_funding_usdc: float = 0.0
+    last_funding_ts_ms: int = -1
     schema_version: str = SCHEMA_VERSION
 
     @property
@@ -198,11 +200,14 @@ class ContinuousReplayState:
             self.equity_anchor_usdc,
             self.last_mark_price,
             self.cumulative_pnl_usdc,
+            self.cumulative_funding_usdc,
         )
         if any(not math.isfinite(value) for value in numeric):
             raise ValueError("continuous replay state contains a non-finite value")
         if self.last_mark_price <= 0:
             raise ValueError("continuous replay mark price must be positive")
+        if not -1 <= self.last_funding_ts_ms <= self.checkpoint_ts_ms:
+            raise ValueError("funding timestamp must be absent or not later than the checkpoint")
         # Signed transaction costs: positive is a fee paid; negative is an
         # exchange rebate received.  Finiteness is enforced by ``numeric``.
         if abs(self.position_btc) <= _EPS:
@@ -306,6 +311,8 @@ class ContinuousReplayState:
             feature_warmup_ready=bool(payload.get("feature_warmup_ready", False)),
             quoting_enabled=bool(payload.get("quoting_enabled", False)),
             runtime_reset_fields=tuple(payload.get("runtime_reset_fields", ())),
+            cumulative_funding_usdc=float(payload.get("cumulative_funding_usdc", 0.0)),
+            last_funding_ts_ms=int(payload.get("last_funding_ts_ms", -1)),
             schema_version=str(payload.get("schema_version", "")),
         )
         state.validate()

@@ -15,7 +15,19 @@ from .replay_state_checkpoint import (
 SCHEMA_VERSION = "continuous_accounting_contract.v2"
 CAMPAIGN_ACCOUNTING_SEMANTICS = "zero_boundary_flip_fee_split_v2"
 FEE_ACCOUNTING_SEMANTICS = "signed_fee_positive_cost_negative_rebate_v2"
+FUNDING_ACCOUNTING_SEMANTICS = "signed_position_times_settlement_mark_rate_v1"
 _EPS = 1e-10
+
+
+def funding_cashflow_usdc(position_btc: float, mark_price: float, funding_rate: float) -> float:
+    """Positive rates debit longs and credit shorts in a linear settled contract."""
+    q, mark, rate = float(position_btc), float(mark_price), float(funding_rate)
+    if not all(math.isfinite(value) for value in (q, mark, rate)) or mark <= 0:
+        raise ValueError("funding requires finite position/rate and a positive finite mark")
+    cashflow = -q * mark * rate
+    if not math.isfinite(cashflow):
+        raise ValueError("funding cashflow overflowed")
+    return cashflow
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,34 @@ class ContinuousAccountingLedger:
             raise ValueError("planned restart timestamp moved backward")
         self._state = self._state.for_planned_restart(int(ts_ms))
         return self._state
+
+    def funding(
+        self, *, ts_ms: int, mark_price: float, funding_rate: float
+    ) -> ContinuousReplayState:
+        """Book settlement once, without a fill, inventory reset or new campaign.
+
+        Callers use exchange-effective inventory at the frozen settlement time,
+        not delayed private-callback inventory. Equal-ms fill ordering belongs
+        to the caller's explicit execution model.
+        """
+        ts = int(ts_ms)
+        before = self._state
+        if ts < before.checkpoint_ts_ms:
+            raise ValueError("funding timestamp moved backward")
+        if ts <= before.last_funding_ts_ms:
+            raise ValueError("funding settlement was already applied or is out of order")
+        payment = funding_cashflow_usdc(before.position_btc, mark_price, funding_rate)
+        state = replace(
+            before,
+            checkpoint_ts_ms=ts,
+            cash_usdc=before.cash_usdc + payment,
+            cumulative_funding_usdc=before.cumulative_funding_usdc + payment,
+            last_funding_ts_ms=ts,
+            cumulative_pnl_usdc=before.cumulative_pnl_usdc + payment,
+        )
+        state.validate()
+        self._state = state
+        return state
 
     def resume_after_warmup(
         self,
@@ -298,6 +338,8 @@ class ContinuousAccountingLedger:
             "schema_version": f"{SCHEMA_VERSION}.audit",
             "campaign_accounting_semantics": CAMPAIGN_ACCOUNTING_SEMANTICS,
             "fee_accounting_semantics": FEE_ACCOUNTING_SEMANTICS,
+            "funding_accounting_semantics": FUNDING_ACCOUNTING_SEMANTICS,
+            "cumulative_funding_usdc": self._state.cumulative_funding_usdc,
             "daily_slice_count": len(self.daily_slices),
             "closed_daily_pnl_sum_usdc": daily_sum,
             "closed_daily_equity_change_usdc": closed_days_pnl,

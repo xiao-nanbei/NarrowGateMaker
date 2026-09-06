@@ -66,6 +66,103 @@ def test_campaign_audit_rejects_disabled_fill_trace():
         )
 
 
+def test_campaign_funding_uses_exchange_fill_time_and_preserves_trade_count():
+    start_ms = 1_780_000_000_000
+    trace = [
+        {"fill_sequence": 0, "fill_ts": start_ms + 10, "side": "BUY",
+         "fill_qty": 1, "quote_px": 100, "fill_fee_usdc": 0,
+         "private_fill_visible_ts_ms": start_ms + 500},
+        {"fill_sequence": 1, "fill_ts": start_ms + 30, "side": "SELL",
+         "fill_qty": 1, "quote_px": 110, "fill_fee_usdc": 0},
+    ]
+    funding = [{"fundingTime": start_ms + 20, "markPrice": "105", "fundingRate": ".01"}]
+    payments = []
+    rows = campaign_audit._fills_to_trade_rows(
+        trace, day_start_ts=start_ms / 1000, terminal_ts=(start_ms + 1000) / 1000,
+        terminal_mark_price=110, funding_events=funding, funding_trace=payments,
+    )
+    assert payments[0]["position_btc"] == 1
+    assert payments[0]["funding_cashflow_usdc"] == pytest.approx(-1.05)
+    assert sum(row.trade_type == "FILL" for row in rows) == 2
+    assert rows[-1].realized_pnl + rows[-1].unrealized_pnl == pytest.approx(8.95)
+    labels = campaign_audit.campaign_label_rows(campaign_audit.build_campaigns(rows))
+    assert sum(float(row["final_total_pnl_delta"]) for row in labels) == pytest.approx(8.95)
+
+
+def test_campaign_funding_equal_ms_is_explicit_and_empty_fills_still_settle():
+    ms = 1_780_000_000_000
+    payment = {"fundingTime": ms, "markPrice": "100", "fundingRate": ".01"}
+    trace = []
+    rows = campaign_audit._fills_to_trade_rows(
+        [{"fill_sequence": 0, "fill_ts": ms, "side": "BUY", "fill_qty": 1, "quote_px": 100}],
+        day_start_ts=ms / 1000, terminal_ts=ms / 1000 + 1,
+        terminal_mark_price=100, funding_events=[payment], funding_trace=trace,
+    )
+    assert trace[0]["funding_cashflow_usdc"] == 0
+    assert trace[0]["same_ms_fill_count"] == 1
+    assert rows[-1].position == 1
+    rows = campaign_audit._fills_to_trade_rows(
+        [], initial_inventory=-1, initial_entry_price=100,
+        day_start_ts=ms / 1000, terminal_ts=ms / 1000 + 1,
+        terminal_mark_price=100, funding_events=[payment],
+    )
+    assert rows[-1].realized_pnl + rows[-1].unrealized_pnl == pytest.approx(1)
+
+
+@pytest.mark.parametrize("change", ["duplicate", "symbol", "mark"])
+def test_funding_history_rejects_invalid_records(tmp_path, change):
+    row = {"symbol": "BTCUSDC", "fundingTime": 100, "markPrice": 100, "fundingRate": .01}
+    rows = [row, dict(row)] if change == "duplicate" else [row]
+    if change == "symbol":
+        row["symbol"] = "BTCUSDT"
+    if change == "mark":
+        row["markPrice"] = 0
+    path = tmp_path / "funding.json"
+    path.write_text(json.dumps(rows))
+    with pytest.raises(ValueError):
+        campaign_audit._load_funding_history(path, symbol="BTCUSDC")
+
+
+def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatch):
+    days = ["2026-01-01", "2026-01-02"]
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    windows = []
+
+    def load(day, params):
+        ms = int(campaign_audit._day_start_ts(day) * 1000)
+        window = {"trades": pd.DataFrame({"transact_time": [ms], "price": [100.]}),
+                  "var_ts_ms": np.array([ms]), "var_ssq": np.array([1.]),
+                  "var_ti": None, "var_retsq": None, "bbo_data": None,
+                  "l2_data": None, "ml_data": None}
+        windows.append(window)
+        return window
+
+    calls = []
+
+    def simulate(engine, trades, var_ts, var_ssq, params, **kwargs):
+        calls.append((trades, params))
+        return {"pnl": 3., "_fill_trace": []}
+
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", load)
+    monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
+    monkeypatch.setattr(campaign_audit, "build_configured_cooldown_policy_adapter",
+                        lambda **_kw: None)
+    arms = [campaign_audit.smoke.SmokeArm(name, "test", {}, "") for name in ("B", "E")]
+    result = campaign_audit._run_day_campaign_audit(
+        day=days[0], continuous_days=days, symbol="BTCUSDC", base={}, arms=arms,
+        engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
+    )
+    assert len(windows) == 2  # shared market data; no per-arm reload
+    assert len(calls) == 2  # not four independent daily simulations
+    assert calls[0][0] is calls[1][0]
+    assert calls[0][1] is not calls[1][1]
+    assert calls[0][1]["replay_event_clock_end_ts_ms"] == int(
+        (campaign_audit._day_start_ts(days[-1]) + 86400) * 1000 - 1
+    )
+    assert all(row["window_day_count"] == 2 for row in result["daily_rows"])
+    assert all(row["accounting_window"] == "continuous_segment" for row in result["daily_rows"])
+
+
 @pytest.mark.parametrize("opening_fee", [0.1, -0.1, 0.0])
 def test_campaign_ledger_uses_execution_price_and_both_signed_fees(opening_fee):
     fills = [
