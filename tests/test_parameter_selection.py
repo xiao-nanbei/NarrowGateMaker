@@ -130,6 +130,8 @@ def test_continuous_campaign_runner_invokes_one_state_machine_per_arm(monkeypatc
 
     def load(day, params):
         ms = int(campaign_audit._day_start_ts(day) * 1000)
+        assert params["replay_event_clock_start_ts_ms"] == ms
+        assert params["replay_event_clock_end_ts_ms"] == ms + 86_400_000 - 1
         window = {"trades": pd.DataFrame({"transact_time": [ms], "price": [100.]}),
                   "var_ts_ms": np.array([ms]), "var_ssq": np.array([1.]),
                   "var_ti": None, "var_retsq": None, "bbo_data": None,

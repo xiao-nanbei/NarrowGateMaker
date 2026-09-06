@@ -2114,7 +2114,18 @@ def _run_day_campaign_audit(
             market_context_warmup_days,
         )
         if key not in window_cache:
-            windows = [smoke._load_window(source_day, params) for source_day in source_days]
+            windows = []
+            for source_day in source_days:
+                input_params = params
+                if continuous_days:
+                    # Loading is still daily; only execution owns the full
+                    # segment clock. Do not pass multi-day bounds into a
+                    # single-day prediction cache or change its pre-roll.
+                    input_params = dict(params)
+                    input_start_ms = int(_day_start_ts(source_day) * 1000)
+                    input_params["replay_event_clock_start_ts_ms"] = input_start_ms
+                    input_params["replay_event_clock_end_ts_ms"] = input_start_ms + 86_400_000 - 1
+                windows.append(smoke._load_window(source_day, input_params))
             window_cache[key] = (
                 data_windows.concatenate_tick_windows(source_days, windows)
                 if continuous_days else windows[0]
