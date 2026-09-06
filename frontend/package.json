@@ -11,7 +11,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "node scripts/build.mjs",
     "lint": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/traceSeries.test.mjs",
+    "test": "node --experimental-strip-types --test src/*.test.mjs",
     "format": "prettier --write src scripts vite.config.ts *.json *.md",
     "format:check": "prettier --check src scripts vite.config.ts *.json *.md",
     "preview": "vite preview --host 127.0.0.1"

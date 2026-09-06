@@ -9,12 +9,14 @@ import { createRoot } from "react-dom/client";
 import { TraceCharts } from "./TraceCharts";
 import { TradeReplay } from "./TradeReplay";
 import { DataQuality } from "./DataQuality";
+import { ComputeResourcesView } from "./ComputeResources";
 import {
   api,
   display,
   field,
   getBaselineReport,
   getBaselineResults,
+  getComputeResources,
   getReport,
   isCompleted,
   record,
@@ -25,6 +27,7 @@ import {
 import type {
   BaselineReport,
   BaselineResult,
+  ComputeResources,
   Job,
   Logs,
   Report,
@@ -1105,6 +1108,9 @@ function Compare({ jobs }: { jobs: Job[] }) {
 function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [computeResources, setComputeResources] =
+    useState<ComputeResources | null>(null);
+  const [computeError, setComputeError] = useState("");
   const [runners, setRunners] = useState<Runner[]>([]);
   const [results, setResults] = useState<BaselineResult[]>([]);
   const [selectedResultId, setSelectedResultId] = useState("");
@@ -1136,7 +1142,9 @@ function App() {
   const selectedResult = results.find(
     (result) => result.id === selectedResultId,
   );
-  const readOnlySection = ["results", "replay", "quality"].includes(section);
+  const readOnlySection = ["results", "replay", "quality", "nodes"].includes(
+    section,
+  );
   const refresh = useCallback(async () => {
     if (refreshBusy.current) return;
     refreshBusy.current = true;
@@ -1158,6 +1166,15 @@ function App() {
           .catch((e) => {
             setResults([]);
             setResultsError(errorText(e));
+          }),
+        getComputeResources()
+          .then((value) => {
+            setComputeResources(value);
+            setComputeError("");
+          })
+          .catch((e) => {
+            setComputeResources(null);
+            setComputeError(errorText(e));
           }),
       ]);
       setJobs(j.items);
@@ -1294,7 +1311,7 @@ function App() {
             ["quality", "▦", "数据质量"],
             ["runs", "▤", "合成回放任务"],
             ["compare", "⇄", "合成结果比较"],
-            ["nodes", "▦", "计算节点"],
+            ["nodes", "▦", "计算资源"],
           ].map(([key, icon, label]) => (
             <button
               key={key}
@@ -1309,7 +1326,7 @@ function App() {
                   : key === "runs"
                     ? jobs.length
                     : key === "nodes"
-                      ? workers.length
+                      ? (computeResources?.items.length ?? "—")
                       : ""}
               </small>
             </button>
@@ -1341,7 +1358,7 @@ function App() {
                     ? "合成回放任务"
                     : section === "compare"
                       ? "合成结果比较"
-                      : "计算节点"}
+                      : "计算资源 / 真实作业"}
           </div>
           <div className="connection">
             <i className={connected ? "live" : ""} />
@@ -1381,13 +1398,17 @@ function App() {
                           : "算力在哪里，任务就在哪里。"}
               </h1>
               <p>
-                {readOnlySection
-                  ? "读取已有回测结果与行情记录，不重新运行回测。"
-                  : "运行合成演示、查看事件路径和原始报告。"}
+                {section === "nodes"
+                  ? "查看真实主机、云资源与外部研究进度，合成进程心跳单独展示。"
+                  : readOnlySection
+                    ? "读取已有回测结果与行情记录，不重新运行回测。"
+                    : "运行合成演示、查看事件路径和原始报告。"}
               </p>
             </div>
             {readOnlySection ? (
-              <span className="tag real-tag">READ ONLY · 已有结果</span>
+              <span className="tag real-tag">
+                READ ONLY · {section === "nodes" ? "资源与作业" : "已有结果"}
+              </span>
             ) : (
               <button
                 className="button primary"
@@ -1399,15 +1420,21 @@ function App() {
           </div>
           <div className="boundary-strip">
             <span className={`tag ${readOnlySection ? "real-tag" : ""}`}>
-              {readOnlySection ? "历史记录 · 只读查看" : "合成执行能力"}
+              {section === "nodes"
+                ? "资源状态 · 只读观测"
+                : readOnlySection
+                  ? "历史记录 · 只读查看"
+                  : "合成执行能力"}
             </span>
             <span>
-              {readOnlySection
-                ? "B0 成交来自历史回测，并非实盘成交。"
-                : "replay-demo / synthetic-demo"}
+              {section === "nodes"
+                ? "资源在线、任务运行、worker 心跳是三种不同状态。"
+                : readOnlySection
+                  ? "B0 成交来自历史回测，并非实盘成交。"
+                  : "replay-demo / synthetic-demo"}
             </span>
             <span className="muted">
-              真实回测任务调度和数据同步尚未接入页面。
+              真实研究作业仅接入状态；任务提交和数据同步仍由现有执行器负责。
             </span>
           </div>
           <div className="auth-bar">
@@ -1631,73 +1658,12 @@ function App() {
           )}
           {section === "compare" && <Compare jobs={jobs} />}
           {section === "nodes" && (
-            <section className="panel">
-              <div className="section-heading">
-                <div>
-                  <span className="eyebrow">WORKER REGISTRY</span>
-                  <h2>合成任务计算节点</h2>
-                </div>
-                <span className="muted">
-                  合成 worker 心跳 · 不代表真实 B0 来源主机或 Azure 研究状态
-                </span>
-              </div>
-              <div className="nodes-grid">
-                {workers.map((worker) => (
-                  <article className="node-card" key={worker.id}>
-                    <header>
-                      <span className="node-icon">▦</span>
-                      <h3>{worker.id}</h3>
-                      <span
-                        className={`status ${worker.online === true ? "status-completed" : worker.online === false ? "status-lost" : ""}`}
-                      >
-                        <i />
-                        {worker.online === true
-                          ? "在线"
-                          : worker.online === false
-                            ? "心跳超时"
-                            : "状态未知"}
-                      </span>
-                    </header>
-                    <dl>
-                      <div>
-                        <dt>最近心跳 / UTC</dt>
-                        <dd>{stamp(worker.last_seen, true)}</dd>
-                      </div>
-                      <div>
-                        <dt>执行能力</dt>
-                        <dd>
-                          {worker.capabilities?.length
-                            ? worker.capabilities.map((item) => (
-                                <span className="small-tag" key={display(item)}>
-                                  {display(item)}
-                                </span>
-                              ))
-                            : "—"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>已登记数据集</dt>
-                        <dd>
-                          {worker.datasets?.length
-                            ? worker.datasets.map((item) => (
-                                <span className="small-tag" key={display(item)}>
-                                  {display(item)}
-                                </span>
-                              ))
-                            : "—"}
-                        </dd>
-                      </div>
-                    </dl>
-                  </article>
-                ))}
-              </div>
-              {!workers.length && (
-                <Empty title="尚无已登记节点">
-                  按服务端说明启动 worker
-                  后，心跳与能力将显示在这里。界面不会自行创建云资源。
-                </Empty>
-              )}
-            </section>
+            <ComputeResourcesView
+              report={computeResources}
+              workers={workers}
+              error={computeError}
+              loading={loading}
+            />
           )}
           <footer className="page-footer">
             <span>NarrowGate · Observe the path, not just the number.</span>

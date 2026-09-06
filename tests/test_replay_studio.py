@@ -18,6 +18,254 @@ from narrowgate.replay_demo import DEFAULT_REFERENCE_DIR
 
 
 @pytest.fixture
+def resource_manifest(tmp_path):
+    path = tmp_path / "resources.private.json"
+    data = {
+        "visibility": "local_only_do_not_publish",
+        "resources": [
+            {
+                "id": "local-research",
+                "label": "Research workstation",
+                "kind": "local",
+                "roles": {"training": "preferred", "replay": "allowed"},
+                "probe": {"type": "local"},
+                "worker_ids": ["demo-worker"],
+                "jobs": [
+                    {
+                        "id": "existing-replay",
+                        "label": "Existing canonical replay",
+                        "status_path": str(tmp_path / "process_status.json"),
+                        "process_contains": ["a-specific-existing-canonical-runner"],
+                        "arm": "E",
+                    }
+                ],
+            }
+        ],
+    }
+    path.write_text(json.dumps(data))
+    path.chmod(0o600)
+    return path
+
+
+def test_compute_catalog_is_not_demo_workers_or_job_submission(
+    store, resource_manifest, monkeypatch
+):
+    from narrowgate import studio_resources as resources
+
+    def observed(_item):
+        row = resources.initial(_item)
+        row.update(state="online", checked_at=resources.timestamp(resources.time.time()))
+        row["hardware"].update(cpu_name="Test CPU", vcpu=8, memory_gib=16)
+        row["jobs"][0].update(status="running")
+        return row
+
+    monkeypatch.setattr(resources, "observe", observed)
+    app = studio.create_app(store.root, resources_manifest=resource_manifest)
+    store.register("demo-worker", "test-session")
+    app.state.resources.refresh()
+    # GET is cached and cannot execute any subprocess or SSH probe.
+    monkeypatch.setattr(
+        resources.subprocess, "run", lambda *a, **k: pytest.fail("HTTP probed host")
+    )
+    client = TestClient(app)
+    response = client.get("/api/compute-resources")
+    assert response.status_code == 200
+    row = response.json()["items"][0]
+    assert row["id"] == "local-research" and row["roles"]["training"] == "preferred"
+    assert row["jobs"][0]["status"] == "running" and row["scheduler"]["can_submit"] is False
+    assert row["worker_ids"] == ["demo-worker"]
+    assert str(resource_manifest.parent) not in response.text
+    assert "process_contains" not in response.text and "status_path" not in response.text
+    assert store.jobs() == []  # observing an existing replay does not enqueue it
+    workers = client.get("/api/nodes").json()
+    assert workers["classification"] == "synthetic_worker_registry_not_physical_resources"
+    assert workers["items"][0]["classification"] == "synthetic_demo_worker"
+    assert client.post("/api/compute-resources", json={"command": "anything"}).status_code == 405
+    assert (
+        TestClient(studio.create_app(store.root, "token", resource_manifest))
+        .get("/api/compute-resources")
+        .status_code
+        == 401
+    )
+
+
+def test_compute_optional_manifest_has_no_permanent_cloud_constants(store):
+    assert (
+        TestClient(studio.create_app(store.root)).get("/api/compute-resources").json()["items"]
+        == []
+    )
+
+
+@pytest.mark.parametrize("defect", ["public", "permission", "alias", "role", "broad_process"])
+def test_resource_registration_rejects_unsafe_or_ambiguous_probes(resource_manifest, defect):
+    from narrowgate import studio_resources as resources
+
+    data = json.loads(resource_manifest.read_text())
+    item = data["resources"][0]
+    if defect == "public":
+        data["visibility"] = "public"
+    elif defect == "permission":
+        resource_manifest.chmod(0o644)
+    elif defect == "alias":
+        item.update(
+            kind="lan", probe={"type": "ssh", "alias": "host;command", "python": "/runtime/python"}
+        )
+    elif defect == "role":
+        item["roles"]["training"] = "always_dispatch"
+    else:
+        item["jobs"][0]["process_contains"] = ["python"]
+    resource_manifest.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        resources.ResourceCatalog(resource_manifest)
+
+
+def test_actual_local_metadata_probe_reads_only_explicit_status_json(resource_manifest, tmp_path):
+    from narrowgate import studio_resources as resources
+
+    (tmp_path / "process_status.json").write_text(json.dumps({"exit_code": 0}))
+    # Nothing follows or scans adjacent economic/artifact files.
+    (tmp_path / "economic.partial.csv").write_text("never read this payload")
+    item = json.loads(resource_manifest.read_text())["resources"][0]
+    observed = resources.observe(item)
+    assert observed["state"] == "online"
+    assert observed["hardware"]["vcpu"] > 0 and observed["hardware"]["memory_gib"] > 0
+    assert observed["jobs"][0]["status"] == "completed"
+    assert str(tmp_path) not in json.dumps(observed)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "stderr", "json"])
+def test_ssh_probe_bounds_and_redacts_failure(resource_manifest, monkeypatch, failure):
+    from narrowgate import studio_resources as resources
+
+    item = json.loads(resource_manifest.read_text())["resources"][0]
+    item.update(
+        kind="lan", probe={"type": "ssh", "alias": "research-alias", "python": "/runtime/python"}
+    )
+    item["roles"]["training"] = "disabled"
+
+    def run(command, **kwargs):
+        assert kwargs["timeout"] == 15
+        assert command[:3] == ["ssh", "-o", "BatchMode=yes"]
+        assert "StrictHostKeyChecking=yes" in command and "research-alias" in command
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 15)
+        return SimpleNamespace(
+            returncode=255 if failure == "stderr" else 0,
+            stdout="not-json",
+            stderr="private-credential-at-endpoint",
+        )
+
+    monkeypatch.setattr(resources.subprocess, "run", run)
+    observed = resources.observe(item)
+    assert observed["state"] == "unknown" and observed["last_error"]
+    assert observed["roles"]["training"] == "disabled"
+    assert "private-credential" not in json.dumps(observed)
+    assert observed["jobs"][0]["status"] == "unknown"
+
+
+def test_azure_zero_capacity_is_not_online_or_worker_loss(monkeypatch):
+    from narrowgate import studio_resources as resources
+
+    item = {
+        "id": "elastic-research",
+        "kind": "azure",
+        "probe": {
+            "type": "azure_batch",
+            "cli": "/configured/az",
+            "config_dir": "/private/auth-state",
+            "account_name": "owner-account",
+            "account_endpoint": "https://example.invalid",
+            "pool_id": "owner-pool",
+        },
+    }
+
+    def run(command, **kwargs):
+        assert command[1:4] == ["batch", "pool", "show"]
+        assert kwargs["env"]["AZURE_CONFIG_DIR"] == "/private/auth-state"
+        return {
+            "state": "active",
+            "allocationState": "steady",
+            "vmSize": "instance-type",
+            "currentDedicatedNodes": 0,
+            "currentLowPriorityNodes": 0,
+            "targetDedicatedNodes": 0,
+            "targetLowPriorityNodes": 0,
+        }
+
+    monkeypatch.setattr(resources, "run_json", run)
+    row = resources.observe(item)
+    assert row["state"] == "scaled_to_zero"
+    assert row["capacity"] == {"running_nodes": 0, "target_nodes": 0}
+    assert row["worker_ids"] == [] and not row["scheduler"]["can_submit"]
+    assert "owner-account" not in json.dumps(row) and "auth-state" not in json.dumps(row)
+
+
+def test_resource_staleness_clock_rollback_and_refresh_failure(resource_manifest, monkeypatch):
+    from narrowgate import studio_resources as resources
+
+    catalog = resources.ResourceCatalog(resource_manifest)
+    monkeypatch.setattr(resources.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(resources.time, "monotonic", lambda: 500.0)
+
+    def observe(item):
+        row = resources.initial(item)
+        row["state"] = "online"
+        row["jobs"][0]["status"] = "running"
+        return row
+
+    monkeypatch.setattr(resources, "observe", observe)
+    catalog.refresh()
+    assert catalog.snapshot()["items"][0]["state"] == "online"
+    monkeypatch.setattr(resources.time, "monotonic", lambda: 591.0)
+    row = catalog.snapshot()["items"][0]
+    assert row["state"] == "stale" and row["jobs"][0]["status"] == "unknown"
+    monkeypatch.setattr(resources.time, "time", lambda: 900.0)
+    catalog.refresh()
+    assert catalog.generation == 1
+    assert catalog.snapshot()["items"][0]["last_error"] == "clock_moved_backwards"
+    resource_manifest.write_text("broken")
+    catalog.refresh()
+    assert catalog.items[0]["state"] == "unknown"
+
+
+def test_changed_configuration_discards_inflight_observation(resource_manifest, monkeypatch):
+    from narrowgate import studio_resources as resources
+
+    catalog = resources.ResourceCatalog(resource_manifest)
+
+    def changed(item):
+        data = json.loads(resource_manifest.read_text())
+        data["resources"][0]["label"] = "Updated owner registration"
+        resource_manifest.write_text(json.dumps(data))
+        return resources.initial(item) | {"state": "online"}
+
+    monkeypatch.setattr(resources, "observe", changed)
+    catalog.refresh()
+    assert catalog.generation == 0
+    assert catalog.snapshot()["items"][0]["state"] == "unknown"
+
+
+def test_resource_background_refresh_is_owned_by_existing_control_lifespan(
+    store, resource_manifest, monkeypatch
+):
+    import threading
+
+    from narrowgate import studio_resources as resources
+
+    refreshed = threading.Event()
+
+    def observe(item):
+        refreshed.set()
+        return resources.initial(item)
+
+    monkeypatch.setattr(resources, "observe", observe)
+    app = studio.create_app(store.root, resources_manifest=resource_manifest)
+    with TestClient(app):
+        assert refreshed.wait(timeout=5)
+    assert app.state.resources.generation == 1
+
+
+@pytest.fixture
 def store(tmp_path):
     return studio.Store(tmp_path / "control")
 

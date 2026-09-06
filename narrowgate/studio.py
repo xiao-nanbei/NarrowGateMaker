@@ -26,7 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
-from narrowgate import studio_market
+from narrowgate import studio_market, studio_resources
 
 LEASE_SECONDS = 45
 ARTIFACT_LIMIT = 2_000_000
@@ -612,15 +612,36 @@ def validate_demo_artifacts(files: dict):
             raise ValueError(f"demo reference mismatch: {name}")
 
 
-def create_app(root: Path, token: str = ""):
+def create_app(root: Path, token: str = "", resources_manifest: Path | None = None):
     from fastapi import FastAPI
     from fastapi import Request as WebRequest
     from fastapi.responses import JSONResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
 
     store = Store(root)
-    app = FastAPI(title="NarrowGate Replay Studio", docs_url=None, redoc_url=None)
+    resources = studio_resources.ResourceCatalog(resources_manifest)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async def refresh_resources():
+            while True:
+                await asyncio.to_thread(resources.refresh)
+                await asyncio.sleep(studio_resources.REFRESH_SECONDS)
+
+        task = asyncio.create_task(refresh_resources()) if resources_manifest else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+    app = FastAPI(
+        title="NarrowGate Replay Studio", docs_url=None, redoc_url=None, lifespan=lifespan
+    )
     app.state.store = store
+    app.state.resources = resources
 
     async def body(request):
         content = bytearray()
@@ -685,9 +706,11 @@ def create_app(root: Path, token: str = ""):
         with store.connect() as db:
             rows = db.execute("SELECT * FROM nodes ORDER BY id").fetchall()
         return {
+            "classification": "synthetic_worker_registry_not_physical_resources",
             "items": [
                 {
                     "id": r["id"],
+                    "classification": "synthetic_demo_worker",
                     "last_seen": r["last_seen"],
                     "online": r["last_seen"] >= time.time() - LEASE_SECONDS,
                     "capabilities": json.loads(r["capabilities"]),
@@ -696,6 +719,10 @@ def create_app(root: Path, token: str = ""):
                 for r in rows
             ]
         }
+
+    @app.get("/api/compute-resources")
+    def compute_resources():
+        return resources.snapshot()
 
     @app.get("/api/jobs")
     def jobs():
@@ -1070,6 +1097,10 @@ def main(argv=None) -> int:
     serve = sub.add_parser("serve", help="start the loopback control API and packaged frontend")
     serve.add_argument("--state-dir", type=Path, required=True)
     serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument(
+        "--resources-manifest", type=Path,
+        help="owner-only host/pool inventory; fixed read-only background probes, no allocation",
+    )
     imported = sub.add_parser(
         "import-b0", help="import existing private B0 results; never run replay"
     )
@@ -1110,7 +1141,9 @@ def main(argv=None) -> int:
         return worker(args)
     import uvicorn
 
-    app = create_app(args.state_dir, os.environ.get("NARROWGATE_STUDIO_TOKEN", ""))
+    app = create_app(
+        args.state_dir, os.environ.get("NARROWGATE_STUDIO_TOKEN", ""), args.resources_manifest
+    )
     uvicorn.run(
         app, host="127.0.0.1", port=args.port, access_log=False, timeout_graceful_shutdown=5
     )

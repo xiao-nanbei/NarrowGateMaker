@@ -19,6 +19,8 @@ The separate UTC quality calendar includes the entire requested inclusive date r
 
 ## Developer build
 
+The compute page uses `/api/compute-resources` for owner-configured physical/cloud resources, not the number of synthetic workers. Friendly labels, fixed background probes, external job observations and placement roles are configured through the control service's `--resources-manifest`; see the [resource connection guide](../docs/plans/remote_replay_studio.md#actual-compute-resources-separate-from-demo-workers). A scaled-to-zero pool, stale observation and unreachable host are distinct from an online worker. The page observes existing research; it does not add a real-market submit adapter or cloud provisioning.
+
 Use Node.js 22.12+ and the pinned pnpm 11.19.0. Commit `pnpm-lock.yaml` together
 with dependency changes. `pnpm-workspace.yaml` explicitly permits the standard
 esbuild binary installation hook; no interactive approval is required in CI.

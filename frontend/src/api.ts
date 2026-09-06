@@ -23,6 +23,77 @@ export type Worker = {
   capabilities?: unknown[];
   datasets?: unknown[];
 };
+export type ComputeResource = {
+  id: string;
+  label: string;
+  kind: "local" | "lan" | "azure";
+  state: "online" | "offline" | "unknown" | "stale" | "scaled_to_zero";
+  checked_at: string | null;
+  last_error: string | null;
+  hardware: {
+    cpu_name: string | null;
+    vcpu: number | null;
+    memory_gib: number | null;
+    architecture: string | null;
+  };
+  capacity: { running_nodes: number | null; target_nodes: number | null };
+  roles: {
+    training: "preferred" | "allowed" | "disabled" | "unknown";
+    replay: "allowed" | "disabled" | "unknown";
+    data_processing: "allowed" | "disabled" | "unknown";
+  };
+  scheduler: {
+    mode: "studio_worker" | "external_observer" | "not_connected";
+    can_submit: boolean;
+    reason: string;
+  };
+  jobs: {
+    id: string;
+    label: string;
+    status: string;
+    updated_at: string | null;
+    arm: string | null;
+  }[];
+  worker_ids: string[];
+  notes: string[];
+};
+export type ComputeResources = {
+  schema_version: "compute_resources.v1";
+  observed_at: string | null;
+  items: ComputeResource[];
+  limitations: string[];
+};
+
+export async function getComputeResources(
+  signal?: AbortSignal,
+): Promise<ComputeResources> {
+  const report = await api<ComputeResources>("/compute-resources", { signal });
+  if (
+    report.schema_version !== "compute_resources.v1" ||
+    !Array.isArray(report.items) ||
+    !Array.isArray(report.limitations) ||
+    new Set(report.items.map((item) => item.id)).size !== report.items.length ||
+    report.items.some(
+      (item) =>
+        typeof item.id !== "string" ||
+        typeof item.label !== "string" ||
+        !["local", "lan", "azure"].includes(item.kind) ||
+        !["online", "offline", "unknown", "stale", "scaled_to_zero"].includes(
+          item.state,
+        ) ||
+        !item.hardware ||
+        !item.capacity ||
+        !item.roles ||
+        !item.scheduler ||
+        typeof item.scheduler.can_submit !== "boolean" ||
+        !Array.isArray(item.jobs) ||
+        !Array.isArray(item.worker_ids) ||
+        !Array.isArray(item.notes),
+    )
+  )
+    throw new Error("计算资源目录格式不受支持；未将 worker 心跳当作主机状态。");
+  return report;
+}
 export type Report = {
   schema_version: string;
   classification: string;

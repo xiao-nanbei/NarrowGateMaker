@@ -85,6 +85,25 @@ Audit status belongs to an explicit source version and recorded check scope. It 
 
 ## One remote host first, then more workers
 
+### Actual compute resources, separate from demo workers
+
+Start the same control service with an optional owner-private resource manifest:
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --port 8080
+```
+
+The manifest has `visibility: local_only_do_not_publish` and a `resources` list. Each resource supplies a stable `id`, human-readable `label`, `kind` (`local`, `lan`, or `azure`), intended `roles` (`training`, `replay`, `data_processing`), and a fixed probe type. Local probes inspect the control host; SSH probes use an existing configured alias and interpreter; Azure Batch probes use the selected existing CLI context, account and pool. Addresses, account identifiers, local paths and credentials do not belong in public configuration or frontend source. Removing an Azure entry or selecting another authorized account requires configuration, not a new UI implementation.
+
+`GET /api/compute-resources` reads a cached resource snapshot. The control service refreshes it in the background with bounded probes; an HTTP page request does not wait for SSH or Azure. The page shows friendly aliases, observed hardware and capacity, last-check time, stale/unreachable state and selected external job status. A zero-node Azure pool is registered capacity, not an online host. An unconfigured resource list stays empty; it never manufactures three online machines. Historical B0 execution origin is not a health probe.
+
+Existing jobs can be observed through selected small status files and process checks. These are external jobs, not tasks owned by the Studio queue; the observer neither launches them nor reads partial economic results. Synthetic worker records remain available separately for demo diagnostics. Two demo processes on one Mac must not be counted as two physical resources. Role labels are placement guidance, not proof of a benchmark, a dataset replica or a ready real-market executor.
+
+Choose placement using current load, usable memory, data locality, verified runtime compatibility and measured throughput. The owner's present preference is Mac M4 for training and LAN for suitable replay/data preparation, with Azure optional under the currently authorized budget and expiry. M4 does not imply that every model library uses Metal. Do not migrate active work by restarting it, duplicate a baseline to fill idle capacity, or split dependent continuous days across hosts. This resource view does not add arbitrary shell execution, automatic cloud provisioning or real-market job submission; those still require the bounded runner adapter described below.
+
 ```text
 Browser ── HTTP over SSH tunnel ── Control API + local SQLite + published outputs
                                       ▲

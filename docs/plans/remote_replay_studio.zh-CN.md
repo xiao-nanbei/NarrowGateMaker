@@ -85,6 +85,25 @@ Owner 可以把已有分源／版本审计 CSV 和只读文件元数据清单适
 
 ## 先一台远程主机，再扩展 worker
 
+### 真实计算资源与合成 worker 分开
+
+可在同一个控制服务中指定 owner 私有资源清单：
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --port 8080
+```
+
+清单包含 `visibility: local_only_do_not_publish` 和 `resources` 列表。每项指定稳定 `id`、易识别的 `label`、`kind`（`local`、`lan` 或 `azure`）、预期 `roles`（`training`、`replay`、`data_processing`）和固定探测类型。本机探测读取控制主机状态；SSH 探测使用已有主机别名与解释器；Azure Batch 探测使用指定的现有 CLI 上下文、账户与池。地址、账户标识、本地路径和凭据不得写入公开配置或前端源码。删除 Azure 条目或切换已授权账户只需修改配置，不必改写界面。
+
+`GET /api/compute-resources` 读取缓存的资源快照。控制服务在后台进行有超时限制的探测，页面请求不等待 SSH 或 Azure。界面显示友好别名、实测硬件与容量、检查时间、陈旧／不可达状态，以及选定的外部作业状态。Azure 零节点池表示已登记资源，不是在线主机。未配置资源时列表为空，不会虚构三台在线机器。历史 B0 的执行来源不能代替健康探测。
+
+已有作业通过选定的小型状态文件和进程检查接入观察；它们是外部作业，不属于 Studio 队列。观察器不启动这些作业，也不读取未完成的经济结果。合成 worker 记录单独保留用于演示诊断，同一台 Mac 上的两个演示进程不能被计为两台物理资源。角色标签只是任务分配偏好，不证明性能、副本已就绪或真实行情执行器已接通。
+
+分配任务应考虑当前负载、可用内存、数据位置、已验证的运行环境兼容性和实测吞吐。Owner 当前偏好 Mac M4 用于训练、LAN 用于适合的回放和数据准备，Azure 则按当前授权预算与到期日按需使用。M4 不代表每个模型库都使用 Metal。不得靠重启迁移正在运行的任务、为填满空闲资源重复运行 baseline，或把连续状态依赖的日期拆到不同主机。此资源视图不新增任意 shell 执行、自动创建云资源或真实行情任务提交；后者仍需要下文的有界 runner 适配器。
+
 ```text
 浏览器 ── HTTP / SSH 隧道 ── 控制 API + 本地 SQLite + 已发布结果
                                  ▲

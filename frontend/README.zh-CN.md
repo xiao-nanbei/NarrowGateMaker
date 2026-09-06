@@ -19,6 +19,8 @@ BUY / SELL 标记是模拟成交方向，不表示开仓 / 平仓。每笔成交
 
 ## 开发与构建
 
+计算资源页面使用 `/api/compute-resources` 显示 owner 配置的物理／云资源，不以合成 worker 数量代替主机数。友好别名、固定后台探测、外部作业观察与分配角色通过控制服务的 `--resources-manifest` 配置，见[资源接入说明](../docs/plans/remote_replay_studio.zh-CN.md#真实计算资源与合成-worker-分开)。已缩容到零的池、陈旧观测和不可达主机与在线 worker 分别展示。页面只观察已有研究，不新增真实行情提交适配器或云资源创建功能。
+
 使用 Node.js 22.12+ 和固定的 pnpm 11.19.0。依赖变更需同时更新
 `pnpm-lock.yaml`。`pnpm-workspace.yaml` 已显式批准 esbuild 的标准安装钩子，
 CI 不需要交互式批准。
