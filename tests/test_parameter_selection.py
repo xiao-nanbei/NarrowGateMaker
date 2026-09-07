@@ -351,6 +351,70 @@ def test_continuous_prefix_cli_requires_continuous_before_loading_data():
         campaign_audit_main(["--days", "2026-01-01", "--replay-end-ts-ms", "1000"])
 
 
+def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path):
+    from dataclasses import replace
+    from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
+    from tests.test_tick_runtime_checkpoint import scenario, assert_same
+
+    day = "2026-01-01"
+    start = int(campaign_audit._day_start_ts(day) * 1000)
+    args, kwargs = scenario("async")
+    trades = args[0].copy()
+    trades["transact_time"] += start
+    bbo = replace(kwargs["bbo_data"], ts_ms=kwargs["bbo_data"].ts_ms + start)
+    window = dict(trades=trades, bbo_data=bbo, var_ts_ms=args[1] + start, var_ssq=args[2],
+                  var_ti=None, var_retsq=None, ml_data=None, l2_data=None)
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", lambda *_a: window)
+    base = {**args[3], "planned_quote_stop_ts_ms": 0, "requote_threshold_bps": 1.}
+    call = dict(day=day, continuous_days=[day], symbol="BTCUSDC", base=base,
+                arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")],
+                engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
+                replay_end_ts_ms=start + 4_000, save_fill_trace=True,
+                funding_events=[{"fundingTime": start + 2_000, "fundingRate": .01, "markPrice": 100.}])
+    expected = campaign_audit._run_day_campaign_audit(**call)
+    partial = campaign_audit._run_day_campaign_audit(**call, checkpoint_at_ts_ms=start + 1_250)
+    assert set(partial) == {"day", "logs", "_replay_checkpoint"}
+    assert partial["_replay_checkpoint"]["runtime"].q != 0
+    path = tmp_path / "b0.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    actual = campaign_audit._run_day_campaign_audit(**call,
+                                                  resume_checkpoint=load_trusted_runtime_checkpoint(path))
+    for output in (actual, expected):
+        output.pop("logs", None)
+        for row in output["daily_rows"]:
+            row.pop("runtime_s", None)
+    assert_same(actual, expected)
+    assert actual["funding_trace_rows"]
+
+
+def test_checkpoint_cli_requires_durable_output_before_loading():
+    with pytest.raises(SystemExit, match="requires --save-runtime-checkpoint"):
+        campaign_audit_main(["--days", "2026-01-01", "--checkpoint-at-ts-ms", "1000"])
+
+
+def test_checkpoint_cli_writes_state_not_partial_economics(monkeypatch, tmp_path, capsys):
+    from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint
+
+    monkeypatch.setenv("MM_RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setattr(campaign_audit, "load_tick_base_params", lambda **_kw: _runtime_fifo_params())
+    checkpoint = {"schema": "tick_replay_runtime.v1", "cut_ts_ms": 1234, "runtime": {"inventory": .001}}
+    def run(**kwargs):
+        assert kwargs["checkpoint_at_ts_ms"] == 1234
+        return {"day": "2026-01-01", "logs": [], "_replay_checkpoint": checkpoint}
+    monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", run)
+    def no_finalizer(*_a, **_kw):
+        pytest.fail("an operational checkpoint must not publish partial economic results")
+    monkeypatch.setattr(campaign_audit, "_write_partial_day_outputs", no_finalizer)
+    path = tmp_path / "runtime.pickle"
+    campaign_audit_main(["--days", "2026-01-01", "--arms", "baseline", "--continuous",
+                         "--replay-purpose", "diagnostic", "--checkpoint-at-ts-ms", "1234",
+                         "--save-runtime-checkpoint", str(path)])
+    assert load_trusted_runtime_checkpoint(path) == checkpoint
+    assert not list((tmp_path / "results").iterdir())
+    assert '"status": "checkpoint_saved"' in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("days,offset,valid", [
     (["2026-01-01"], 0, False), (["2026-01-01"], -1, False),
     (["2026-01-01"], 3_599_999, True), (["2026-01-01"], 86_399_999, True),

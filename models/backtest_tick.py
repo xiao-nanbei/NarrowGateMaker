@@ -38877,7 +38877,9 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                                active_order_queue_data=None,
                                exchange_book_event_tape=None,
                                variance_time_data=None,
-                               ranked_toxicity_guard_binding=None):
+                               ranked_toxicity_guard_binding=None, *,
+                               checkpoint_at_ts_ms=None, resume_checkpoint=None,
+                               resume_input_batch=False):
     def label_explicit_arm(result):
         selection = params.get("baseline_selection")
         if selection is None:
@@ -38897,6 +38899,8 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
         return labeled
 
     if engine == "cpp":
+        if checkpoint_at_ts_ms is not None or resume_checkpoint is not None or resume_input_batch:
+            raise NotImplementedError("complete runtime checkpoints currently require Python replay")
         if params.get("cooldown_duration_policy_evaluator") is not None:
             _validate_f05_cpp_cooldown_runtime(
                 params,
@@ -39040,6 +39044,9 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                 exchange_book_event_tape=exchange_book_event_tape,
                 variance_time_data=variance_time_data,
                 ranked_toxicity_guard_binding=ranked_toxicity_guard_binding,
+                checkpoint_at_ts_ms=checkpoint_at_ts_ms,
+                resume_checkpoint=resume_checkpoint,
+                resume_input_batch=resume_input_batch,
             )
         )
     raise ValueError(f"Unknown replay engine={engine!r}")

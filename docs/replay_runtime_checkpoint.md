@@ -4,6 +4,34 @@ The Python tick loop can pause **before** an event and save its runtime graph,
 then resume that event once. A pause is not maintenance: it does not request
 cancels, flatten inventory, reset a campaign, or produce final accounting.
 
+## F01 command-line checkpoint
+
+The existing F01 campaign runner accepts the same-window interface for one
+continuous Python arm. Append these flags to an existing, otherwise unchanged
+invocation (the timestamp below is only an example; choose it inside your window):
+
+```bash
+--continuous --engine python --workers 1 --arms baseline \
+--checkpoint-at-ts-ms 1767229200000 \
+--save-runtime-checkpoint /private/run/b0.runtime.pickle
+```
+
+It atomically writes the state and prints `status=checkpoint_saved` with
+`completed=false`. It does **not** write partial campaign/PnL/funding reports or
+declare a complete replay. To continue, keep the same dates, data, parameters and
+runtime, remove the two checkpoint-output flags and append:
+
+```bash
+--resume-runtime-checkpoint /private/run/b0.runtime.pickle
+```
+
+You may supply another later cutoff/output path to save again. Funding and
+campaign finalization run once after the resumed replay actually finishes.
+This CLI does not yet change the input date set between invocations; the bounded
+loader integration below remains separate work.
+
+## Python interface and input rotation
+
 ```python
 from models.backtest_tick import simulate_tick
 from models.replay.runtime_checkpoint_io import (

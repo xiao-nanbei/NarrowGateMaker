@@ -2183,6 +2183,8 @@ def _run_day_campaign_audit(
     continuous_days: list[str] | None = None,
     risk_pair_baseline_arm: str = "",
     replay_end_ts_ms: int | None = None,
+    checkpoint_at_ts_ms: int | None = None,
+    resume_checkpoint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -2191,6 +2193,12 @@ def _run_day_campaign_audit(
     arm 并行更少重复读 cache/parquet，也更容易保持 daily fresh-start 语义。
     """
     source_days = continuous_days or [day]
+    checkpoint_options = {}
+    if checkpoint_at_ts_ms is not None or resume_checkpoint is not None:
+        if engine != "python" or len(arms) != 1 or not continuous_days or risk_pair_baseline_arm:
+            raise ValueError("runtime checkpoint requires one continuous Python arm, without paired forks")
+        checkpoint_options = dict(checkpoint_at_ts_ms=checkpoint_at_ts_ms,
+                                  resume_checkpoint=resume_checkpoint)
     policy_active = any(
         arm.overrides.get("risk_selection_mode", base.get("risk_selection_mode", "B")) != "B"
         or arm.overrides.get("risk_selection_control", base.get("risk_selection_control", "learned"))
@@ -2528,7 +2536,12 @@ def _run_day_campaign_audit(
             campaign_repair_model=(campaign_repair_model if arm_needs_repair else None),
             historical_global_flow_data=(historical_global_flow_data if arm_multi_market else None),
             exchange_book_event_tape=native_exchange_book_tape,
+            **checkpoint_options,
         )
+        if result.get("completed") is False:
+            # No funding/campaign finalizer or partial economic publication at
+            # an operational pause. The next process resumes the same runtime.
+            return {"day": day, "logs": logs, "_replay_checkpoint": result["_replay_checkpoint"]}
         result["strict_calibration_validated"] = bool(
             params.get("strict_calibration_validated", False)
         )
@@ -2761,6 +2774,12 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument("--days", nargs="+", required=True)
+    parser.add_argument("--checkpoint-at-ts-ms", type=int,
+                        help="Pause before this event clock, retaining orders and inventory; not a replay end")
+    parser.add_argument("--save-runtime-checkpoint", type=Path,
+                        help="Private local checkpoint output, atomically saved before this process exits")
+    parser.add_argument("--resume-runtime-checkpoint", type=Path,
+                        help="Trusted local checkpoint from the same inputs/runtime; never accept an uploaded pickle")
     parser.add_argument(
         "--continuous", action="store_true",
         help="Run contiguous --days in one state machine, without midnight strategy resets",
@@ -3282,6 +3301,11 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.checkpoint_at_ts_ms is not None and args.save_runtime_checkpoint is None:
+        raise SystemExit("--checkpoint-at-ts-ms requires --save-runtime-checkpoint")
+    if args.checkpoint_at_ts_ms is not None or args.resume_runtime_checkpoint is not None:
+        if not args.continuous or args.engine != "python" or args.workers != 1:
+            raise SystemExit("runtime checkpoint requires --continuous --engine python --workers 1")
     if args.replay_end_ts_ms is not None and not args.continuous:
         raise SystemExit("--replay-end-ts-ms requires --continuous")
     if args.risk_pair_baseline_arm:
@@ -3934,9 +3958,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     use_initial_state = bool(initial_states)
 
-    def _merge_day_result(day_result: dict[str, Any]) -> None:
+    def _merge_day_result(day_result: dict[str, Any]) -> bool:
         for line in day_result.get("logs", []):
             print(line, flush=True)
+        if "_replay_checkpoint" in day_result:
+            from models.replay.runtime_checkpoint_io import save_runtime_checkpoint
+            save_runtime_checkpoint(args.save_runtime_checkpoint, day_result["_replay_checkpoint"])
+            print(json.dumps({"status": "checkpoint_saved", "completed": False,
+                              "cut_ts_ms": day_result["_replay_checkpoint"]["cut_ts_ms"]}), flush=True)
+            return True
         _write_partial_day_outputs(out_dir, stem, day_result)
         partial_day = (
             str(day_result.get("task_label") or day_result.get("day", "unknown"))
@@ -3966,15 +3996,20 @@ def main(argv: list[str] | None = None) -> None:
         identity = day_result.get("native_exchange_book_identity") or {}
         if identity:
             native_exchange_book_identities[str(day_result.get("day", ""))] = identity
+        return False
 
     workers = max(1, int(args.workers or 1))
     arm_chunk_size = max(0, int(args.arm_chunk_size or 0))
+    loaded_runtime_checkpoint = None
+    if args.resume_runtime_checkpoint is not None:
+        from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint
+        loaded_runtime_checkpoint = load_trusted_runtime_checkpoint(args.resume_runtime_checkpoint)
     if workers <= 1:
         for day in (days[:1] if args.continuous else days):
             day_initial = initial_states.get(
                 day, {"initial_inventory": 0.0, "initial_entry_price": 0.0}
             )
-            _merge_day_result(
+            if _merge_day_result(
                 _run_day_campaign_audit(
                     day=day,
                     symbol=args.symbol,
@@ -3986,6 +4021,8 @@ def main(argv: list[str] | None = None) -> None:
                     continuous_days=days if args.continuous else None,
                     risk_pair_baseline_arm=args.risk_pair_baseline_arm,
                     replay_end_ts_ms=args.replay_end_ts_ms,
+                    checkpoint_at_ts_ms=args.checkpoint_at_ts_ms,
+                    resume_checkpoint=loaded_runtime_checkpoint,
                     base=base,
                     arms=arms,
                     engine=args.engine,
@@ -4013,7 +4050,8 @@ def main(argv: list[str] | None = None) -> None:
                     native_exchange_book_mode=args.native_exchange_book_mode,
                     native_exchange_book_warmup_hours=(args.native_exchange_book_warmup_hours),
                 )
-            )
+            ):
+                return
     else:
         tasks: list[dict[str, Any]] = []
         order = 0
