@@ -217,6 +217,13 @@ def test_message_clock_pairs_preserve_source_pairing_without_marginal_fallback()
     kwargs = {"market_id": group["market_id"], "event_type": "depth",
               "transport": "websocket", "seed": 7}
     receive, ready = simulator.message_clock_arrays(events, **kwargs)
+    for offset in (1, 17, 100, 199):
+        cropped = simulator.message_clock_arrays(events[offset:], source_row_offset=offset, **kwargs)
+        for actual, expected in zip(cropped, (receive[offset:], ready[offset:]), strict=True):
+            np.testing.assert_array_equal(actual, expected)
+    for offset in (-1, 1.5, True, 2**64):
+        with pytest.raises(ValueError, match="source_row_offset"):
+            simulator.message_clock_arrays(events, source_row_offset=offset, **kwargs)
     pairs = set(zip((receive - events) / 1_000_000, (ready - receive) / 1_000_000, strict=True))
     assert pairs == {(5.0, 70.0), (80.0, 2.0)}
     for actual, repeated in zip(

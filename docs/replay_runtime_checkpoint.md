@@ -23,13 +23,32 @@ if partial.get("completed") is False:
     )
 ```
 
-The caller currently supplies the **same input window, parameters and runtime**
-on resume. This is a qualification interface, not yet the bounded multi-window
-runner. It must not be used to combine independently initialized daily results
-or described as a completed continuous multi-day baseline. C++ tick-loop state
-restore and replacing/rebasing the loaded input batch are not implemented by
-this interface. It also does not make arbitrary research emitters or native
-extension objects serializable.
+By default the caller supplies the **same input window, parameters and runtime**
+on resume. The Python qualification interface also accepts
+`resume_input_batch=True` with an overlapping next input window: consumed input
+prefixes are discarded, active array cursors are translated, and accumulated
+accounting and order state are preserved. Native book files are reopened at the
+saved within-file read cursor, retaining prefetched messages and book state.
+Supply complete files containing that cursor, not arbitrary sliced iterators.
+
+This is not yet wired into the production bounded multi-window runner. It must
+not be described as a completed 401-day baseline or used to combine independent
+daily fresh starts. Qualification of the configured receive-time BUY/SELL policy
+adapter and end-to-end source delivery across input batches is still pending.
+C++ tick-loop restore and arbitrary research emitter/native object serialization
+are not supplied by this interface.
+
+Batch boundaries must retain **real lookback and lookahead context**, rather than
+inventing replacement snapshots: the tested local-rank consumer needs 120 seconds
+of prior trades, and fill diagnostics can read five seconds ahead. Other enabled
+consumers may need longer context. Pending orders/compute can retain an earlier
+book cursor. The loader must retain that context too. Only the last batch does
+terminal accounting; unused intermediate end timers are not execution events.
+
+Per-message latency draws use global source-row positions. The latency sampler's
+`source_row_offset` preserves the existing full-window draws when input prefixes
+are dropped; FIFO delivery clocks also need their prior state preserved. Changing
+only the sampler offset does not by itself qualify end-to-end delivery rotation.
 
 The persisted object graph retains shared order references, pending new/cancel
 and private-fill events, FIFO/HTTP and compute phases, policy state, random
@@ -51,3 +70,7 @@ fields) after file round-trips and repeated cuts, including async close, pending
 fills, source delivery, book lookahead and compute delays. Synthetic equality
 qualifies these paths; it is not evidence of economic value or a complete test of
 every private policy configuration.
+
+`tests/test_tick_runtime_input_window.py` additionally compares complete outputs
+after real array cropping, multiple window replacements, variance/prediction and
+L2 cursor translation, delayed fill callbacks, and native raw-file rotation.

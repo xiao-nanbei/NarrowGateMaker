@@ -3737,7 +3737,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                   exchange_book_event_tape=None,
                   variance_time_data=None,
                   ranked_toxicity_guard_binding=None, *,
-                  checkpoint_at_ts_ms=None, resume_checkpoint=None):
+                  checkpoint_at_ts_ms=None, resume_checkpoint=None,
+                  resume_input_batch=False):
     """
     Event-driven tick-level simulation with probabilistic FIFO fill model.
 
@@ -8303,6 +8304,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         else np.ones(len(trades_df), dtype=np.bool_)
     )
     _tick_state.n_trades = len(_tick_state.trade_ts)
+    _tick_state.loaded_variance_ts_ms = np.asarray(var_ts_ms)
+    _tick_state.replay_origin_ts_ms = int(_tick_state.trade_ts[0])
+    _tick_state.input_window_count = 1
+    _tick_state.input_event_offset = 0
+    _tick_state.input_clock_offsets = dict.fromkeys(("trade", "seed", "bbo", "l2", "variance", "prediction"), 0)
     _tick_state.policy_visible_execution = _tick_state.is_execution_trade.copy()
     _tick_state.last_processed_event_idx = -1
     # Message delivery is independent of the exchange matching clock.  These
@@ -15813,11 +15819,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             int(trade_visible_ts_ms),
             int(market_event_generation),
         )
+        def absolute_index(value, clock):
+            return int(value) + _tick_state.input_clock_offsets[clock] if int(value) >= 0 else int(value)
+
         snapshot_mid_tick_x2 = int(round(2.0 * float(_tick_state.mid) / float(_tick_state.TICK)))
         market_generation = (
-            f"bbo={int(decision_bbo_index)}|l2={int(decision_l2_index)}|"
-            f"trade={int(visible_trade_index)}|feature={int(feature_ready_index)}|"
-            f"prediction={int(prediction_index)}|mid_x2={snapshot_mid_tick_x2}"
+            f"bbo={absolute_index(decision_bbo_index, 'bbo')}|l2={absolute_index(decision_l2_index, 'l2')}|"
+            f"trade={absolute_index(visible_trade_index, 'trade')}|feature={absolute_index(feature_ready_index, 'variance')}|"
+            f"prediction={absolute_index(prediction_index, 'prediction')}|mid_x2={snapshot_mid_tick_x2}"
         )
         market_readiness = bool(
             int(decision_bbo_index) >= 0
@@ -15939,17 +15948,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "symbol": SYMBOL,
             "side": side,
             "canonical_external_decision": int(bool(scheduled_requote)),
-            "market_event_generation": int(market_event_generation),
+            "market_event_generation": absolute_index(market_event_generation, "trade"),
             "market_event_is_execution_trade": int(
                 bool(market_event_is_execution_trade)
             ),
             "quote_snapshot_market_generation": market_generation,
-            "decision_visible_bbo_index": int(decision_bbo_index),
-            "decision_visible_l2_index": int(decision_l2_index),
+            "decision_visible_bbo_index": absolute_index(decision_bbo_index, "bbo"),
+            "decision_visible_l2_index": absolute_index(decision_l2_index, "l2"),
             "decision_visible_trade_cutoff_ts_ms": int(trade_visible_ts_ms),
-            "decision_visible_trade_index": int(visible_trade_index),
-            "feature_ready_generation_index": int(feature_ready_index),
-            "prediction_generation_index": int(prediction_index),
+            "decision_visible_trade_index": absolute_index(visible_trade_index, "trade"),
+            "feature_ready_generation_index": absolute_index(feature_ready_index, "variance"),
+            "prediction_generation_index": absolute_index(prediction_index, "prediction"),
             "quote_snapshot_mid_tick_x2": int(snapshot_mid_tick_x2),
             "external_epoch_support_valid": 0,
             "external_epoch_support_reason": (
@@ -26328,19 +26337,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             raise ValueError("unsupported tick runtime checkpoint")
         window = (int(_tick_state.trade_ts[0]), int(_tick_state.trade_ts[-1]),
                   int(_tick_state.n_trades))
-        if tuple(resume_checkpoint["loaded_window"]) != window:
+        if not resume_input_batch and tuple(resume_checkpoint["loaded_window"]) != window:
             raise ValueError("runtime checkpoint currently requires the same loaded window")
         from copy import deepcopy
         from itertools import islice
         fresh_book_scheduler = _tick_state.exchange_book_scheduler
         fresh_progress_callback = _tick_state.replay_progress_callback
+        fresh_runtime = _tick_state
         saved_runtime = resume_checkpoint["runtime"]
         saved_book = saved_runtime.exchange_book_scheduler
         source_memo = {id(saved_book._iterator): None} if saved_book is not None else {}
         _tick_state = deepcopy(saved_runtime, source_memo)
         _tick_state.replay_progress_callback = fresh_progress_callback
         restored_book_scheduler = _tick_state.exchange_book_scheduler
-        if restored_book_scheduler is not None:
+        if restored_book_scheduler is not None and not resume_input_batch:
             if fresh_book_scheduler is None:
                 raise ValueError("resume requires the original exchange-book event source")
             unread_offset = (restored_book_scheduler.source_read_count
@@ -26351,6 +26361,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 fresh_book_scheduler._iterator, unread_offset, None,
             )
         pending_resume_event = resume_checkpoint["next_event"]
+        if resume_input_batch:
+            from models.replay.runtime_input_window import rotate_runtime_inputs
+            pending_resume_event = rotate_runtime_inputs(
+                _tick_state, fresh_runtime, pending_resume_event,
+                exchange_book_event_tape=exchange_book_event_tape,
+            )
         if (checkpoint_at_ts_ms is not None
                 and int(checkpoint_at_ts_ms) <= int(resume_checkpoint["cut_ts_ms"])):
             raise ValueError("the next checkpoint must advance beyond the saved cut")
@@ -32469,8 +32485,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.inv_arr = _tick_state.inv_arr[:_tick_state.si]
     _tick_state.ts_arr = _tick_state.ts_arr[:_tick_state.si]
 
-    _tick_state.elapsed_s = max(0.0, float(_tick_state.replay_end_ts - _tick_state.trade_ts[0]) / 1000.0)
-    _tick_state.n_days = replay_elapsed_days(_tick_state.trade_ts[: _tick_state.last_processed_event_idx + 1])
+    _tick_state.elapsed_s = max(0.0, float(_tick_state.replay_end_ts - _tick_state.replay_origin_ts_ms) / 1000.0)
+    _tick_state.n_days = replay_elapsed_days(np.asarray([
+        _tick_state.replay_origin_ts_ms, _tick_state.replay_end_ts,
+    ]))
     _tick_state.nf = _tick_state.nfb + _tick_state.nfa
 
     # Sharpe
@@ -33380,7 +33398,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ),
                 "replay_main_loop_requote_anchor": "actual_requote_start",
                 "replay_main_loop_dynamic_rq_clock": "delivered_1s_bars_before_due_check",
-                "replay_main_loop_dynamic_rq_bar_index": _tick_state.main_loop_rq_var_idx,
+                "replay_main_loop_dynamic_rq_bar_index": _tick_state.main_loop_rq_var_idx + (
+                    _tick_state.input_clock_offsets["variance"] if _tick_state.main_loop_enabled and _tick_state.dynamic_rq else 0
+                ),
                 "replay_main_loop_unmodeled_work": "periodic_position_sync_and_health_io",
             }
             if _tick_state.main_loop_enabled else {}
@@ -34149,7 +34169,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             _tick_state.circuit_breaker_close_ioc_expire_count
         ),
         "n_trades": _tick_state.n_execution_trades,
-        "n_clock_events": _tick_state.n_trades,
+        "n_clock_events": _tick_state.n_trades + _tick_state.input_event_offset,
         "replay_event_clock": _tick_state.replay_event_clock,
         "replay_clock_interval_ms": _tick_state.replay_clock_interval_ms,
         "n_days": _tick_state.n_days,
@@ -34785,7 +34805,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     if _tick_state.risk_selection is not None:
         _tick_state.result.update(_tick_state.risk_selection.finish())
-        _tick_state.result["risk_selection_start_ts_ms"] = int(_tick_state.trade_ts[0])
+        _tick_state.result["risk_selection_start_ts_ms"] = _tick_state.replay_origin_ts_ms
         _tick_state.result["risk_selection_end_ts_ms"] = _tick_state.replay_end_ts
     return _tick_state.result
 

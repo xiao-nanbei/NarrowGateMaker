@@ -607,7 +607,7 @@ class MarketDataLatencySimulator:
 
     def message_clock_arrays(
         self, event_ts_ns: np.ndarray, *, market_id: str, event_type: str,
-        transport: str, seed: int,
+        transport: str, seed: int, source_row_offset: int = 0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Assign one unchanged observed receive/service pair per source row.
 
@@ -638,12 +638,19 @@ class MarketDataLatencySimulator:
                 or not np.all(np.isfinite(pairs)) or np.any(pairs < 0.0)):
             raise ValueError(f"source {key} requires complete finite nonnegative observed clock pairs")
         events = events.astype(np.int64, copy=False)
+        if (type(source_row_offset) is not int or source_row_offset < 0
+                or source_row_offset + len(events) > 2**64):
+            raise ValueError("source_row_offset must preserve unsigned global row indices")
         source_seed = int.from_bytes(hashlib.sha256(
             f"{seed}:{key}".encode("utf-8")
         ).digest()[:8], "little")
         # A vectorized SplitMix draw is frozen for each source row, not each
         # decision reading it. Identical-timestamp messages remain distinct.
-        mixed = events.astype(np.uint64) ^ np.arange(len(events), dtype=np.uint64)
+        # Input batching must not redraw a retained message. The default keeps
+        # the existing full-window stream; rotated windows supply their global
+        # source-row offset (independent for each feed).
+        rows = np.arange(len(events), dtype=np.uint64) + np.uint64(source_row_offset)
+        mixed = events.astype(np.uint64) ^ rows
         mixed ^= np.uint64(source_seed)
         mixed += np.uint64(0x9E3779B97F4A7C15)
         mixed = (mixed ^ (mixed >> 30)) * np.uint64(0xBF58476D1CE4E5B9)

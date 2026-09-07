@@ -1,0 +1,130 @@
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from models.backtest_tick import simulate_tick
+from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint, save_runtime_checkpoint
+from tests.test_tick_runtime_checkpoint import assert_same, scenario
+
+
+def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path):
+    from models.exchange_book_replay import HistoricalExchangeBookEvent
+
+    args, kwargs = scenario("async")
+    base = 1_700_000_000_000
+    args[0]["transact_time"] += base
+    args[1][:] += base
+    kwargs["bbo_data"].ts_ms[:] += base
+    args[3].update(exchange_book_queue_mode="diagnostic",
+                   replay_event_clock_end_ts_ms=base + 3_000)
+    events = [HistoricalExchangeBookEvent(
+        market_id="binance_futures:perpetual:BTCUSDC", event_type="snapshot",
+        exchange_ts_ns=(base + timestamp) * 1_000_000,
+        local_receive_ts_ns=(base + timestamp + 1) * 1_000_000,
+        last_update_id=index + 1, source=f"/old/{'00' if index < 2 else '01'}.jsonl",
+        source_ordinal=index,
+        levels=(("bid", 960, 1.), ("bid", 999, 1.), ("ask", 1001, 1.), ("ask", 1040, 1.)),
+    ) for index, timestamp in enumerate((-100, 300, 800, 1_105, 1_105, 1_200, 2_000, 2_800))]
+    expected = simulate_tick(*args, **kwargs, exchange_book_event_tape=events)
+    partial = simulate_tick(*args, **kwargs, exchange_book_event_tape=events,
+                            checkpoint_at_ts_ms=base + 1_110)
+    path = tmp_path / "native-window.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    cropped = args[0][args[0].transact_time >= base + 500].copy()
+    bbo = kwargs["bbo_data"]
+    bbo = replace(bbo, **{name: getattr(bbo, name)[bbo.ts_ms >= base + 500].copy()
+                          for name in ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")})
+    new_events = [replace(event, source="/new/01.jsonl", source_ordinal=index)
+                  for index, event in enumerate(events[2:])]
+    actual = simulate_tick(cropped, *args[1:], bbo_data=bbo,
+                           exchange_book_event_tape=new_events,
+                           resume_checkpoint=load_trusted_runtime_checkpoint(path),
+                           resume_input_batch=True)
+    assert_same(actual, expected)
+
+
+@pytest.mark.parametrize("mode", ["ordinary", "async", "compute", "timeout", "emergency", "close_replace"])
+@pytest.mark.parametrize("cut", [1_005, 1_110, 1_121, 1_399, 2_001])
+def test_rotated_arrays_keep_accounting_and_order_lifecycle(mode, cut, tmp_path):
+    args, kwargs = scenario(mode)
+    expected = simulate_tick(*args, **kwargs)
+    # The first batch has lookahead beyond the cut. The second drops a real
+    # consumed prefix; it is not merely an uninterrupted replay with checkpoints.
+    first_args = (args[0][args[0].transact_time < 2_500].copy(), args[1], args[2],
+                  {**args[3], "replay_event_clock_end_ts_ms": 2_499})
+    first_bbo = kwargs["bbo_data"]
+    partial = simulate_tick(*first_args, bbo_data=first_bbo, checkpoint_at_ts_ms=cut)
+    if partial.get("completed") is not False:
+        assert_same(partial, expected)
+        return
+    path = tmp_path / "batch.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    old = load_trusted_runtime_checkpoint(path)
+    second_args = (args[0][args[0].transact_time >= 500].copy(), args[1], args[2], args[3])
+    # The delayed-compute case still references the first quote's snapshot.
+    # Keep that actual predecessor instead of fabricating a newer snapshot.
+    bbo_start = 0 if mode == "compute" else 500
+    bbo = replace(first_bbo, **{
+        name: getattr(first_bbo, name)[first_bbo.ts_ms >= bbo_start].copy()
+        for name in ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")
+    })
+    actual = simulate_tick(*second_args, bbo_data=bbo, resume_checkpoint=old, resume_input_batch=True)
+    assert_same(actual, expected)
+    assert len(second_args[0]) < len(args[0])
+
+
+@pytest.mark.parametrize("delayed_fill", [False, True])
+def test_multiple_windows_rotate_book_variance_predictions_and_pending_fills(tmp_path, delayed_fill):
+    import pandas as pd
+    from models.tick_data_types import HistoricalBBOData, HistoricalL2Data
+    from tests.test_python_planned_maintenance_replay import _async_fifo_params, _params
+
+    # Real 120-second local-rank context is retained in every batch. Earlier
+    # short tests exercise cursor translation; this case exercises lookbacks.
+    times = np.arange(0, 142_001, 100)
+    trades = pd.DataFrame({
+        "transact_time": times, "price": np.full(times.size, 100.0),
+        "quantity": np.zeros(times.size), "is_buyer_maker": np.ones(times.size, dtype=np.uint8),
+    })
+    for timestamp, price, side in ((133_100, 90., 1), (137_100, 110., 0), (139_100, 90., 1)):
+        trades.loc[(trades.transact_time >= timestamp) & (trades.transact_time < timestamp + 500),
+                   ["price", "quantity", "is_buyer_maker"]] = [price, 10., side]
+    variance_ts = np.arange(0, 142_001, 1_000)
+    variance = np.linspace(1.0, 1.2, variance_ts.size)
+    params = {**_params(), **_async_fifo_params(), "replay_event_clock_end_ts_ms": 142_000,
+              "rq_min": 0.5, "rq_max": 1.0, "trace_decisions_max": 1_000,
+              "ml_enabled": True, "vol_blend": 0.2,
+              "queue_l2_cancel_ahead_enabled": True}
+    if delayed_fill:
+        params["_private_fill_visibility_latency_samples_ms"] = [1_200.]
+
+    def inputs(start, end):
+        clock = times[(times >= start) & (times <= end)]
+        mask = (variance_ts >= start) & (variance_ts <= end)
+        return {
+            "trades_df": trades[(trades.transact_time >= start) & (trades.transact_time <= end)].copy(),
+            "var_ts_ms": variance_ts[mask], "var_ssq": variance[mask],
+            "var_ti": np.linspace(40., 60., variance_ts.size)[mask],
+            "var_retsq": np.linspace(1., 2., variance_ts.size)[mask],
+            "ml_data": (variance_ts[mask], np.linspace(.4, .6, variance_ts.size)[mask],
+                        variance[mask], np.zeros(mask.sum())),
+            "params": {**params, "replay_event_clock_end_ts_ms": end},
+            "bbo_data": HistoricalBBOData(clock, np.full(clock.size, 99.9), np.full(clock.size, 100.1),
+                                          np.ones(clock.size), np.ones(clock.size)),
+            "l2_data": HistoricalL2Data(clock, np.tile([99.9, 96.], (clock.size, 1)),
+                                        np.ones((clock.size, 2)), np.tile([100.1, 104.], (clock.size, 1)),
+                                        np.ones((clock.size, 2))),
+        }
+
+    expected = simulate_tick(**inputs(0, 142_000))
+    checkpoint = None
+    for start, end, cut in ((0, 140_000, 134_001), (1_000, 142_000, 138_001)):
+        partial = simulate_tick(**inputs(start, end), resume_checkpoint=checkpoint,
+                                resume_input_batch=checkpoint is not None, checkpoint_at_ts_ms=cut)
+        path = tmp_path / "rolling.pickle"
+        save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+        checkpoint = load_trusted_runtime_checkpoint(path)
+    actual = simulate_tick(**inputs(5_000, 142_000), resume_checkpoint=checkpoint, resume_input_batch=True)
+    assert expected["fills_bid"] + expected["fills_ask"] >= 2
+    assert_same(actual, expected)

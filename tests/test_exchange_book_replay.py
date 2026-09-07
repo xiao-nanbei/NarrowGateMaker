@@ -329,6 +329,39 @@ def test_book_checkpoint_does_not_hide_sequence_gap_or_time_regression():
         )])
 
 
+def test_native_file_rotation_preserves_prefetch_and_global_source_ordinals():
+    from dataclasses import replace
+
+    events = [replace(event, source="hour-0.csv") for event in _events()[:1]]
+    events += [replace(event, source="hour-1.csv") for event in _events()[1:]]
+    events.append(replace(_event(
+        900, event_type="delta", levels=(("ask", 1001, 1.5),),
+        first_update_id=103, final_update_id=103, previous_final_update_id=102, ordinal=4,
+    ), source="hour-2.csv"))
+    original = HistoricalExchangeBookScheduler(events)
+    original.advance_to((BASE_MS + 500) * 1_000_000)
+    saved = HistoricalExchangeBookScheduler.from_checkpoint(original.checkpoint(), [])
+    # Drop the first source file and re-number source ordinals as the raw tape
+    # loader does for a different file window. The within-file cursor is stable.
+    new_window = [replace(event, source_ordinal=i) for i, event in enumerate(events[1:], start=1)]
+    saved.resume_input_source(new_window)
+    assert saved.advance_to((BASE_MS + 1_000) * 1_000_000) == original.advance_to((BASE_MS + 1_000) * 1_000_000)
+    assert saved.stats() == original.stats()
+    assert saved.state_fingerprint() == original.state_fingerprint()
+    assert saved._last_read_event == original._last_read_event
+
+
+def test_native_file_rotation_rejects_changed_cursor_message():
+    from dataclasses import replace
+
+    events = [replace(event, source="hour-0.csv") for event in _events()]
+    scheduler = HistoricalExchangeBookScheduler(events)
+    marker = scheduler._last_read_event
+    changed = [replace(marker, levels=(("bid", 990, 123.0),)), *events[1:]]
+    with pytest.raises(ValueError, match="changed the saved source"):
+        scheduler.resume_input_source(changed)
+
+
 def test_exchange_book_event_is_not_visible_before_its_exchange_timestamp() -> None:
     scheduler = HistoricalExchangeBookScheduler(_events())
     assert scheduler.next_exchange_ts_ns == (

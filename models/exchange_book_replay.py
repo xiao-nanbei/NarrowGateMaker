@@ -591,6 +591,9 @@ class HistoricalExchangeBookScheduler:
         self._latest_batch_discontinuous = False
         self._consumed = 0
         self._source_read_count = 0
+        self._last_read_event: HistoricalExchangeBookEvent | None = None
+        self._last_source_file = ""
+        self._source_file_read_count = 0
         self._accepted = 0
         self._rejected = 0
         self._snapshot_events = 0
@@ -658,6 +661,42 @@ class HistoricalExchangeBookScheduler:
             and int(exchange_ts_ns) >= self._strict_after_ns
         )
 
+    def resume_input_source(self, events: Iterable[HistoricalExchangeBookEvent]) -> None:
+        """Rebind a new overlapping raw-file window after its saved read cursor.
+
+        The saved book, pending same-time group and lookahead are untouched.
+        Source files are read from their beginning, so a within-file ordinal
+        distinguishes even byte-identical duplicate messages. Full source-file
+        prefixes must be supplied; a sliced arbitrary iterator is insufficient.
+        """
+        marker = self._last_read_event
+        iterator = iter(events)
+        if marker is None:
+            self._iterator = iterator
+            return
+        if not marker.source:
+            raise ValueError("native input rotation requires a source-file cursor")
+        wanted_file = Path(marker.source).name
+        within_file = 0
+        current_file = None
+        for event in iterator:
+            source_file = Path(event.source).name
+            if source_file != current_file:
+                current_file, within_file = source_file, 0
+            within_file += 1
+            if source_file != wanted_file or within_file != self._source_file_read_count:
+                continue
+            if replace(event, source=marker.source, source_ordinal=marker.source_ordinal) != marker:
+                raise ValueError("native input rotation changed the saved source message")
+            ordinal_offset = int(marker.source_ordinal) - int(event.source_ordinal)
+            self._last_source_file = event.source
+            self._iterator = (
+                replace(item, source_ordinal=int(item.source_ordinal) + ordinal_offset)
+                for item in iterator
+            )
+            return
+        raise ValueError("native input window does not contain the saved source-file cursor")
+
     def _read_source_event(
         self,
     ) -> HistoricalExchangeBookEvent | None:
@@ -677,6 +716,11 @@ class HistoricalExchangeBookScheduler:
             )
         self._last_source_ts_ns = int(event.exchange_ts_ns)
         self._source_read_count += 1
+        if event.source != self._last_source_file:
+            self._last_source_file = event.source
+            self._source_file_read_count = 0
+        self._source_file_read_count += 1
+        self._last_read_event = event
         return event
 
     def _push_next(self) -> None:
