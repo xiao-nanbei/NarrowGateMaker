@@ -1893,7 +1893,7 @@ def test_event_cursor_round_trip_at_every_boundary_preserves_replay(main_loop):
 
     def round_trip(frame, event, _result):
         if event == "return" and frame.f_code.co_name == "_next_replay_event":
-            cursor = frame.f_locals["replay_event_cursor"]
+            cursor = frame.f_locals["_tick_state"].replay_event_cursor
             restored = json.loads(json.dumps(cursor))
             cursor.clear()
             cursor.update(restored)
