@@ -49,6 +49,7 @@ from models.backtest_config import (  # noqa: E402
 )
 from models.exchange_book_replay import (  # noqa: E402
     CryptoHFTExchangeBookTape,
+    PlannedExchangeBookTape,
     build_configured_cooldown_policy_adapter,
 )
 from models.replay.continuous_accounting import funding_cashflow_usdc  # noqa: E402
@@ -2428,7 +2429,15 @@ def _run_day_campaign_audit(
 
     native_exchange_book_tape = None
     native_exchange_book_identity: dict[str, Any] = {}
-    if native_exchange_book_root:
+    if base.get("_exchange_book_source_plan") is not None:
+        if native_exchange_book_root or engine != "python" or native_exchange_book_mode != "diagnostic":
+            raise ValueError("source-plan replay requires Python diagnostic book mode and no implicit native root")
+        context_start = pd.Timestamp(input_days[0], tz="UTC") - pd.Timedelta(hours=native_exchange_book_warmup_hours)
+        context_days = pd.date_range(context_start.floor("D"), pd.Timestamp(input_days[-1], tz="UTC"), freq="D").strftime("%Y-%m-%d").tolist()
+        native_exchange_book_tape = PlannedExchangeBookTape(base["_exchange_book_source_plan"],
+            days=context_days, symbol=symbol, tick_size=float(base.get("tick_size", .1)))
+        native_exchange_book_identity = native_exchange_book_tape.identity()
+    elif native_exchange_book_root:
         native_exchange_book_tape = CryptoHFTExchangeBookTape(
             raw_root=Path(native_exchange_book_root),
             day=input_days[0],
@@ -2851,6 +2860,8 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument("--days", nargs="+", required=True)
+    parser.add_argument("--exchange-book-source-plan", type=Path,
+                        help="Explicit per-day raw providers; requires Python diagnostic book mode, never automatic fallback")
     parser.add_argument("--checkpoint-at-ts-ms", type=int,
                         help="Pause before this event clock, retaining orders and inventory; not a replay end")
     parser.add_argument("--save-runtime-checkpoint", type=Path,
@@ -3665,6 +3676,15 @@ def main(argv: list[str] | None = None) -> None:
     base["sync_adjust_stress_interval_s"] = float(
         args.sync_adjust_stress_interval_s
     )
+    if args.exchange_book_source_plan is not None:
+        if (args.native_exchange_book_root is not None or args.engine != "python"
+                or args.native_exchange_book_mode != "diagnostic" or args.replay_purpose == "formal"):
+            raise SystemExit("--exchange-book-source-plan requires --engine python --native-exchange-book-mode diagnostic --replay-purpose diagnostic and no native root")
+        plan_path = args.exchange_book_source_plan.expanduser().resolve()
+        plan_bytes = plan_path.read_bytes()
+        base["_exchange_book_source_plan"] = json.loads(plan_bytes)
+        base["exchange_book_queue_mode"] = "diagnostic"
+        base["exchange_book_source_plan_sha256"] = hashlib.sha256(plan_bytes).hexdigest()
     if args.native_exchange_book_root is not None:
         base["exchange_book_queue_mode"] = str(args.native_exchange_book_mode)
         base["native_exchange_book_root"] = str(
@@ -4435,9 +4455,10 @@ def main(argv: list[str] | None = None) -> None:
         ),
         "native_exchange_book_mode": (
             args.native_exchange_book_mode
-            if args.native_exchange_book_root is not None
+            if args.native_exchange_book_root is not None or args.exchange_book_source_plan is not None
             else "disabled"
         ),
+        "exchange_book_source_plan_sha256": base.get("exchange_book_source_plan_sha256", ""),
         "native_exchange_book_warmup_hours": int(args.native_exchange_book_warmup_hours),
         "native_exchange_book_identities": native_exchange_book_identities,
         **({"runtime_input_batches": runtime_input_batches} if runtime_input_batches else {}),

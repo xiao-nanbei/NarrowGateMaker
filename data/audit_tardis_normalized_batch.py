@@ -34,6 +34,7 @@ from data.normalize_tardis_orderbook import (
     CROSS_CHANNEL_MIN_EXACT_PRICE_RATIO,
     CROSS_CHANNEL_MIN_WITHIN_TICK_RATIO,
     DATASET_ID,
+    EXCHANGE_DATASET_ID,
     INCREMENTAL_L2,
     SOURCE_ID,
 )
@@ -191,13 +192,15 @@ def _parquet_structure(
         bbo, columns=["timestamp", "best_bid", "best_ask"]
     ).to_pydict()
     l2_ts = pq.read_table(l2, columns=["timestamp"]).column(0).to_numpy()
+    exchange_clock = quality.get("clock_source") == "tardis_exchange"
+    age_column = "exchange_resample_age_us" if exchange_clock else "provider_visibility_delay_us"
     clock_table = pq.read_table(
         clock,
         columns=[
             "timestamp",
             "exchange_cut_timestamp_us",
             "last_provider_local_timestamp_us",
-            "provider_visibility_delay_us",
+            age_column,
         ],
     ).to_pydict()
     bbo_ts = np.asarray(bbo_table["timestamp"], dtype=np.int64)
@@ -240,14 +243,14 @@ def _parquet_structure(
         clock_table["last_provider_local_timestamp_us"], dtype=np.int64
     )
     visibility_delay = np.asarray(
-        clock_table["provider_visibility_delay_us"], dtype=np.int64
+        clock_table[age_column], dtype=np.int64
     )
     if len(clock_ts) and bool(
         np.any(exchange_cut >= boundary_us)
-        or np.any(provider_local >= boundary_us)
+        or (not exchange_clock and np.any(provider_local >= boundary_us))
         or np.any(visibility_delay < 0)
         or np.any(visibility_delay > 100_000)
-        or np.any(visibility_delay != boundary_us - provider_local)
+        or np.any(visibility_delay != boundary_us - (exchange_cut if exchange_clock else provider_local))
         or np.any(np.diff(exchange_cut) < 0)
         or np.any(np.diff(provider_local) < 0)
     ):
@@ -348,10 +351,11 @@ def audit_batch(
             errors.append("quality_day_mismatch")
         if str(quality.get("source_id")) != SOURCE_ID:
             errors.append("quality_source_id_mismatch")
-        if str(quality.get("dataset_id")) != DATASET_ID:
+        expected_dataset = (EXCHANGE_DATASET_ID if quality.get("clock_source") == "tardis_exchange" else DATASET_ID)
+        if str(quality.get("dataset_id")) != expected_dataset:
             errors.append("quality_dataset_id_mismatch")
         if (
-            quality.get("clock_source") != "tardis_provider_local"
+            quality.get("clock_source") not in {"tardis_provider_local", "tardis_exchange"}
             or quality.get("clock_unit") != "microseconds_since_unix_epoch_utc"
             or int(quality.get("cadence_ms", 0)) != 100
             or int(quality.get("levels", 0)) != 20

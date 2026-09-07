@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from data.audit_tardis_normalized_batch import audit_batch
-from data.normalize_tardis_orderbook import DATASET_ID, SOURCE_ID
+from data.normalize_tardis_orderbook import DATASET_ID, EXCHANGE_DATASET_ID, SOURCE_ID
 
 
 def _sha256(path: Path) -> str:
@@ -166,8 +167,21 @@ def _fixture(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def test_post_batch_audit_rehashes_outputs_and_recomputes_gate(tmp_path: Path) -> None:
+@pytest.mark.parametrize("exchange_clock", [False, True])
+def test_post_batch_audit_rehashes_outputs_and_recomputes_gate(tmp_path: Path, exchange_clock) -> None:
     paths = _fixture(tmp_path)
+    if exchange_clock:
+        quality = json.loads(paths["quality"].read_text())
+        clock_path = Path(quality["clock_output"]["path"])
+        clock = pq.read_table(clock_path).to_pydict()
+        clock.pop("provider_visibility_delay_us")
+        clock["exchange_resample_age_us"] = [2_000]
+        # The original provider transport may finish after this exchange boundary.
+        clock["last_provider_local_timestamp_us"][0] += 500_000
+        pq.write_table(pa.table(clock), clock_path)
+        quality.update(clock_source="tardis_exchange", dataset_id=EXCHANGE_DATASET_ID,
+                       clock_output=_claim(clock_path))
+        paths["quality"].write_text(json.dumps(quality))
     result = audit_batch(
         raw_manifest=paths["manifest"],
         days_file=paths["days"],

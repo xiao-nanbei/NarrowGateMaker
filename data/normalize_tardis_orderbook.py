@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Reconstruct source-separated Tardis BTCUSDC top-20 books at 100 ms.
 
-The normalized clock is the provider ``local_timestamp`` (receive time).  A
-row stamped at boundary ``b`` contains only L2 messages with local timestamps
-strictly before ``b``.  Tardis incremental L2 does not expose Binance
+The default clock is provider ``local_timestamp``; an explicitly separate
+exchange-clock product uses ``timestamp`` before adding modeled host latency.
+A row at boundary ``b`` contains only messages strictly before ``b`` on the
+selected clock. Provider receive timestamps remain provenance in both products.
+Tardis incremental L2 does not expose Binance
 ``U/u/pu`` sequence IDs; the resulting book is therefore a provider-normalized
 replay candidate, never native-sequence or exact-queue evidence.
 """
@@ -40,6 +42,7 @@ from data_paths import data_root, marketdata_root
 
 SOURCE_ID = "tardis.0730-beinan.binance-futures.BTCUSDC.v1"
 DATASET_ID = "normalized_tardis_l2_100ms_v1"
+EXCHANGE_DATASET_ID = "normalized_tardis_l2_exchange_100ms_v1"
 BOOK_TICKER = "book_ticker"
 INCREMENTAL_L2 = "incremental_book_L2"
 DAY_US = 86_400 * 1_000_000
@@ -176,8 +179,12 @@ class GapHistogram:
 class _ParquetPairWriter:
     """Write BBO/L2/provider-clock files under one source identity."""
 
-    def __init__(self, root: Path, symbol: str, day: str, levels: int) -> None:
+    def __init__(self, root: Path, symbol: str, day: str, levels: int,
+                 *, timestamp_source: str = "provider") -> None:
         self.levels = int(levels)
+        self.timestamp_source = timestamp_source
+        self.age_column = ("exchange_resample_age_us" if timestamp_source == "exchange"
+                           else "provider_visibility_delay_us")
         self.bbo_final = root / "bbo" / f"{symbol}-bbo-{day}.parquet"
         self.l2_final = root / "l2" / f"{symbol}-l2-{day}.parquet"
         self.clock_final = root / "clock" / f"{symbol}-clock-{day}.parquet"
@@ -201,7 +208,7 @@ class _ParquetPairWriter:
                 ("timestamp", pa.int64()),
                 ("exchange_cut_timestamp_us", pa.int64()),
                 ("last_provider_local_timestamp_us", pa.int64()),
-                ("provider_visibility_delay_us", pa.int64()),
+                (self.age_column, pa.int64()),
             ]
         )
         self.clock_writer = pq.ParquetWriter(
@@ -222,7 +229,7 @@ class _ParquetPairWriter:
             "timestamp": [],
             "exchange_cut_timestamp_us": [],
             "last_provider_local_timestamp_us": [],
-            "provider_visibility_delay_us": [],
+            self.age_column: [],
         }
         self.rows = 0
         self.closed = False
@@ -256,8 +263,9 @@ class _ParquetPairWriter:
         self.clock["last_provider_local_timestamp_us"].append(
             last_provider_local_us
         )
-        self.clock["provider_visibility_delay_us"].append(
-            boundary_us - last_provider_local_us
+        self.clock[self.age_column].append(
+            boundary_us - (exchange_cut_us if self.timestamp_source == "exchange"
+                           else last_provider_local_us)
         )
         if len(self.bbo["timestamp"]) >= 10_000:
             self.flush()
@@ -333,7 +341,10 @@ def reconstruct_l2(
     levels: int = 20,
     cadence_ms: int = DEFAULT_CADENCE_MS,
     pilot_duration_s: int | None = None,
+    timestamp_source: str = "provider",
 ) -> tuple[Path, Path, dict[str, Any]]:
+    if timestamp_source not in {"provider", "exchange"}:
+        raise ValueError("timestamp_source must be provider or exchange")
     started = time.perf_counter()
     day_start = _day_start_us(day)
     day_end = day_start + DAY_US
@@ -344,7 +355,8 @@ def reconstruct_l2(
     book = OrderBookState()
     stats = ReconstructionStats()
     gaps = GapHistogram()
-    writer = _ParquetPairWriter(output_root, symbol, day, levels)
+    writer = _ParquetPairWriter(output_root, symbol, day, levels,
+                               timestamp_source=timestamp_source)
     initialized = False
     current_message: tuple[int, int, bool] | None = None
     current_bucket: int | None = None
@@ -424,7 +436,8 @@ def reconstruct_l2(
                 exchange_us = int(exchange_us)
                 local_us = int(local_us)
                 snapshot = bool(is_snapshot)
-                if local_us >= requested_end:
+                clock_us = exchange_us if timestamp_source == "exchange" else local_us
+                if clock_us >= requested_end:
                     stopped_at_cut = requested_end < day_end
                     break
                 if (
@@ -435,7 +448,7 @@ def reconstruct_l2(
                     or float(price) <= 0.0
                     or not math.isfinite(float(amount))
                     or float(amount) < 0.0
-                    or not (day_start <= local_us < day_end)
+                    or not (day_start <= clock_us < day_end)
                 ):
                     stats.invalid_rows += 1
                     continue
@@ -454,9 +467,11 @@ def reconstruct_l2(
                         and exchange_us < previous_exchange_us
                     ):
                         stats.exchange_clock_reversals += 1
+                        if timestamp_source == "exchange":
+                            raise ValueError("exchange-clock normalization cannot reorder a regressing source")
                     previous_local_us = local_us
                     previous_exchange_us = exchange_us
-                    next_bucket = local_us // cadence_us
+                    next_bucket = clock_us // cadence_us
                     if current_bucket is not None and next_bucket != current_bucket:
                         emit(current_bucket)
                     current_bucket = next_bucket
@@ -500,12 +515,13 @@ def reconstruct_l2(
     quality: dict[str, Any] = {
         "schema_version": "narrowgate.normalized_tardis_l2_day.v1",
         "source_id": SOURCE_ID,
-        "dataset_id": DATASET_ID,
+        "dataset_id": EXCHANGE_DATASET_ID if timestamp_source == "exchange" else DATASET_ID,
         "symbol": symbol,
         "day": day,
-        "clock_source": "tardis_provider_local",
+        "clock_source": "tardis_exchange" if timestamp_source == "exchange" else "tardis_provider_local",
         "clock_unit": "microseconds_since_unix_epoch_utc",
-        "causal_cut": "raw local_timestamp < normalized right boundary",
+        "causal_cut": ("raw timestamp < normalized right boundary" if timestamp_source == "exchange"
+                       else "raw local_timestamp < normalized right boundary"),
         "cadence_ms": cadence_ms,
         "levels": levels,
         "complete_day": pilot_duration_s is None,
@@ -534,7 +550,8 @@ def reconstruct_l2(
         "exchange_timestamp_summary": {
             "first_applied_cut_us": first_exchange_cut_us,
             "last_applied_cut_us": last_exchange_cut_us,
-            "cut_is_maximum_exchange_timestamp_applied_before_provider_boundary": True,
+            "cut_is_maximum_exchange_timestamp_applied_before_provider_boundary": timestamp_source == "provider",
+            "cut_is_maximum_exchange_timestamp_applied_before_exchange_boundary": timestamp_source == "exchange",
         },
         "observed_internal_gap_valid": bool(
             gap_summary["p99_upper_us"] is not None
@@ -576,6 +593,7 @@ def audit_book_ticker(
     pilot_duration_s: int | None = None,
     max_age_ms: int = CROSS_CHANNEL_MAX_AGE_MS,
     tick_size: float = 0.1,
+    timestamp_source: str = "provider",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     table = pq.read_table(normalized_bbo)
@@ -595,6 +613,7 @@ def audit_book_ticker(
     causal_violations = 0
     local_reversals = 0
     previous_local: int | None = None
+    previous_clock: int | None = None
     stop = False
     mismatch_examples: list[dict[str, Any]] = []
     raw_rows = 0
@@ -666,17 +685,21 @@ def audit_book_ticker(
             raw_rows += 1
             exchange_us = int(exchange_us)
             local_us = int(local_us)
-            if local_us >= requested_end:
+            clock_us = exchange_us if timestamp_source == "exchange" else local_us
+            if timestamp_source == "exchange" and previous_clock is not None and clock_us < previous_clock:
+                raise ValueError("exchange-clock ticker audit cannot reorder a regressing source")
+            previous_clock = clock_us
+            if clock_us >= requested_end:
                 stop = True
                 break
-            compare_until(local_us)
+            compare_until(clock_us)
             if local_us < exchange_us:
                 causal_violations += 1
             if previous_local is not None and local_us < previous_local:
                 local_reversals += 1
             previous_local = local_us
             latest = (
-                local_us,
+                clock_us,
                 float(bp),
                 float(bq),
                 float(ap),
@@ -688,6 +711,7 @@ def audit_book_ticker(
     denominator = max(1, comparable)
     elapsed = time.perf_counter() - started
     return {
+        "comparison_clock": timestamp_source,
         "book_ticker_raw_rows": raw_rows,
         "book_ticker_audit_elapsed_s": elapsed,
         "book_ticker_raw_rows_per_s": float(raw_rows / max(elapsed, 1e-9)),
@@ -1032,6 +1056,7 @@ def normalize_day(
     cryptohft_root: Path | None = None,
     pilot_duration_s: int | None = None,
     force: bool = False,
+    timestamp_source: str = "provider",
 ) -> dict[str, Any]:
     rows = _download_rows(manifest, day)
     manifest_sha256 = _sha256(manifest)
@@ -1040,8 +1065,13 @@ def normalize_day(
     l2_raw = resolve_tardis_artifact_path(str(l2_row["path"]))
     ticker_raw = resolve_tardis_artifact_path(str(ticker_row["path"]))
     quality_path = output_root / "quality" / f"BTCUSDC-{day}.json"
-    if not force and quality_path.is_file():
+    cached = None
+    if quality_path.is_file():
         cached = json.loads(quality_path.read_text(encoding="utf-8"))
+        expected_clock = "tardis_exchange" if timestamp_source == "exchange" else "tardis_provider_local"
+        if cached.get("clock_source") != expected_clock:
+            raise ValueError("normalization clock changed: select a separate output root")
+    if not force and cached is not None:
         expected_complete = pilot_duration_s is None
         raw_inputs = cached.get("raw_inputs", {})
         output_identities = [
@@ -1075,6 +1105,7 @@ def normalize_day(
         output_root=output_root,
         day=day,
         pilot_duration_s=pilot_duration_s,
+        timestamp_source=timestamp_source,
     )
     quality["raw_inputs"] = {
         INCREMENTAL_L2: {
@@ -1097,6 +1128,7 @@ def normalize_day(
         bbo_path,
         day=day,
         pilot_duration_s=pilot_duration_s,
+        timestamp_source=timestamp_source,
     )
     ticker_audit = quality["book_ticker_audit"]
     quality["cross_channel_contract_valid"] = bool(
@@ -1168,6 +1200,7 @@ def _normalize_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
             else None
         ),
         force=bool(payload.get("force")),
+        timestamp_source=str(payload.get("timestamp_source", "provider")),
     )
 
 
@@ -1193,8 +1226,10 @@ def _parser() -> argparse.ArgumentParser:
         help="Optional CSV with a required day column; combined with repeated --day",
     )
     parser.add_argument(
-        "--output-root", type=Path, default=data_root() / DATASET_ID
+        "--output-root", type=Path
     )
+    parser.add_argument("--timestamp-source", choices=("provider", "exchange"), default="provider",
+                        help="Exchange bins exclude historical provider transport; current-host delay is simulated later")
     parser.add_argument(
         "--cryptohft-root", type=Path, default=data_root() / "normalized_l2_100ms_v2"
     )
@@ -1220,6 +1255,9 @@ def _requested_days(explicit: Sequence[str], days_file: Path | None) -> list[str
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    dataset_id = EXCHANGE_DATASET_ID if args.timestamp_source == "exchange" else DATASET_ID
+    if args.output_root is None:
+        args.output_root = data_root() / dataset_id
     if args.pilot_duration_s is not None and args.pilot_duration_s <= 0:
         raise SystemExit("--pilot-duration-s must be positive")
     if args.workers < 1 or args.workers > 4:
@@ -1251,6 +1289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "cryptohft_root": str(args.cryptohft_root.expanduser().resolve()),
             "pilot_duration_s": args.pilot_duration_s,
             "force": args.force,
+            "timestamp_source": args.timestamp_source,
         }
         for day in days
     ]
@@ -1288,7 +1327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary = {
         "schema_version": "narrowgate.normalized_tardis_l2_batch.v1",
         "source_id": SOURCE_ID,
-        "dataset_id": DATASET_ID,
+        "dataset_id": dataset_id,
         "download_manifest": {
             "path": str(manifest_path),
             "sha256": _sha256(manifest_path),

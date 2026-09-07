@@ -614,6 +614,48 @@ class TardisExchangeBookTape:
         }
 
 
+class PlannedExchangeBookTape:
+    """One explicitly selected raw source per UTC day, not automatic fallback."""
+
+    def __init__(self, plan: Mapping[str, object], *, days: list[str], symbol: str,
+                 tick_size: float):
+        if plan.get("symbol") != symbol:
+            raise ValueError("exchange-book source plan symbol mismatch")
+        rows = plan.get("days", [])
+        entries = {row["day"]: row for row in rows}
+        if len(entries) != len(rows):
+            raise ValueError("exchange-book source plan has duplicate dates")
+        self.tapes = []
+        self.days = list(days)
+        for day in days:
+            if day not in entries:
+                raise ValueError(f"exchange-book source plan lacks requested context day {day}")
+            row = entries[day]
+            if row["provider"] == "cryptohft":
+                tape = CryptoHFTExchangeBookTape(raw_root=Path(row["raw_root"]),
+                    day=day, symbol=symbol, tick_size=tick_size, warmup_hours=0,
+                    strict_complete=True)
+            elif row["provider"] == "tardis":
+                tape = TardisExchangeBookTape([Path(row["raw_file"])],
+                    symbol=symbol, tick_size=tick_size)
+            else:
+                raise ValueError(f"unsupported exchange-book provider {row['provider']!r}")
+            self.tapes.append(tape)
+
+    def __iter__(self) -> Iterator[HistoricalExchangeBookEvent]:
+        ordinal = 0
+        for tape in self.tapes:
+            for event in tape:
+                yield replace(event, source_ordinal=ordinal)
+                ordinal += 1
+
+    def identity(self) -> dict[str, object]:
+        return {"source": "explicit_daily_source_plan", "days": self.days,
+                "sources": [tape.identity(include_sha256=False) if isinstance(tape, CryptoHFTExchangeBookTape)
+                            else tape.identity() for tape in self.tapes],
+                "automatic_source_fallback": False}
+
+
 class HistoricalExchangeBookScheduler:
     """Reconstruct a native book on the exchange clock.
 

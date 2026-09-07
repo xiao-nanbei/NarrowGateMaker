@@ -352,7 +352,8 @@ def test_continuous_prefix_cli_requires_continuous_before_loading_data():
 
 
 @pytest.mark.parametrize("rotate_inputs", [False, True])
-def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path, rotate_inputs):
+@pytest.mark.parametrize("source_plan", [False, True])
+def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path, rotate_inputs, source_plan):
     from dataclasses import replace
     from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
     from tests.test_tick_runtime_checkpoint import scenario, assert_same
@@ -368,11 +369,20 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
     monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
     monkeypatch.setattr(campaign_audit.smoke, "_load_window", lambda *_a: window)
     base = {**args[3], "planned_quote_stop_ts_ms": 0, "requote_threshold_bps": 1.}
+    if source_plan:
+        raw = tmp_path / "provider.csv"
+        raw.write_text("exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+            f"binance-futures,BTCUSDC,{start*1000},{start*1000+1},true,bid,90,1\n"
+            f"binance-futures,BTCUSDC,{start*1000},{start*1000+1},true,ask,110,1\n")
+        base["_exchange_book_source_plan"] = {"symbol": "BTCUSDC", "days": [
+            {"day": day, "provider": "tardis", "raw_file": str(raw)}]}
     call = dict(day=day, continuous_days=[day], symbol="BTCUSDC", base=base,
                 arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")],
                 engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
                 replay_end_ts_ms=start + 4_000, save_fill_trace=True,
                 funding_events=[{"fundingTime": start + 2_000, "fundingRate": .01, "markPrice": 100.}])
+    if source_plan:
+        call.update(native_exchange_book_mode="diagnostic", native_exchange_book_warmup_hours=0)
     expected = campaign_audit._run_day_campaign_audit(**call)
     partial = campaign_audit._run_day_campaign_audit(
         **call, checkpoint_at_ts_ms=start + 1_250,
@@ -397,6 +407,8 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
             row.pop("runtime_s", None)
     assert_same(actual, expected)
     assert actual["funding_trace_rows"]
+    if source_plan:
+        assert actual["daily_rows"][0]["exchange_book_queue_scope"] == "strategy_independent_provider_ordered_l2_exchange_time_v1"
 
 
 def test_checkpoint_cli_requires_durable_output_before_loading():

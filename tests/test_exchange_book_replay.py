@@ -110,6 +110,29 @@ def test_provider_change_requires_snapshot_and_never_carries_old_book_levels():
         replace(snapshot, last_update_id=123)
 
 
+def test_explicit_daily_source_plan_keeps_global_ordinals_and_source_identity(tmp_path):
+    from models.exchange_book_replay import PlannedExchangeBookTape
+    files = []
+    for n in range(2):
+        path = tmp_path / f"day{n}.csv"
+        path.write_text("exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+            f"binance-futures,BTCUSDC,{1000+n},{1010+n},true,bid,100,1\n")
+        files.append(path)
+    plan = {"symbol": "BTCUSDC", "days": [
+        {"day": f"2026-01-0{n+1}", "provider": "tardis", "raw_file": str(path)}
+        for n, path in enumerate(files)]}
+    tape = PlannedExchangeBookTape(plan, days=["2026-01-01", "2026-01-02"], symbol="BTCUSDC", tick_size=.1)
+    events = list(tape)
+    assert [event.source_ordinal for event in events] == [0, 1]
+    assert [event.source for event in events] == list(map(str, files))
+    assert tape.identity()["automatic_source_fallback"] is False
+    with pytest.raises(ValueError, match="lacks requested context"):
+        PlannedExchangeBookTape(plan, days=["2025-12-31"], symbol="BTCUSDC", tick_size=.1)
+    with pytest.raises(ValueError, match="duplicate dates"):
+        PlannedExchangeBookTape({**plan, "days": plan["days"] * 2}, days=["2026-01-01"],
+                               symbol="BTCUSDC", tick_size=.1)
+
+
 @pytest.mark.parametrize("defect", ["depth", "channel", "delivery", "flag"])
 def test_configured_cooldown_refuses_missing_source_instead_of_static_baseline(defect):
     depth = SimpleNamespace(
