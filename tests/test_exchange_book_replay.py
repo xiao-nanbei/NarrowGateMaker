@@ -69,6 +69,7 @@ def test_recorder_snapshot_sequence_clock_keeps_original_time_and_checkpoint(tmp
     full = HistoricalExchangeBookScheduler(source)
     full.advance_to((hour_ms + 200) * 1_000_000)
     assert full.stats().message_time_reversals == 0
+    assert full.stats().sequence_anchored_snapshot_events == 1
     partial = HistoricalExchangeBookScheduler(source)
     partial.advance_to((hour_ms - 200) * 1_000_000)
     resumed = HistoricalExchangeBookScheduler.from_checkpoint(pickle.loads(pickle.dumps(partial.checkpoint())), ())

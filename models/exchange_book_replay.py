@@ -136,6 +136,7 @@ class ExchangeBookSchedulerStats:
     receive_timestamp_fallback_events: int
     unknown_timestamp_source_events: int
     provider_ordered_events: int = 0
+    sequence_anchored_snapshot_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -836,6 +837,7 @@ class HistoricalExchangeBookScheduler:
         self._provider_ordered_events = 0
         self._sequence_scope = "exchange_sequence"
         self._timestamp_source_counts = {
+            "preceding_update_sequence_anchor": 0,
             "transaction": 0,
             "event": 0,
             "receive": 0,
@@ -1649,6 +1651,9 @@ class HistoricalExchangeBookScheduler:
                 self._timestamp_source_counts["unknown"]
             ),
             provider_ordered_events=int(self._provider_ordered_events),
+            sequence_anchored_snapshot_events=int(
+                self._timestamp_source_counts.get("preceding_update_sequence_anchor", 0)
+            ),
         )
 
     @property

@@ -1453,6 +1453,7 @@ class OrderBookSequenceStats:
     message_interval_le_500ms: int = 0
     message_interval_le_1000ms: int = 0
     message_time_reversals: int = 0
+    snapshot_sequence_anchors: int = 0
 
 
 def recorder_snapshot_anchor_ms(
@@ -1484,7 +1485,10 @@ class OrderBookSequenceState:
         book: OrderBookState,
         *,
         allow_delta_bootstrap: bool = False,
+        recorder_snapshot_clock: str = "original",
     ):
+        if recorder_snapshot_clock not in {"original", "preceding_update_id"}:
+            raise ValueError("unsupported recorder snapshot clock")
         self.book = book
         self.stats = OrderBookSequenceStats()
         self.allow_delta_bootstrap = bool(allow_delta_bootstrap)
@@ -1497,6 +1501,29 @@ class OrderBookSequenceState:
         self.previous_message_ts_ms: Optional[int] = None
         self.initialization_source: Optional[str] = None
         self.initialization_ts_ms: Optional[int] = None
+        self.recorder_snapshot_clock = recorder_snapshot_clock
+        self._last_observed_update = None
+        self._snapshot_clock_key = None
+        self._snapshot_clock_ms = None
+
+    def recorder_snapshot_time_ms(self, event_type, event_time_ms,
+                                  transaction_time_ms, last_update_id, final_update_id):
+        """Resolve one logical snapshot before both bucketing and validation."""
+        if self.recorder_snapshot_clock == "original" or event_type != "snapshot":
+            return None
+        key = (event_time_ms, transaction_time_ms, last_update_id, final_update_id)
+        if key != self._snapshot_clock_key:
+            previous = self._last_observed_update
+            self._snapshot_clock_ms = recorder_snapshot_anchor_ms(
+                event_type=event_type, event_time_ms=event_time_ms,
+                transaction_time_ms=transaction_time_ms,
+                snapshot_update_id=last_update_id if last_update_id is not None else final_update_id,
+                preceding_update_id=previous[0] if previous else None,
+                preceding_update_time_ms=previous[1] if previous else None,
+            )
+            self._snapshot_clock_key = key
+            self.stats.snapshot_sequence_anchors += int(self._snapshot_clock_ms is not None)
+        return self._snapshot_clock_ms
 
     def _invalidate(self) -> bool:
         self.book.reset()
@@ -1514,6 +1541,9 @@ class OrderBookSequenceState:
         self.current_message_key = None
         self.current_message_apply = False
         self.previous_message_ts_ms = None
+        self._last_observed_update = None
+        self._snapshot_clock_key = None
+        self._snapshot_clock_ms = None
         self._invalidate()
 
     def output_ready(self, ts_ms: int, delta_convergence_ms: int) -> bool:
@@ -1552,6 +1582,9 @@ class OrderBookSequenceState:
         """Return whether all price-level rows in this logical message apply."""
 
         event_type = str(event_type).lower()
+        snapshot_clock = self.recorder_snapshot_time_ms(
+            event_type, event_time_ms, transaction_time_ms, last_update_id, final_update_id,
+        )
         if event_type == "snapshot":
             # One native snapshot contains thousands of price-level rows.
             # CryptoHFTData can stamp those rows with more than one local
@@ -1585,7 +1618,7 @@ class OrderBookSequenceState:
                 int(value)
                 for value in (
                     transaction_time_ms,
-                    event_time_ms,
+                    snapshot_clock if snapshot_clock is not None else event_time_ms,
                     receive_time_ms,
                 )
                 if int(value) > 0
@@ -1616,6 +1649,11 @@ class OrderBookSequenceState:
                         )
         if message_ts_ms > 0:
             self.previous_message_ts_ms = message_ts_ms
+        self._last_observed_update = (
+            (final_update_id, message_ts_ms) if event_type != "snapshot" else None
+        )
+        if event_type != "snapshot":
+            self._snapshot_clock_key = None
 
         if event_type == "snapshot":
             snapshot_update_id = (
@@ -2106,6 +2144,16 @@ def _replay_orderbook_file(
             if not pd.notna(price) or price <= 0.0 or not pd.notna(qty):
                 continue
 
+            snapshot_clock = sequence_state.recorder_snapshot_time_ms(
+                event_type, int(event_ts_ms), int(transaction_ts_ms),
+                int(last_update_id) if pd.notna(last_update_id) else None,
+                int(final_update_id) if pd.notna(final_update_id) else None,
+            )
+            if snapshot_clock is not None:
+                if timestamp_source != "transaction":
+                    raise ValueError("sequence-anchored snapshots require transaction clock output")
+                ts_ms = snapshot_clock
+
             bucket_id = (ts_ms // snapshot_ms) * snapshot_ms if snapshot_ms > 0 else ts_ms
             if current_bucket_id is None:
                 current_bucket_id = bucket_id
@@ -2160,6 +2208,7 @@ def _process_symbol(
     force_rebuild: bool,
     timestamp_source: str,
     sequence_bootstrap: str = DEFAULT_SEQUENCE_BOOTSTRAP,
+    recorder_snapshot_clock: str = "original",
     delta_convergence_ms: int = DEFAULT_DELTA_CONVERGENCE_MS,
     allowed_days: Optional[set[str]] = None,
     download_missing: bool = True,
@@ -2203,6 +2252,7 @@ def _process_symbol(
     sequence_state = OrderBookSequenceState(
         book,
         allow_delta_bootstrap=sequence_bootstrap == "delta-converged",
+        recorder_snapshot_clock=recorder_snapshot_clock,
     )
     writer = DailyOutputWriter(
         target_roots,
@@ -2382,6 +2432,7 @@ def _process_symbol_task(payload: dict[str, object]) -> dict[str, object]:
         freshness_ms=int(payload["freshness_ms"]),
         force_rebuild=bool(payload["force_rebuild"]),
         timestamp_source=str(payload["timestamp_source"]),
+        recorder_snapshot_clock=str(payload.get("recorder_snapshot_clock", "original")),
         sequence_bootstrap=str(payload["sequence_bootstrap"]),
         delta_convergence_ms=int(payload["delta_convergence_ms"]),
         allowed_days=set(payload["allowed_days"]),
@@ -2630,6 +2681,7 @@ def _run_bad_day_repairs(
             freshness_ms=freshness_ms,
             force_rebuild=True,
             timestamp_source=args.timestamp_source,
+            recorder_snapshot_clock=getattr(args, "recorder_snapshot_clock", "original"),
             sequence_bootstrap=args.sequence_bootstrap,
             delta_convergence_ms=args.delta_convergence_ms,
             allowed_days={repair.date},
@@ -2696,6 +2748,7 @@ def _run_bad_day_repairs(
                     "levels": int(args.levels),
                     "snapshot_ms": int(args.snapshot_ms),
                     "timestamp_source": args.timestamp_source,
+                    "recorder_snapshot_clock": getattr(args, "recorder_snapshot_clock", "original"),
                     "sequence_bootstrap": args.sequence_bootstrap,
                     "delta_convergence_ms": int(args.delta_convergence_ms),
                     "independent_retained_days": True,
@@ -2775,6 +2828,12 @@ def main() -> None:
             "Clock used for normalized visibility. Use transaction to match "
             f"live partial-depth T timestamps (default: {DEFAULT_TIMESTAMP_SOURCE})."
         ),
+    )
+    parser.add_argument(
+        "--recorder-snapshot-clock",
+        choices=("original", "preceding_update_id"),
+        default="original",
+        help="Explicit modeled snapshot-state clock; requires transaction output and a separate output dataset.",
     )
     parser.add_argument(
         "--sequence-bootstrap",
@@ -2966,6 +3025,8 @@ def main() -> None:
                         help="Print one line per raw hourly file")
     args = parser.parse_args()
 
+    if args.recorder_snapshot_clock != "original" and args.timestamp_source != "transaction":
+        raise SystemExit("--recorder-snapshot-clock requires --timestamp-source transaction")
     if args.levels <= 0:
         raise SystemExit("--levels must be > 0")
     if args.snapshot_ms <= 0:
@@ -3201,6 +3262,7 @@ def main() -> None:
                         "freshness_ms": int(freshness_ms),
                         "force_rebuild": bool(args.force_rebuild),
                         "timestamp_source": args.timestamp_source,
+                        "recorder_snapshot_clock": args.recorder_snapshot_clock,
                         "sequence_bootstrap": args.sequence_bootstrap,
                         "delta_convergence_ms": int(args.delta_convergence_ms),
                         "allowed_days": (
@@ -3259,6 +3321,7 @@ def main() -> None:
                     freshness_ms=freshness_ms,
                     force_rebuild=args.force_rebuild,
                     timestamp_source=args.timestamp_source,
+                    recorder_snapshot_clock=args.recorder_snapshot_clock,
                     sequence_bootstrap=args.sequence_bootstrap,
                     delta_convergence_ms=args.delta_convergence_ms,
                     allowed_days=(
@@ -3326,6 +3389,7 @@ def main() -> None:
                     "snapshot_ms": int(args.snapshot_ms),
                     "timestamp_source": args.timestamp_source,
                     "sequence_bootstrap": args.sequence_bootstrap,
+                    "recorder_snapshot_clock": args.recorder_snapshot_clock,
                     "delta_convergence_ms": int(args.delta_convergence_ms),
                     "retained_manifest": (
                         str(args.retained_manifest.expanduser().resolve())

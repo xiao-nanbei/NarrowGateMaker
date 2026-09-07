@@ -30,6 +30,43 @@ def test_default_warmup_can_reach_a_prior_utc_day_snapshot():
     assert DEFAULT_WARMUP_HOURS >= 24
 
 
+@pytest.mark.parametrize("mode", ["original", "preceding_update_id"])
+def test_normalized_buckets_use_sequence_anchored_snapshot_clock(tmp_path, mode):
+    hour = int(pd.Timestamp("2026-08-22T14:00:00Z").timestamp() * 1000)
+    rows = []
+    for kind, ts, identifier, previous in [
+        ("snapshot", hour - 2000, 10, None),
+        ("update", hour - 200, 11, 10),
+        ("snapshot", hour, 11, None),
+        ("update", hour - 100, 12, 11),
+        ("update", hour + 100, 13, 12),
+    ]:
+        for side, price in [("bid", 100.), ("ask", 101.)]:
+            rows.append(dict(event_type=kind, event_time=ts,
+                             transaction_time=0 if kind == "snapshot" else ts,
+                             received_time=ts + 5, first_update_id=identifier,
+                             final_update_id=identifier, prev_final_update_id=previous,
+                             last_update_id=identifier if kind == "snapshot" else None,
+                             side=side, price=price, quantity=2.))
+    path = tmp_path / "raw.parquet"
+    pd.DataFrame(rows).to_parquet(path)
+    book = OrderBookState()
+    state = OrderBookSequenceState(book, recorder_snapshot_clock=mode)
+    writer = DailyOutputWriter([tmp_path / "processed"], "BTCUSDC", 1)
+    _, end = cryptohft_orderbook._replay_orderbook_file(
+        path, book, writer, 1, 100, hour - 3000, None, None, state, "transaction", 0,
+    )
+    cryptohft_orderbook._emit_snapshot(book, end, writer, 1, hour - 3000, state, 0)
+    writer.close()
+    assert state.stats.snapshot_sequence_anchors == (mode != "original")
+    assert state.stats.message_time_reversals == (mode == "original")
+    if mode != "original":
+        bbo = pd.read_parquet(tmp_path / "processed/bbo/BTCUSDC-bbo-2026-08-22.parquet")
+        assert bbo.timestamp.is_monotonic_increasing
+        assert hour not in bbo.timestamp.tolist()
+        assert bbo.timestamp.tolist() == [hour - 2000, hour - 200, hour - 100, hour + 100]
+
+
 def test_default_normalized_output_is_versioned_staging() -> None:
     roots = _default_target_roots()
 
