@@ -2045,7 +2045,10 @@ def write_causal_feature_manifest(
 ) -> Path:
     """Bind a versioned feature panel to code, config, and daily content."""
     volatility_unit_contract = absolute_price_variance_unit_contract(symbol)
-    quote_params = _load_label_quote_params(symbol, config_path=config_path)
+    quote_params = (
+        _load_label_quote_params(symbol, config_path=config_path)
+        if labels_materialized else None
+    )
     daily_files = []
     manifest_digest = hashlib.sha256()
     for day, feature_path in sorted(feature_paths):
@@ -2239,7 +2242,7 @@ def write_causal_feature_manifest(
             "model_type": quote_params["fill_probability_model_type"],
             "p3_delta_star": quote_params["p3_delta_star"],
             "p3_kappa_eff": quote_params["p3_kappa_eff"],
-        },
+        } if quote_params is not None else None,
         "label_quote_policy": {
             "a_spread": quote_params["a_spread"],
             "quote_horizon_s": quote_params["quote_horizon_s"],
@@ -2250,7 +2253,7 @@ def write_causal_feature_manifest(
             "dynamic_cap_min_mult": quote_params["dynamic_cap_min_mult"],
             "dynamic_cap_max_mult": quote_params["dynamic_cap_max_mult"],
             "dynamic_cap_var_baseline": quote_params["dynamic_cap_var_baseline"],
-        },
+        } if quote_params is not None else None,
         "feature_timestamp_semantics": "left_label_bucket_end",
         "feature_bucket_ms": 10_000,
         "feature_ready_offset_ms": 10_000,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 import pandas as pd
+import pytest
 
 from features import feature_engineer as engineer
 
@@ -60,6 +62,35 @@ def test_features_only_cli_is_explicit() -> None:
     source = engineer.Path(engineer.__file__).read_text(encoding="utf-8")
     assert 'split = {"inference": sorted(daily_tags)}' in source
     assert '"labels_materialized": bool(labels_materialized)' in source
+
+
+@pytest.mark.parametrize("labels_materialized", [False, True])
+def test_inference_manifest_does_not_load_label_only_artifacts(tmp_path, monkeypatch, labels_materialized):
+    feature = tmp_path / "features_2025-08-01.parquet"
+    pd.DataFrame({"signal": [1.0]}).to_parquet(feature)
+    monkeypatch.setattr(engineer, "TRADE_FEATURE_DIR", tmp_path / "tempo")
+    monkeypatch.setattr(engineer, "_book_dirs_for_symbol",
+                        lambda symbol: (tmp_path / "book/bbo", tmp_path / "book/l2"))
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("label-only P3 is not installed on inference host")
+
+    monkeypatch.setattr(engineer, "_load_label_quote_params", unavailable)
+    kwargs = dict(symbol="BTCUSDC", feature_paths=[("2025-08-01", feature)], warmup_days=7,
+                  market_stage="minimal", reference_symbol="BTCUSDT", config_path=None,
+                  split={"inference": ["2025-08-01"]}, sample_weight_reference_date="2026-07-23",
+                  sample_weight_lambda=.1, require_execution_l2=False, require_taker_tempo=False,
+                  labels_materialized=labels_materialized)
+    if labels_materialized:
+        with pytest.raises(RuntimeError, match="label-only P3"):
+            engineer.write_causal_feature_manifest(tmp_path, **kwargs)
+        return
+    payload = json.loads(engineer.write_causal_feature_manifest(tmp_path, **kwargs).read_text())
+    assert payload["label_quote_calibration"] is None
+    assert payload["label_quote_policy"] is None
+    assert payload["labels_materialized"] is False
+    assert payload["daily_file_count"] == 1
+    assert payload["daily_files"][0]["sha256"] == engineer._sha256_file(feature)
 
 
 def test_warmup_input_still_emits_complete_target_day_grid() -> None:
