@@ -626,11 +626,18 @@ class PlannedExchangeBookTape:
         if len(entries) != len(rows):
             raise ValueError("exchange-book source plan has duplicate dates")
         self.tapes = []
+        self.handovers = []
         self.days = list(days)
         for day in days:
             if day not in entries:
                 raise ValueError(f"exchange-book source plan lacks requested context day {day}")
             row = entries[day]
+            handover = row.get("handover", "snapshot_required")
+            if handover not in {"snapshot_required", "invalidate_then_delta_bootstrap"}:
+                raise ValueError("unsupported exchange-book handover")
+            if handover == "invalidate_then_delta_bootstrap" and row["provider"] != "cryptohft":
+                raise ValueError("delta bootstrap handover requires an exchange-sequenced source")
+            self.handovers.append(handover)
             if row["provider"] == "cryptohft":
                 tape = CryptoHFTExchangeBookTape(raw_root=Path(row["raw_root"]),
                     day=day, symbol=symbol, tick_size=tick_size, warmup_hours=0,
@@ -653,6 +660,15 @@ class PlannedExchangeBookTape:
             for index in range(len(self.tapes)):
                 if event is None:
                     raise ValueError("selected daily exchange-book source is empty")
+                if self.handovers[index] == "invalidate_then_delta_bootstrap":
+                    # Explicit uncertainty boundary, not an invented snapshot.
+                    # Keep it in this file's cursor even when an input batch
+                    # starts here without the preceding provider's file.
+                    yield replace(event, event_type="source_gap", levels=(),
+                                  first_update_id=None, final_update_id=None,
+                                  previous_final_update_id=None, last_update_id=None,
+                                  source_ordinal=ordinal)
+                    ordinal += 1
                 next_first = None
                 if index + 1 < len(self.tapes):
                     following = iter(self.tapes[index + 1])
@@ -660,7 +676,8 @@ class PlannedExchangeBookTape:
                     if next_first is None:
                         raise ValueError("selected daily exchange-book source is empty")
                     if (type(self.tapes[index]) is not type(self.tapes[index + 1])
-                            and next_first.event_type != "snapshot"):
+                            and next_first.event_type != "snapshot"
+                            and self.handovers[index + 1] == "snapshot_required"):
                         raise ValueError("daily source handover requires an actual opening snapshot")
                     if next_first.exchange_ts_ns <= event.exchange_ts_ns:
                         raise ValueError("daily source handover must advance exchange time")
@@ -668,7 +685,9 @@ class PlannedExchangeBookTape:
                 # at that actual source time, not after the old file's later,
                 # overlapping tail. Never rewrite clocks or replay both tails.
                 while event is not None:
-                    if (next_first is not None and next_first.event_type == "snapshot"
+                    if (next_first is not None
+                            and (next_first.event_type == "snapshot"
+                                 or self.handovers[index + 1] == "invalidate_then_delta_bootstrap")
                             and event.exchange_ts_ns >= next_first.exchange_ts_ns):
                         break
                     yield replace(event, source_ordinal=ordinal)
@@ -687,6 +706,7 @@ class PlannedExchangeBookTape:
                 "sources": [tape.identity(include_sha256=False) if isinstance(tape, CryptoHFTExchangeBookTape)
                             else tape.identity() for tape in self.tapes],
                 "automatic_source_fallback": False,
+                "handovers": dict(zip(self.days, self.handovers, strict=True)),
                 "daily_handover": "opening_snapshot_excludes_old_overlap_otherwise_preserve_deltas"}
 
 
@@ -1014,6 +1034,7 @@ class HistoricalExchangeBookScheduler:
             was_initialized = bool(self.sequence.initialized)
             self.sequence.invalidate_source_gap()
             self._invalidate_local_state()
+            self._sequence_scope = event.sequence_scope
             self._source_gap_events += 1
             if self._strict_at(event.exchange_ts_ns):
                 raise ValueError(

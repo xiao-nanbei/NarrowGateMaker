@@ -175,6 +175,63 @@ def test_daily_source_handover_uses_actual_snapshot_not_file_date(tmp_path, open
     assert full.stats() == restored.stats()
 
 
+@pytest.mark.parametrize("cut_ms", [900, 916, 950])
+def test_explicit_provider_gap_discards_old_book_and_survives_input_rotation(monkeypatch, tmp_path, cut_ms):
+    from dataclasses import replace
+    import models.exchange_book_replay as module
+
+    start = BASE_MS * 1_000_000
+    old = tmp_path / "old.csv"
+    old.write_text("exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+                   f"binance-futures,BTCUSDC,{start//1000},{start//1000+1},true,bid,100,1\n"
+                   f"binance-futures,BTCUSDC,{start//1000},{start//1000+1},true,ask,102,1\n"
+                   f"binance-futures,BTCUSDC,{start//1000+994000},{start//1000+994001},false,bid,100,99\n")
+    first = HistoricalExchangeBookEvent("market", "delta", start + 916_000_000,
+        transaction_time_ns=start + 916_000_000, first_update_id=2, final_update_id=2,
+        previous_final_update_id=1, source=str(tmp_path / "native"),
+        levels=(("bid", 990, 2.), ("ask", 1030, 4.)))
+    second = replace(first, exchange_ts_ns=start + 1_100_000_000,
+        transaction_time_ns=start + 1_100_000_000, first_update_id=3, final_update_id=3,
+        previous_final_update_id=2, levels=(("bid", 990, 3.),))
+    class NativeTape:
+        def __init__(self, **kwargs):
+            pass
+        def __iter__(self):
+            yield from (first, second)
+        def identity(self, **kwargs):
+            return {"fixture": True}
+    monkeypatch.setattr(module, "CryptoHFTExchangeBookTape", NativeTape)
+    rows = [{"day": "2025-12-31", "provider": "tardis", "raw_file": str(old)},
+            {"day": "2026-01-01", "provider": "cryptohft", "raw_root": str(tmp_path)}]
+    plan = {"symbol": "BTCUSDC", "days": rows}
+    def tape(days):
+        return module.PlannedExchangeBookTape(plan, days=days, symbol="BTCUSDC", tick_size=.1)
+    with pytest.raises(ValueError, match="actual opening snapshot"):
+        list(tape([row["day"] for row in rows]))
+    rows[1]["handover"] = "invalidate_then_delta_bootstrap"
+    full_tape = tape([row["day"] for row in rows])
+    events = list(full_tape)
+    assert [event.event_type for event in events] == ["snapshot", "source_gap", "delta", "delta"]
+    assert events[1].levels == () and events[1].last_update_id is None
+    assert [event.source_ordinal for event in events] == [0, 1, 2, 3]
+    assert full_tape.identity()["handovers"]["2026-01-01"] == "invalidate_then_delta_bootstrap"
+    full = HistoricalExchangeBookScheduler(full_tape, strict_sequence=False, allow_delta_bootstrap=True)
+    full.advance_to(start + 2_000_000_000)
+    assert full.top_levels(2) == ([(990., 3.)], [(1030., 4.)])
+    assert full.stats().source_gap_events == 1
+    assert full.sequence.initialization_source == "delta"
+    assert "provider_ordered" in full.evidence_scope
+    partial = HistoricalExchangeBookScheduler(full_tape, strict_sequence=False, allow_delta_bootstrap=True)
+    partial.advance_to(start + cut_ms * 1_000_000)
+    restored = HistoricalExchangeBookScheduler.from_checkpoint(pickle.loads(pickle.dumps(partial.checkpoint())), ())
+    restored.resume_input_source(tape(["2026-01-01"]))
+    restored.advance_to(start + 2_000_000_000)
+    assert restored.stats() == full.stats()
+    assert restored.top_levels(2) == full.top_levels(2)
+    with pytest.raises(ValueError, match="source gap"):
+        HistoricalExchangeBookScheduler(tape(["2026-01-01"]), strict_sequence=True).advance_to(start + 2_000_000_000)
+
+
 @pytest.mark.parametrize("defect", ["depth", "channel", "delivery", "flag"])
 def test_configured_cooldown_refuses_missing_source_instead_of_static_baseline(defect):
     depth = SimpleNamespace(
