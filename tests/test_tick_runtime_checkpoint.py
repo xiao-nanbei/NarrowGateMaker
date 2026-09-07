@@ -111,6 +111,68 @@ def test_multiple_saved_cuts_do_not_force_cancel_or_flatten(mode, tmp_path):
     assert_same(simulate_tick(*args, **kwargs, resume_checkpoint=checkpoint), expected)
 
 
+@pytest.mark.parametrize("cut", [0, 100, 250_100, 400_000, 450_050, 451_500])
+def test_cold_signal_bar_completion_and_compute_survive_saved_state(cut, tmp_path):
+    from tests.test_exec_book_visibility_delay import _message_schedule_replay_inputs
+
+    inputs = _message_schedule_replay_inputs()
+    origin = 1_000_000
+    inputs["trades_df"]["transact_time"] = origin + inputs["trades_df"]["transact_time"] * 100
+    # The fixture shares timestamp arrays; derive the new clock only once.
+    source = origin + np.arange(5, dtype=np.int64) * 100_000
+    for name in ("bbo_data", "l2_data"):
+        inputs[name].ts_ms[:] = source
+    inputs["var_ts_ms"] = source.copy()
+    inputs["ml_data"] = (source.copy(), *inputs["ml_data"][1:])
+    params = inputs["params"]
+    for feed in params["_exec_message_delivery"].values():
+        for clock in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns"):
+            feed[clock] = origin * 1_000_000 + feed[clock] * 100
+    params.update(_async_fifo_params())
+    params.pop("planned_quote_stop_ts_ms", None)
+    params.update(
+        signal_cold_start=True, runtime_compute_initial_bucket_end_ms=None,
+        runtime_compute_clock="prediction_delivery", runtime_compute_bucket_ms=10_000,
+        _runtime_compute_samples_by_path={
+            path: [[2., 4., 1.]] for path in ("cached_no_new_bucket", "new_bucket", "catch_up")
+        },
+        _runtime_compute_sample_semantics="synthetic paired compute phases",
+        # This sparse clock fixture isolates signal readiness, not stale policy.
+        max_exec_book_visible_age_s=1_000., max_exec_book_source_lag_s=1_000.,
+        replay_event_clock_end_ts_ms=origin + 460_000,
+    )
+    expected = simulate_tick(**inputs)
+    # Four parent callbacks are sufficient: live emits intervening zero-volume
+    # bars. But 300 elapsed wall seconds alone cannot complete a received bar.
+    assert expected["signal_first_bucket_ms"] == origin
+    assert expected["signal_completed_bars_at_warmup"] == 400
+    assert expected["signal_warmup_observed_ts_ms"] == origin + 450_100
+    assert expected["_decision_trace"] and expected["_quote_trace"]
+    assert min(row["ts_ms"] for row in expected["_decision_trace"]) >= origin + 451_000
+    partial = simulate_tick(**inputs, checkpoint_at_ts_ms=origin + cut)
+    checkpoint = partial["_replay_checkpoint"]
+    if cut < 450_100:
+        assert checkpoint["runtime"].runtime_compute_last_bucket_end_ms is None
+        assert checkpoint["runtime"].signal_warmup_observed_ts_ms is None
+        assert checkpoint["runtime"].ml_idx == -1
+    path = tmp_path / "cold-start.pickle"
+    save_runtime_checkpoint(path, checkpoint)
+    assert_same(simulate_tick(**inputs, resume_checkpoint=load_trusted_runtime_checkpoint(path)), expected)
+    if cut == 400_000:
+        from copy import deepcopy
+        cropped = deepcopy(inputs)
+        cropped["ml_data"] = tuple(array[1:] for array in cropped["ml_data"])
+        prediction = cropped["params"]["_exec_message_delivery"]["prediction"]
+        for clock in prediction:
+            prediction[clock] = prediction[clock][1:]
+        actual = simulate_tick(**cropped, resume_checkpoint=load_trusted_runtime_checkpoint(path),
+                               resume_input_batch=True)
+        for output in (actual, expected):
+            output.pop("exec_message_delivery_sources", None)
+            output.pop("exec_message_delivery_input_semantics", None)
+        assert_same(actual, expected)
+
+
 def test_failed_checkpoint_write_keeps_last_complete_state(tmp_path, monkeypatch):
     import models.replay.runtime_checkpoint_io as module
 

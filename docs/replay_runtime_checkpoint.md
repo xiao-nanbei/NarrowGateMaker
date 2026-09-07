@@ -56,6 +56,10 @@ preparation can still transiently load a full day before slicing it.
 
 ## Python interface and input rotation
 
+For a declared empty signal startup rather than historical REST prefill, F01 accepts `--signal-cold-start` with continuous fresh-start Python replay and `--runtime-compute-clock prediction_delivery`. It starts with no computed prediction watermark and waits for the live shared minimum of 300 completed one-second signal bars. Completion follows delivered aggregate-trade callbacks, including the intervening no-trade bars that live generates; it is neither 300 sparse file rows nor 300 elapsed wall seconds. Pending exchange/private events and the existing safety clock still advance. This does not invent fresh order-book observations in a data gap.
+
+The first source bucket, completed-bar count, normal requote clock, warmup status and later computed bucket persist through the runtime checkpoint, including a cut before warmup completes. Keep the cold-start flag unchanged on resume; restored state takes precedence over empty initialization. Output identifies this startup mode and the main-loop time that observed warmup completion. Before the first actual price, an empty experimental account may omit unpriced, non-trading timer rows; its declared process/accounting origin stays unchanged, no future price is borrowed, and reconciliation/system events cannot be omitted. The first priced event is reported separately. Synthetic save/load tests cover both sides of warmup and removal of unused pre-warmup prediction rows. A real first-calendar-day ten-minute diagnostic also matches across a four-minute cut and cropped-input restore. It does not recreate an actual historical live startup or qualify full feature-DAG equivalence; first catch-up compute still uses the declared measured catch-up stratum rather than claiming a separately measured cold-start cost. This mode is not implemented by the C++ tick loop.
+
 ```python
 from models.backtest_tick import simulate_tick
 from models.replay.runtime_checkpoint_io import (

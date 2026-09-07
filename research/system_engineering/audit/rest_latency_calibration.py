@@ -327,7 +327,7 @@ def load_runtime_timing_samples(
 
 
 def runtime_compute_overrides(
-    calibration: dict[str, Any], *, initial_bucket_end_ms: int, clock: str,
+    calibration: dict[str, Any], *, initial_bucket_end_ms: int | None, clock: str,
     bucket_ms: int = 10_000,
 ) -> dict[str, Any]:
     """Adapt already-read stage rows without re-reading the evidence file.
@@ -346,9 +346,9 @@ def runtime_compute_overrides(
     paths = compute["by_signal_path"]
     if set(paths) != {"cached_no_new_bucket", "new_bucket", "catch_up"}:
         raise ValueError("phase-conditioned compute requires all three explicit signal paths")
-    if type(initial_bucket_end_ms) is not int or type(bucket_ms) is not int or bucket_ms <= 0:
+    if (initial_bucket_end_ms is not None and type(initial_bucket_end_ms) is not int) or type(bucket_ms) is not int or bucket_ms <= 0:
         raise ValueError("compute bucket duration and initial watermark must be explicit integers")
-    if initial_bucket_end_ms % bucket_ms:
+    if initial_bucket_end_ms is not None and initial_bucket_end_ms % bucket_ms:
         raise ValueError("compute initial watermark must align with the bucket grid")
     if clock not in {"prediction_delivery", "source_time_assumption"}:
         raise ValueError(

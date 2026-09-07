@@ -57,6 +57,7 @@ from strategy.model_contract import (
     validate_model_bundle,
 )
 from strategy.native_runtime import load_native_module, validate_native_capabilities
+from strategy.replay_controls import SIGNAL_WARMUP_BARS
 
 logger = logging.getLogger("signal")
 
@@ -4576,7 +4577,7 @@ class SignalEngine:
 
     @property
     def is_warmed_up(self) -> bool:
-        return self._warmup_count >= 300
+        return self._warmup_count >= SIGNAL_WARMUP_BARS
 
     @property
     def mid_price(self) -> float:

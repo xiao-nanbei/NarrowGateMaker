@@ -104,6 +104,7 @@ from models.replay_contract import (  # noqa: E402
     runtime_compute_sample_rows,
 )
 from strategy.replay_controls import (
+    SIGNAL_WARMUP_BARS,
     LOSS_COOLDOWN_SEMANTICS,
     LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
     SYNC_CENSOR_CODE,
@@ -3465,6 +3466,7 @@ def build_replay_event_clock(
     system_event_ts_ms: Optional[np.ndarray] = None,
     system_event_code: int = SYNC_EVENT_CODE,
     initial_clock_price: Optional[float] = None,
+    cold_flat_start: bool = False,
 ) -> tuple[pd.DataFrame, int]:
     """Return the causal event stream consumed by Python and C++ replay.
 
@@ -3476,6 +3478,10 @@ def build_replay_event_clock(
     consume queue or create a fill. Native snapshot/delta queue state is
     consumed lazily by its independent scheduler at every one of these
     boundaries and before every execution trade.
+
+    ``cold_flat_start`` may omit only the initially unpriced timer prefix;
+    the caller must establish an empty account with no orders. It never uses
+    a future price to seed the prefix or drops reconciliation/system events.
     """
     normalized_mode = str(mode or "trade").strip().lower()
     if normalized_mode not in {"trade", "merged", "empirical"}:
@@ -3649,11 +3655,18 @@ def build_replay_event_clock(
             if not np.isfinite(initial_clock_price) or initial_clock_price <= 0:
                 raise ValueError("initial clock price must be a finite positive retained price")
             bootstrap_mid[:] = float(initial_clock_price)
-        if np.any(~np.isfinite(bootstrap_mid)):
+        if np.any(~np.isfinite(bootstrap_mid)) and not cold_flat_start:
             raise ValueError(
                 "explicit replay start has no causal BBO/L2 midpoint before the first trade"
             )
         clock_price[before_trade] = bootstrap_mid
+        if cold_flat_start:
+            # No price, exposure or orders exist yet. Do not seed midnight
+            # from a later snapshot/trade merely to materialize empty timers.
+            priced = np.isfinite(clock_price)
+            if np.any(np.isin(clock_action[~priced], (SYNC_EVENT_CODE, SYNC_CENSOR_CODE))):
+                raise ValueError("cannot omit system events from an unpriced cold-start prefix")
+            clock_ts, clock_action, clock_price = clock_ts[priced], clock_action[priced], clock_price[priced]
 
     combined_ts = np.concatenate((execution_ts, clock_ts))
     combined_price = np.concatenate((execution_price, clock_price))
@@ -3771,6 +3784,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     """
     _tick_state = SimpleNamespace()
     validate_replay_initial_state(params.get("initial_live_state"), backend="python")
+    if params.get("signal_cold_start") and (
+        params.get("initial_live_state") is not None or float(params.get("initial_inventory", 0.0)) != 0.0
+    ):
+        raise ValueError("cold signal startup requires an empty experimental account")
     _tick_state.risk_selection = None
     _tick_state.risk_selection_mode = params.get("risk_selection_mode", "B")
     _tick_state.risk_selection_control = params.get("risk_selection_control", "learned")
@@ -4438,6 +4455,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         system_event_ts_ms=_tick_state.sync_degrade_events.timestamps_ms,
         system_event_code=_tick_state.sync_degrade_events.event_code,
         initial_clock_price=retained_clock_price,
+        cold_flat_start=bool(params.get("signal_cold_start")),
     )
     require_formal_dense_variance_timeline(
         var_ts_ms,
@@ -7120,9 +7138,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.requote_tail_work_enabled = bool(np.any(_tick_state.requote_tail_work_samples_ms > 0.0))
     _tick_state.runtime_compute_by_path = runtime_compute_sample_rows(params)
     _tick_state.runtime_compute_path_counts = {path: 0 for path in _tick_state.runtime_compute_by_path}
-    _tick_state.runtime_compute_last_bucket_end_ms = int(
-        params.get("runtime_compute_initial_bucket_end_ms", 0)
-    )
+    _tick_state.runtime_compute_last_bucket_end_ms = params.get("runtime_compute_initial_bucket_end_ms", 0)
+    _tick_state.signal_cold_start = bool(params.get("signal_cold_start", False))
+    _tick_state.signal_first_bucket_ms = None
+    _tick_state.signal_completed_bars = 0
+    _tick_state.signal_warmup_observed_ts_ms = None
+    _tick_state.signal_warmup_skip_count = 0
+    if _tick_state.signal_cold_start and (
+        not _tick_state.main_loop_enabled or params.get("exec_book_visibility_mode") != "message_schedule"
+        or not _tick_state.runtime_compute_by_path
+        or _tick_state.runtime_compute_last_bucket_end_ms is not None
+    ):
+        raise ValueError("cold signal startup requires a fresh message-clock main loop and no computed bucket")
     _tick_state.runtime_compute_bucket_ms = int(params.get("runtime_compute_bucket_ms", 10_000))
     if _tick_state.runtime_compute_by_path:
         # Strata are chosen once at actual compute entry, never at every
@@ -8130,7 +8157,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "buy_fill_selection_live_enabled requires causal Prediction.feature_dict "
                 "arrays in replay ML data"
             )
-        _tick_state.ml_idx = 0
+        _tick_state.ml_idx = -1 if _tick_state.signal_cold_start else 0
     else:
         _tick_state.has_xmarket = False
         _tick_state.ml_xmarket = {}
@@ -8321,6 +8348,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.n_trades = len(_tick_state.trade_ts)
     _tick_state.loaded_variance_ts_ms = np.asarray(var_ts_ms)
     _tick_state.replay_origin_ts_ms = int(_tick_state.trade_ts[0])
+    if _tick_state.signal_cold_start:
+        _tick_state.signal_price_available_ts_ms = int(_tick_state.trade_ts[0])
+        _tick_state.replay_origin_ts_ms = int(params.get("replay_event_clock_start_ts_ms", _tick_state.replay_origin_ts_ms))
     _tick_state.input_window_count = 1
     _tick_state.input_event_offset = 0
     _tick_state.input_clock_offsets = dict.fromkeys(("trade", "seed", "bbo", "l2", "variance", "prediction"), 0)
@@ -27706,6 +27736,26 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if _tick_state.replay_event_clock == "empirical"
             else _tick_state.t - _tick_state.last_rq_ts >= _tick_state.cur_rq_ms
         )
+        if _tick_state.signal_cold_start and _tick_state.signal_warmup_observed_ts_ms is None:
+            # Live finalizes the prior exchange-second bar on the next trade
+            # callback and emits intervening no-trade bars. Source/preroll rows
+            # received before this process origin are not a REST prefill.
+            schedule = _tick_state.exec_message_schedules["trade"]
+            visible_index, visible_exchange_ns, _ = _message_clock_state("trade", int(_tick_state.t))
+            if _tick_state.signal_first_bucket_ms is None:
+                first_index = int(np.searchsorted(schedule.ready_ns_for_channel(),
+                    _tick_state.replay_origin_ts_ms * 1_000_000, side="left"))
+                if visible_index >= first_index:
+                    _tick_state.signal_first_bucket_ms = int(schedule.exchange_ns_for_channel()[first_index] // 1_000_000_000) * 1_000
+            if _tick_state.signal_first_bucket_ms is not None:
+                _tick_state.signal_completed_bars = max(_tick_state.signal_completed_bars,
+                    (visible_exchange_ns // 1_000_000_000 * 1_000 - _tick_state.signal_first_bucket_ms) // 1_000)
+            if _tick_state.signal_completed_bars < SIGNAL_WARMUP_BARS:
+                _tick_state.signal_warmup_skip_count += 1
+                if _tick_state.scheduled_requote_due_raw:
+                    _tick_state.last_rq_ts = int(_tick_state.t)
+                continue
+            _tick_state.signal_warmup_observed_ts_ms = int(_tick_state.t)
         # Terminal continuation wins a same-wake collision with the ordinary
         # cadence. It performs a fresh side-only decision without advancing
         # last_rq_ts; the overdue ordinary cadence remains due at the following
@@ -27820,11 +27870,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ) * _tick_state.runtime_compute_bucket_ms
                 if (
                     not any(_tick_state.runtime_compute_path_counts.values())
+                    and _tick_state.runtime_compute_last_bucket_end_ms is not None
                     and _tick_state.runtime_compute_last_bucket_end_ms > _tick_state.bucket_end_ms
                 ):
                     raise ValueError("runtime compute initial watermark exceeds causal cutoff")
+                compute_origin = (_tick_state.runtime_compute_last_bucket_end_ms
+                    if _tick_state.runtime_compute_last_bucket_end_ms is not None else
+                    _tick_state.signal_first_bucket_ms // _tick_state.runtime_compute_bucket_ms * _tick_state.runtime_compute_bucket_ms)
                 _tick_state.bucket_count = max(
-                    0, (_tick_state.bucket_end_ms - _tick_state.runtime_compute_last_bucket_end_ms)
+                    0, (_tick_state.bucket_end_ms - compute_origin)
                     // _tick_state.runtime_compute_bucket_ms,
                 )
                 _tick_state.compute_path = (
@@ -27832,7 +27886,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "new_bucket" if _tick_state.bucket_count == 1 else "catch_up"
                 )
                 _tick_state.runtime_compute_last_bucket_end_ms = max(
-                    _tick_state.runtime_compute_last_bucket_end_ms, _tick_state.bucket_end_ms,
+                    compute_origin, _tick_state.bucket_end_ms,
                 )
                 _tick_state.runtime_compute_path_counts[_tick_state.compute_path] += 1
                 _tick_state.phases = _tick_state.runtime_compute_by_path[_tick_state.compute_path]
@@ -33312,6 +33366,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "runtime_compute_clock": params["runtime_compute_clock"],
         } if _tick_state.runtime_compute_by_path else {}),
         **({
+            "signal_startup": "cold_300_completed_aggtrade_bars",
+            "signal_process_origin_ts_ms": _tick_state.replay_origin_ts_ms,
+            "signal_price_available_ts_ms": _tick_state.signal_price_available_ts_ms,
+            "signal_first_bucket_ms": _tick_state.signal_first_bucket_ms,
+            "signal_completed_bars_at_warmup": _tick_state.signal_completed_bars,
+            "signal_warmup_observed_ts_ms": _tick_state.signal_warmup_observed_ts_ms,
+            "signal_warmup_skip_count": _tick_state.signal_warmup_skip_count,
+        } if _tick_state.signal_cold_start else {}),
+        **({
             "main_loop_work_sample_count": int(_tick_state.main_loop_work_samples_ms.shape[0]),
             "main_loop_work_pre_sum_ms": _tick_state.main_loop_work_pre_sum_ms,
             "main_loop_work_post_sum_ms": _tick_state.main_loop_work_post_sum_ms,
@@ -35789,6 +35852,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
+    if params.get("signal_cold_start"):
+        raise ValueError("cold signal startup is Python-only")
     if (params.get("risk_selection_collect_opportunities", False)
             or params.get("risk_selection_intervention") is not None
             or params.get("_risk_selection_opportunity_sink") is not None

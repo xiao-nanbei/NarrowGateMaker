@@ -190,7 +190,9 @@ def _runtime_compute_for_window(
         ready_ns = prediction_ms * 1_000_000
     else:
         raise ValueError("runtime compute clock must explicitly identify its source")
-    if resume_bucket_end_ms is None:
+    if params.get("signal_cold_start"):
+        initial_bucket = None
+    elif resume_bucket_end_ms is None:
         completed = prediction_ms[ready_ns < start_ms * 1_000_000]
         if not completed.size:
             raise ValueError("runtime compute requires a completed prediction before replay start")
@@ -1506,7 +1508,7 @@ def _campaign_daily_row(
         **{
             key: value for key, value in result.items()
             if key.startswith((
-                "runtime_compute_", "exec_message_", "pre_snapshot_compute_",
+                "runtime_compute_", "signal_", "exec_message_", "pre_snapshot_compute_",
                 "requote_tail_work_", "decision_to_gateway_", "rest_gateway_",
                 "private_fill_visibility_",
             ))
@@ -3208,6 +3210,8 @@ def main(argv: list[str] | None = None) -> None:
             "from the loaded window's completed prediction pre-roll."
         ),
     )
+    parser.add_argument("--signal-cold-start", action="store_true",
+                        help="Start with no prefilled signal bars; wait for 300 completed delivered aggTrade seconds before quoting.")
     parser.add_argument(
         "--runtime-private-fill-model",
         choices=("unmodeled", "observed_callback"),
@@ -3497,6 +3501,9 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("--runtime-private-fill-model requires --runtime-timing-samples")
     elif args.runtime_compute_clock is not None:
         raise SystemExit("--runtime-compute-clock requires --runtime-timing-samples")
+    if args.signal_cold_start and (args.engine != "python" or not args.continuous
+            or args.runtime_compute_clock != "prediction_delivery" or args.initial_state_mode != "fresh_start"):
+        raise SystemExit("--signal-cold-start requires continuous fresh-start Python with prediction_delivery compute")
     if args.trace_fills_max <= 0:
         raise SystemExit(
             "campaign outcome audit requires --trace-fills-max > 0; "
@@ -3838,6 +3845,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.replay_purpose == "diagnostic":
         base.setdefault("replay_evidence_scope", "replay_diagnostic_only")
     base["replay_initial_state_mode"] = args.initial_state_mode
+    if args.signal_cold_start:
+        base["signal_cold_start"] = True
     base["replay_promotion_eligible"] = False
     if args.initial_state_mode == "frozen_standard":
         if args.standard_initial_state_json is None:

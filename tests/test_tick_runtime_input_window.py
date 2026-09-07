@@ -20,6 +20,26 @@ def test_rotated_clock_retains_price_before_first_new_execution():
     assert clock.loc[clock.transact_time == first, "price"].iloc[-1] == trades.price.iloc[0]
 
 
+def test_only_cold_flat_start_can_wait_for_the_first_actual_price():
+    from models.backtest_tick import build_replay_event_clock
+    args, kwargs = scenario("ordinary")
+    trades = args[0].iloc[10:].copy()
+    bbo = kwargs["bbo_data"]
+    bbo = replace(bbo, **{name: getattr(bbo, name)[5:] for name in
+                         ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")})
+    options = dict(mode="merged", interval_ms=100, start_ts_ms=0, end_ts_ms=4_000, bbo_data=bbo)
+    with pytest.raises(ValueError, match="no causal BBO/L2"):
+        build_replay_event_clock(trades, **options)
+    clock, count = build_replay_event_clock(trades, **options, cold_flat_start=True)
+    assert clock.transact_time.iloc[0] == 500
+    assert clock.price.iloc[0] == 100.
+    assert count == len(trades)
+    assert not clock[clock.transact_time < 1_000]._is_execution_trade.any()
+    args[3].update(signal_cold_start=True, initial_inventory=.001)
+    with pytest.raises(ValueError, match="empty experimental account"):
+        simulate_tick(*args, **kwargs)
+
+
 @pytest.mark.parametrize("capture_cutoffs", [(500, 1_250, 2_050), (500,)])
 def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch, capture_cutoffs):
     from models.exchange_book_replay import HistoricalMessageDeliverySchedule, ReceiveTimeCooldownReplayAdapter

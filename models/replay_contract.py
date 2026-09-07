@@ -431,22 +431,27 @@ def runtime_compute_sample_rows(
                 "runtime compute strata cannot be combined with pooled compute samples"
             )
     for key in ("runtime_compute_bucket_ms", "runtime_compute_initial_bucket_end_ms"):
+        if key == "runtime_compute_initial_bucket_end_ms" and params.get("signal_cold_start") and params.get(key) is None:
+            continue
         if type(params.get(key)) is not int:
             raise ValueError(f"{key} must be an explicit integer")
     if params["runtime_compute_bucket_ms"] <= 0:
         raise ValueError("runtime_compute_bucket_ms must be positive")
-    if params["runtime_compute_initial_bucket_end_ms"] % params["runtime_compute_bucket_ms"]:
+    if (params["runtime_compute_initial_bucket_end_ms"] is not None
+            and params["runtime_compute_initial_bucket_end_ms"] % params["runtime_compute_bucket_ms"]):
         raise ValueError("runtime compute initial watermark must align with the bucket grid")
     clock = params.get("runtime_compute_clock")
     if clock not in {"prediction_delivery", "source_time_assumption"}:
         raise ValueError("runtime compute clock must be explicit, not a silent wall-clock fallback")
+    if params.get("signal_cold_start") and clock != "prediction_delivery":
+        raise ValueError("cold signal startup requires prediction_delivery compute")
     if clock == "prediction_delivery" and (
         params.get("exec_book_visibility_mode") != "message_schedule"
         or "prediction" not in (params.get("_exec_message_delivery") or {})
     ):
         raise ValueError("prediction_delivery compute requires a prediction message schedule")
     start = params.get("replay_event_clock_start_ts_ms")
-    if start is not None and params["runtime_compute_initial_bucket_end_ms"] > int(start):
+    if start is not None and params["runtime_compute_initial_bucket_end_ms"] is not None and params["runtime_compute_initial_bucket_end_ms"] > int(start):
         raise ValueError("runtime compute initial watermark cannot be in the future")
     if not str(params.get("_runtime_compute_sample_semantics", "")).strip():
         raise ValueError("runtime compute samples require placement semantics")
@@ -1404,6 +1409,7 @@ def build_replay_contract(
             "sampling": "one_keyed_paired_row_per_actual_requote_entry",
             "bucket_ms": params["runtime_compute_bucket_ms"],
             "initial_bucket_end_ms": params["runtime_compute_initial_bucket_end_ms"],
+            **({"signal_startup": "cold_300_completed_aggtrade_bars"} if params.get("signal_cold_start") else {}),
             "seed": decision_to_gateway_latency_seed,
             "semantics": params["_runtime_compute_sample_semantics"],
         }

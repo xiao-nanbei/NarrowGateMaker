@@ -28,6 +28,10 @@ Python tick 循环可以在一个事件执行之前暂停、保存运行对象�
 
 ## Python 接口与状态边界
 
+如果声明从空信号状态启动，而不是恢复历史 REST 预填，F01 支持在连续、fresh-start、Python 回放中使用 `--signal-cold-start`，并配合 `--runtime-compute-clock prediction_delivery`。初始已计算预测水位为空，等待与 live 共享的最少 300 根已完成一秒信号 Bar。完成进度按已到达的 aggregate-trade 回调推进，包括 live 生成的中间无成交 Bar；既不是第 300 行稀疏文件记录，也不是经过 300 秒墙钟。交易所／私有回调和既有安全时钟仍继续推进。这不会在行情缺口中伪造新鲜盘口。
+
+首个来源 bucket、完成 Bar 数、正常报价时钟、预热状态和后续已计算 bucket 都随运行断点保存，包括预热尚未完成时的截断。恢复命令保持相同 cold-start 标志，已保存状态优先于空初始化。输出标明启动模式及主循环观察到预热完成的时间。在首个真实价格之前，空实验账户可以省略无价格、不能成交的定时器行；声明的进程／会计起点不变，不借用未来价格，也不能省略对账／系统事件。首个有价格事件单独报告。合成测试覆盖预热前后和移除尚未使用的预热期预测行；真实首个日历日的十分钟诊断，也通过了第四分钟截断并裁剪输入后的恢复对照。这不代表复原历史 live 启动或证明完整特征 DAG 等价；首次追赶计算仍使用声明的实测 catch-up 分层，不冒充单独实测的冷启动成本。完整 C++ tick 循环尚未实现此模式。
+
 `simulate_tick(..., checkpoint_at_ts_ms=cut_ms)` 返回 `_replay_checkpoint`。使用 `models.replay.runtime_checkpoint_io` 中的 `save_runtime_checkpoint` 和 `load_trusted_runtime_checkpoint` 保存、读取，再通过 `resume_checkpoint=` 恢复。默认要求相同输入窗口；配合 `resume_input_batch=True` 可以换成具有不变重叠前缀的新窗口。
 
 对象图保留订单共享引用、库存、会计、随机状态、未决 new/cancel、私有成交回调、HTTP/GLOBAL FIFO、计算阶段、策略状态、计数器和轨迹。原生订单簿迭代器从保存的文件内游标重新打开；已预取事件和已重建订单簿保留。运行进度回调由新进程提供。已排空订单状态的 `ContinuousReplayState` 是另一种局部会计快照，不能替代这个完整运行状态。

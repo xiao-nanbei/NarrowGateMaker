@@ -18,6 +18,8 @@ from typing import Any
 
 import numpy as np
 
+SIGNAL_WARMUP_BARS = 300
+
 SYNC_DEGRADE_TAPE_SCHEMA = "narrowgate_sync_degrade_event_tape.v1"
 LOSS_COOLDOWN_SEMANTICS = (
     "round_trip_realized_pnl_policy_clock_flip_fee_split_v2"

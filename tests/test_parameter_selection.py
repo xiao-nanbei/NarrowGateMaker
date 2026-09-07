@@ -1034,6 +1034,20 @@ def test_campaign_runtime_compute_rejects_invented_state(monkeypatch, source_ms,
         )
 
 
+def test_campaign_cold_signal_does_not_invent_a_computed_pre_roll(monkeypatch):
+    _, calibration = _runtime_calibration_stub(monkeypatch)
+    source_ms = np.array([30_000, 40_000], dtype=np.int64)
+    params = {"signal_cold_start": True, "exec_book_visibility_mode": "message_schedule",
+              "_exec_message_delivery": {"prediction": {
+                  "exchange_ts_ns": source_ms * 1_000_000,
+                  "feature_ready_ts_ns": (source_ms + 100) * 1_000_000,
+              }}}
+    adapted = campaign_audit._runtime_compute_for_window(
+        {"ml_data": (source_ms,)}, params, calibration, clock="prediction_delivery", start_ms=0,
+    )
+    assert adapted["runtime_compute_initial_bucket_end_ms"] is None
+
+
 @pytest.mark.parametrize("clock", ["source_time_assumption", "prediction_delivery"])
 def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monkeypatch, clock):
     _, calibration = _runtime_calibration_stub(monkeypatch)

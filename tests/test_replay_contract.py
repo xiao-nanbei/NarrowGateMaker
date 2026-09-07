@@ -952,11 +952,20 @@ def test_runtime_compute_contract_binds_paths_watermark_and_placement(tmp_path):
         ({"runtime_compute_clock": None}, "clock must be explicit"),
         ({"runtime_compute_clock": "prediction_delivery"}, "prediction message schedule"),
         ({"runtime_compute_initial_bucket_end_ms": 1}, "bucket grid"),
+        ({"runtime_compute_initial_bucket_end_ms": None}, "explicit integer"),
         ({"runtime_compute_initial_bucket_end_ms": 20_000,
           "replay_event_clock_start_ts_ms": 10_000}, "in the future"),
     ):
         with pytest.raises(ValueError, match=message):
             build_replay_contract({**params, **override}, root=tmp_path, purpose="diagnostic")
+    cold_params = {**params, "signal_cold_start": True, "runtime_compute_initial_bucket_end_ms": None}
+    with pytest.raises(ValueError, match="cold signal startup requires prediction_delivery"):
+        build_replay_contract(cold_params, root=tmp_path, purpose="diagnostic")
+    cold_params.update(runtime_compute_clock="prediction_delivery", exec_book_visibility_mode="message_schedule",
+                       _exec_message_delivery={"prediction": {}})
+    cold = build_replay_contract(cold_params, root=tmp_path, purpose="diagnostic")
+    assert cold["latency"]["runtime_compute"]["signal_startup"] == "cold_300_completed_aggtrade_bars"
+    assert cold["latency"]["runtime_compute"]["initial_bucket_end_ms"] is None
     params["runtime_compute_initial_bucket_end_ms"] = -10_000
     with pytest.raises(RuntimeError, match="identity differs"):
         validate_frozen_replay_contract(params)
