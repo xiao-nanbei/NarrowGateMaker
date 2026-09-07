@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from features.preprocess_metrics import normalize_feature_ready_time
 
@@ -101,3 +102,22 @@ def test_small_source_timestamp_jitter_is_preserved() -> None:
     )
 
     assert result["create_time"].iloc[32].second == 2
+
+
+@pytest.mark.parametrize("start", ["00:00:00", "00:05:00"])
+def test_explicit_sparse_metrics_keep_observed_values_and_causal_gap(tmp_path, start):
+    times = pd.date_range(f"2026-07-12 {start}", periods=288, freq="5min")
+    frame = _frame(times.astype(str).tolist()).drop(index=[20, 21, 22])
+    result = normalize_feature_ready_time(frame, day="2026-07-12", allow_missing_observations=True)
+    assert len(result) == 285
+    assert result.sum_open_interest.tolist() == frame.sum_open_interest.tolist()
+    assert result.create_time.diff().max() == pd.Timedelta(minutes=20)
+    assert result.create_time.iloc[0] == pd.Timestamp("2026-07-12T00:05:00Z")
+    assert result.attrs['missing_observation_count'] == 3
+    assert result.attrs['missing_observations_filled'] is False
+    path = tmp_path / 'metrics.parquet'
+    result.to_parquet(path)
+    assert pd.read_parquet(path).attrs == result.attrs
+    duplicate = pd.concat([frame, frame.iloc[[0]]])
+    with pytest.raises(ValueError):
+        normalize_feature_ready_time(duplicate, day="2026-07-12", allow_missing_observations=True)

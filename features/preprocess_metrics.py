@@ -46,6 +46,7 @@ def normalize_feature_ready_time(
     frame: pd.DataFrame,
     *,
     day: str,
+    allow_missing_observations: bool = False,
 ) -> pd.DataFrame:
     """Normalize Binance's two daily-metrics timestamp conventions.
 
@@ -64,13 +65,20 @@ def normalize_feature_ready_time(
 
     valid_times = result["create_time"].sort_values()
     cadence = valid_times.diff().dropna()
+    cadence_seconds = cadence.dt.total_seconds()
+    multiples = (cadence_seconds / 300).round()
+    sparse_cadence = (
+        allow_missing_observations and 1 < len(valid_times) < 288
+        and multiples.ge(1).all()
+        and (cadence_seconds - multiples * 300).abs().le(5).all()
+    )
     if (
-        len(valid_times) != 288
+        (len(valid_times) != 288 and not sparse_cadence)
         or valid_times.duplicated().any()
-        or not cadence.between(
+        or not (sparse_cadence or cadence.between(
             pd.Timedelta(minutes=4, seconds=55),
             pd.Timedelta(minutes=5, seconds=5),
-        ).all()
+        ).all())
     ):
         raise ValueError(
             f"{day}: expected 288 unique metrics rows at nominal five-minute cadence"
@@ -92,6 +100,12 @@ def normalize_feature_ready_time(
             f"{day}: unrecognized metrics timestamp bounds "
             f"{valid_times.min()}..{valid_times.max()}"
         )
+    if sparse_cadence:
+        result.attrs.update(observation_count=len(valid_times),
+                            missing_observation_count=288-len(valid_times),
+                            max_observation_gap_s=float(cadence_seconds.max()),
+                            missing_observations_filled=False,
+                            timestamp_convention="start_shifted_to_end" if start_stamped else "end")
     return result
 
 
@@ -100,6 +114,8 @@ def main():
     parser.add_argument("--symbol", type=str, default=DEFAULT_SYMBOL,
                         help=f"Symbol (default {DEFAULT_SYMBOL}; MM_SYMBOL also supported)")
     parser.add_argument("--file", type=str, default=None)
+    parser.add_argument("--allow-missing-observations", action="store_true",
+                        help="Keep genuine interior gaps on the known 5-minute clock; never fill or relabel them as observations")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing daily parquet outputs")
     parser.add_argument("--verbose", action="store_true",
@@ -149,7 +165,10 @@ def main():
         combined = pd.read_csv(f, parse_dates=["create_time"])
         combined = combined[["create_time"] + KEEP_COLS]
         try:
-            combined = normalize_feature_ready_time(combined, day=date_str)
+            combined = normalize_feature_ready_time(
+                combined, day=date_str,
+                allow_missing_observations=args.allow_missing_observations,
+            )
         except ValueError as exc:
             if not args.skip_invalid:
                 raise
