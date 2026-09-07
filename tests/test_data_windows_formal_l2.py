@@ -35,6 +35,16 @@ def test_contiguous_window_keeps_first_preroll_without_replaying_second_preroll(
                  "exact_queue_policy_eligible"):
         assert merged[name] is all(value is True for value in quality_flags)
         assert [row[name] for row in merged["book_quality_by_day"].values()] == list(quality_flags)
+    windows[0]["book_source_authority"] = "provider_ordered"
+    windows[1]["book_source_authority"] = "exchange_sequence"
+    with pytest.raises(ValueError, match="disagree on book_source_authority"):
+        data_windows.concatenate_tick_windows(["2026-01-01", "2026-01-02"], windows)
+    mixed = data_windows.concatenate_tick_windows(["2026-01-01", "2026-01-02"], windows,
+                                                  allow_mixed_book_sources=True)
+    assert mixed["book_source_authority"] == "mixed_explicit_daily_sources"
+    assert [row["book_source_authority"] for row in mixed["book_quality_by_day"].values()] == [
+        "provider_ordered", "exchange_sequence"]
+    np.testing.assert_array_equal(mixed["bbo_data"].ts_ms, merged["bbo_data"].ts_ms)
     windows[1]["execution_trade_source"] = "incompatible"
     with pytest.raises(ValueError, match="disagree on execution_trade_source"):
         data_windows.concatenate_tick_windows(["2026-01-01", "2026-01-02"], windows)

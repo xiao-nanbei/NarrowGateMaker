@@ -2392,7 +2392,8 @@ def _run_day_campaign_audit(
                     )
                 windows.append(loaded)
             window_cache[key] = (
-                data_windows.concatenate_tick_windows(input_days, windows)
+                data_windows.concatenate_tick_windows(input_days, windows,
+                    allow_mixed_book_sources=base.get("_exchange_book_source_plan") is not None)
                 if continuous_days else windows[0]
             )
             if completion_parts:

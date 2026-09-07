@@ -1488,7 +1488,8 @@ def load_tick_window_dict(day: str, params: dict[str, Any], **kwargs: Any) -> di
     return load_tick_window(day, params, **kwargs).to_dict()
 
 
-def concatenate_tick_windows(days: list[str], windows: list[dict[str, Any]]) -> dict[str, Any]:
+def concatenate_tick_windows(days: list[str], windows: list[dict[str, Any]], *,
+                             allow_mixed_book_sources: bool = False) -> dict[str, Any]:
     """One contiguous market window; no strategy state is serialized at midnight.
 
     Keep the first day's causal pre-roll. Later windows contribute only their
@@ -1508,10 +1509,13 @@ def concatenate_tick_windows(days: list[str], windows: list[dict[str, Any]]) -> 
                  "historical_global_flow_data"):
         if any(window.get(name) is not None for window in windows):
             raise ValueError(f"continuous window concatenation does not yet support {name}")
-    for name in ("execution_trade_source", "toxicity_horizon_s", "book_source_authority",
-                 "book_dataset_version"):
+    for name in ("execution_trade_source", "toxicity_horizon_s", "book_dataset_version"):
         if any(window.get(name) != out.get(name) for window in windows):
             raise ValueError(f"continuous windows disagree on {name}")
+    if any(window.get("book_source_authority") != out.get("book_source_authority") for window in windows):
+        if not allow_mixed_book_sources:
+            raise ValueError("continuous windows disagree on book_source_authority")
+        out["book_source_authority"] = "mixed_explicit_daily_sources"
     eligibility = ("formal_lifecycle_replay_eligible", "provider_sensitivity_replay_eligible",
                    "exact_queue_policy_eligible")
     # These are per-day qualifications, not input schemas. A diagnostic may
