@@ -1870,6 +1870,51 @@ def _async_fifo_params(*, new=(2.0, 5.0, 300.0), cancel=(2.0, 11.0, 400.0)):
     }
 
 
+@pytest.mark.parametrize("main_loop", [False, True])
+def test_event_cursor_round_trip_at_every_boundary_preserves_replay(main_loop):
+    import json
+    import sys
+
+    params = {}
+    if main_loop:
+        params = {
+            **_async_fifo_params(),
+            "_runtime_compute_samples_by_path": {
+                key: [[20.0, 40.0, 5.0]]
+                for key in ("cached_no_new_bucket", "new_bucket", "catch_up")
+            },
+            "runtime_compute_bucket_ms": 1_000,
+            "runtime_compute_initial_bucket_end_ms": 0,
+            "runtime_compute_clock": "source_time_assumption",
+            "_runtime_compute_sample_semantics": "synthetic paired local phases",
+        }
+    expected = _run(crossing_fill_ts_ms=1_100, param_overrides=params)
+    phases, indices = set(), []
+
+    def round_trip(frame, event, _result):
+        if event == "return" and frame.f_code.co_name == "_next_replay_event":
+            cursor = frame.f_locals["replay_event_cursor"]
+            restored = json.loads(json.dumps(cursor))
+            cursor.clear()
+            cursor.update(restored)
+            phases.add(cursor["after_event"])
+            indices.append(cursor["index"])
+
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(round_trip)
+        actual = _run(crossing_fill_ts_ms=1_100, param_overrides=params)
+    finally:
+        sys.setprofile(previous)
+    assert len(indices) > 10
+    assert indices == sorted(indices)
+    if main_loop:
+        assert {None, "wake", "resume"} <= phases
+    for name in ("_quote_trace", "_fill_trace", "_decision_trace",
+                 "pnl", "final_inventory", "fills_bid", "fills_ask", "n_requotes"):
+        assert actual.get(name) == expected.get(name), name
+
+
 @pytest.mark.parametrize("async_gateway", [False, True])
 def test_risk_selection_neutral_collector_preserves_execution_and_all_opportunities(async_gateway):
     import json

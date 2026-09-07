@@ -26498,22 +26498,39 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _restore_initial_live_orders()
     active_decision_bbo_idx: Optional[int] = None
 
-    def _replay_events():
-        """Merge local wakeups with market truth without changing its arrays.
+    replay_event_cursor = {"index": 0, "started": False, "after_event": None}
+
+    def _next_replay_event():
+        """Select one event using an explicit, checkpointable cursor.
 
         A wake uses only the last consumed market row. Equal-ms market rows
         precede the wake; source-message readiness still uses strict < now.
         Local callbacks can finish HTTP calls between market rows and schedule
         the next sleep boundary without waiting for a trade or fixed grid.
+        Post-event work is explicit because an input cutoff can occur before
+        the next call. A suspended generator used to hide this phase and the
+        source index outside the runtime state that a checkpoint must retain.
         """
         nonlocal main_loop_next_wake_ms, main_loop_tick_complete_ms, main_loop_tick_count
+        after_event = replay_event_cursor["after_event"]
+        replay_event_cursor["after_event"] = None
+        if after_event == "resume":
+            if serial_rest_decision is None and main_loop_next_wake_ms is None:
+                _finish_main_loop_tick(main_loop_tick_complete_ms)
+        elif after_event == "wake":
+            if (main_loop_next_wake_ms is None and serial_rest_decision is None
+                    and pending_quote_compute is None):
+                _finish_main_loop_tick(main_loop_tick_complete_ms)
+        index = replay_event_cursor["index"]
         if not main_loop_enabled:
-            for index in range(n_trades):
-                yield index, int(trade_ts[index]), True, False, False
-            return
-        _schedule_main_loop_tick(int(trade_ts[0]))
+            if index >= n_trades:
+                return None
+            replay_event_cursor["index"] = index + 1
+            return index, int(trade_ts[index]), True, False, False
+        if not replay_event_cursor["started"]:
+            _schedule_main_loop_tick(int(trade_ts[0]))
+            replay_event_cursor["started"] = True
         end_ms = int(trade_ts[-1])
-        index = 0
         while True:
             market_ms = int(trade_ts[index]) if index < n_trades else end_ms + 1
             wake_ms = main_loop_next_wake_ms
@@ -26529,21 +26546,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 and boundary_ms < market_ms
                 and (next_main_ms is None or boundary_ms <= next_main_ms)
             ):
-                yield max(0, index - 1), int(boundary_ms), False, False, False
-                continue
+                return max(0, index - 1), int(boundary_ms), False, False, False
             if market_ms <= end_ms and (next_main_ms is None or market_ms <= next_main_ms):
-                yield index, market_ms, True, False, False
-                index += 1
-                continue
+                replay_event_cursor["index"] = index + 1
+                return index, market_ms, True, False, False
             if resume_ms is not None:
                 if resume_ms > end_ms:
-                    return
-                yield max(0, index - 1), resume_ms, False, False, True
-                if serial_rest_decision is None and main_loop_next_wake_ms is None:
-                    _finish_main_loop_tick(main_loop_tick_complete_ms)
-                continue
+                    return None
+                replay_event_cursor["after_event"] = "resume"
+                return max(0, index - 1), resume_ms, False, False, True
             if wake_ms is None or wake_ms > end_ms:
-                return
+                return None
             if serial_rest_decision is not None:
                 raise RuntimeError("main-loop wake overlaps an in-flight quote call")
             if not async_rest_gateway and wake_ms < rest_gateway_busy_until_ms:
@@ -26552,13 +26565,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             main_loop_next_wake_ms = None
             main_loop_tick_complete_ms = int(wake_ms)
             main_loop_tick_count += 1
-            yield max(0, index - 1), int(wake_ms), False, True, False
-            if (main_loop_next_wake_ms is None and serial_rest_decision is None
-                    and pending_quote_compute is None):
-                _finish_main_loop_tick(main_loop_tick_complete_ms)
+            replay_event_cursor["after_event"] = "wake"
+            return max(0, index - 1), int(wake_ms), False, True, False
 
-    for (i, event_ts_ms, is_market_array_event,
-         is_main_loop_wake, is_quote_compute_resume) in _replay_events():
+    while True:
+        replay_event = _next_replay_event()
+        if replay_event is None:
+            break
+        (i, event_ts_ms, is_market_array_event,
+         is_main_loop_wake, is_quote_compute_resume) = replay_event
         active_quote_compute = pending_quote_compute if is_quote_compute_resume else None
         if is_quote_compute_resume:
             pending_quote_compute = None
