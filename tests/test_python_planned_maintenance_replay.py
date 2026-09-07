@@ -2864,6 +2864,64 @@ def _async_close_params(**kwargs):
     }
 
 
+@pytest.mark.parametrize("mode,expected_phase", [
+    ("replace", "submit"), ("timeout", "start_clock"), ("emergency", "emergency"),
+])
+def test_pending_close_continuation_is_persistable_data(mode, expected_phase, tmp_path):
+    import pickle
+    import sys
+
+    phases = []
+
+    def observe(frame, event, _arg):
+        if event != "call" or frame.f_code.co_name != "_resume_maker_close":
+            return
+        state = frame.f_locals["continuation"]
+        # Save the complete shared graph, not independent copies of ownership.
+        graph = (state, state.get("close_orders"), state.get("opening_orders"))
+        path = tmp_path / f"continuation-{len(phases)}.pickle"
+        with path.open("wb") as stream:
+            pickle.dump(graph, stream, protocol=pickle.HIGHEST_PROTOCOL)
+        with path.open("rb") as stream:
+            restored, close_orders, opening_orders = pickle.load(stream)
+        assert restored["action"] == state["action"]
+        if "close_orders" in state:
+            assert restored["close_orders"] is close_orders
+            assert restored["opening_orders"] is opening_orders
+            assert restored["price"] == state["price"]
+            assert restored["quantity"] == state["quantity"]
+        phases.append(state["action"])
+
+    trades, bbo = _inputs()
+    params = {**_params(), **_async_close_params(cancel=(2.0, 11.0, 400.0)),
+              "requote_interval": 0.1, "rq_min": 0.1, "rq_max": 0.1}
+    if mode == "replace":
+        bbo.best_bid[bbo.ts_ms >= 600] = 98.9
+        bbo.best_ask[bbo.ts_ms >= 600] = 99.1
+    else:
+        params.update(circuit_breaker_sigma=0.0, initial_entry_price=100.0)
+        params["_bulk_cancel_timing_samples_ms"] = [[4.0, 5.0, 6.0]]
+        params["_bulk_cancel_timing_sample_semantics"] = "synthetic coupled batch phases"
+        if mode == "timeout":
+            params["position_timeout"] = 0.5
+            params.update(requote_interval=1.0, rq_min=1.0, rq_max=1.0)
+        else:
+            params["emergency_close_dd"] = 0.005
+            trades.loc[trades.transact_time >= 1_000, "price"] = 90.0
+            bbo.best_bid[bbo.ts_ms >= 1_000] = 89.9
+            bbo.best_ask[bbo.ts_ms >= 1_000] = 90.1
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(observe)
+        result = simulate_tick(
+            trades, np.asarray([0]), np.asarray([1.0]), params, bbo_data=bbo,
+        )
+    finally:
+        sys.setprofile(previous)
+    assert expected_phase in phases
+    assert result["rest_gateway_max_inflight"] == 1
+
+
 def test_async_emergency_stop_retains_fill_matched_before_bulk_cancel_but_visible_later() -> None:
     trades, bbo = _inputs(crossing_fill_ts_ms=1_100)
     trades.loc[trades.transact_time >= 1_000, "price"] = 90.0

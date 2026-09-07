@@ -22813,6 +22813,74 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "cancel_request",
                 )
 
+    def _resume_maker_close(continuation: dict[str, Any], ready_ts: int) -> None:
+        """Run a saved close-call phase; pending requests contain data, not closures.
+
+        Keep the original decision's price, quantity and order-list references.
+        A delayed HTTP return is not a new quote decision. The complete replay
+        checkpoint must serialize this graph together with its order ownership.
+        """
+        nonlocal circuit_breaker_close_start_ts, circuit_breaker_close_keep_count
+        nonlocal circuit_breaker_close_place_count, circuit_breaker_close_ioc_place_count
+        nonlocal circuit_breaker_close_gtx_reject_count
+        nonlocal circuit_breaker_close_gtx_reject_streak, gtx_rejects
+        action = continuation["action"]
+        if action == "start_clock":
+            circuit_breaker_close_start_ts = int(ready_ts)
+            return
+        if action == "emergency":
+            _attempt_async_emergency_close(int(ready_ts))
+            return
+        if action not in {"continue", "submit"}:
+            raise ValueError(f"unknown maker-close continuation: {action!r}")
+        close_orders = continuation["close_orders"]
+        opening_orders = continuation["opening_orders"]
+        close_price = continuation["price"]
+        use_ioc = continuation["use_ioc"]
+        if action == "continue":
+            if not close_orders and opening_orders:
+                return
+            if close_orders:
+                existing = close_orders[0]
+                if existing.get("state") != ORDER_OPEN:
+                    return
+                drift_bps = (
+                    abs(close_price - float(existing["price"]))
+                    / max(float(existing["price"]), TICK) * 10_000.0
+                )
+                if not use_ioc and drift_bps <= max(
+                    0.0, float(params.get("requote_threshold_bps", 0.0) or 0.0)
+                ):
+                    circuit_breaker_close_keep_count += 1
+                    return
+                _request_cancel_all(
+                    close_orders, int(ready_ts), reason="circuit_breaker_close_requote",
+                )
+                if main_loop_waiting_request is not None:
+                    main_loop_waiting_request["resume_close"] = {
+                        **continuation, "action": "submit",
+                    }
+                return
+        # Sync cancel ignores its HTTP body in live; only a locally
+        # observed terminal clears the side. No inferred terminal.
+        if close_orders:
+            return
+        if continuation["would_cross"] and not use_ioc:
+            gtx_rejects += 1
+            circuit_breaker_close_gtx_reject_count += 1
+            circuit_breaker_close_gtx_reject_streak += 1
+            return
+        order = _make_order(
+            continuation["side"], float(close_price), float(continuation["quantity"]),
+            int(ready_ts), float(continuation["mid"]),
+            quote_context=continuation["quote_context"], apply_decision_compute=False,
+        )
+        order["time_in_force"] = "IOC" if use_ioc else "GTX"
+        order["emergency_market"] = continuation["emergency_market"]
+        close_orders.append(order)
+        circuit_breaker_close_place_count += 1
+        circuit_breaker_close_ioc_place_count += int(use_ioc)
+
     def _start_maker_close(now_ts: int, *, reason: str) -> None:
         """Start both live timeout causes after the same cancel-all return."""
         nonlocal circuit_breaker_closing, circuit_breaker_close_start_ts
@@ -22823,16 +22891,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         _request_cancel_all(bid_orders, int(now_ts), reason=reason)
         _request_cancel_all(ask_orders, int(now_ts), reason=reason)
         if async_rest_gateway:
-            def start_close_clock(ready_ts: int) -> None:
-                nonlocal circuit_breaker_close_start_ts
-                # Live assigns _close_start_time after synchronous cancel-all
-                # returns for both position timeout and the circuit breaker.
-                circuit_breaker_close_start_ts = int(ready_ts)
-
+            # Live assigns _close_start_time after synchronous cancel-all
+            # returns for both position timeout and the circuit breaker.
             if main_loop_waiting_request is not None:
-                main_loop_waiting_request["resume_close"] = start_close_clock
+                main_loop_waiting_request["resume_close"] = {"action": "start_clock"}
             else:
-                start_close_clock(int(now_ts))
+                circuit_breaker_close_start_ts = int(now_ts)
 
     def _complete_synchronous_rest_request(request: dict[str, Any], now_ts: int) -> None:
         """Resume a close caller after HTTP and any positive-fill proof.
@@ -22855,7 +22919,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         main_loop_synchronous_wait_ms += int(now_ts) - int(request["origin_ts_ms"])
         resume_close = request.get("resume_close")
         if resume_close is not None:
-            resume_close(int(now_ts))
+            _resume_maker_close(resume_close, int(now_ts))
         _finish_main_loop_tick(int(now_ts))
 
     def _advance_async_rest_worker(
@@ -24870,59 +24934,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 close_side, float(close_price), float(cur_best_bid), float(cur_best_ask), TICK,
             )
 
-            def submit_prepared_close(ready_ts: int) -> None:
-                nonlocal circuit_breaker_close_place_count, circuit_breaker_close_ioc_place_count
-                nonlocal circuit_breaker_close_gtx_reject_count
-                nonlocal circuit_breaker_close_gtx_reject_streak, gtx_rejects
-                # Sync cancel ignores its HTTP body in live; only a locally
-                # observed terminal clears the side. No inferred terminal.
-                if close_orders:
-                    return
-                if would_cross and not use_ioc:
-                    gtx_rejects += 1
-                    circuit_breaker_close_gtx_reject_count += 1
-                    circuit_breaker_close_gtx_reject_streak += 1
-                    return
-                order = _make_order(
-                    close_side, float(close_price), float(close_qty), int(ready_ts),
-                    float(close_mid), quote_context=close_context, apply_decision_compute=False,
-                )
-                order["time_in_force"] = "IOC" if use_ioc else "GTX"
-                order["emergency_market"] = bool(emergency_market)
-                close_orders.append(order)
-                circuit_breaker_close_place_count += 1
-                circuit_breaker_close_ioc_place_count += int(use_ioc)
-
-            def continue_prepared_close(ready_ts: int) -> None:
-                nonlocal circuit_breaker_close_keep_count
-                if not close_orders and opening_orders:
-                    return
-                if close_orders:
-                    existing = close_orders[0]
-                    if existing.get("state") != ORDER_OPEN:
-                        return
-                    drift_bps = (
-                        abs(close_price - float(existing["price"]))
-                        / max(float(existing["price"]), TICK) * 10_000.0
-                    )
-                    if not use_ioc and drift_bps <= max(
-                        0.0, float(params.get("requote_threshold_bps", 0.0) or 0.0)
-                    ):
-                        circuit_breaker_close_keep_count += 1
-                        return
-                    _request_cancel_all(
-                        close_orders, int(ready_ts), reason="circuit_breaker_close_requote",
-                    )
-                    if main_loop_waiting_request is not None:
-                        main_loop_waiting_request["resume_close"] = submit_prepared_close
-                    return
-                submit_prepared_close(int(ready_ts))
+            continuation = {
+                "action": "continue", "side": close_side,
+                "close_orders": close_orders, "opening_orders": opening_orders,
+                "price": float(close_price), "quantity": float(close_qty),
+                "mid": float(close_mid), "quote_context": close_context,
+                "would_cross": would_cross, "use_ioc": use_ioc,
+                "emergency_market": bool(emergency_market),
+            }
 
             if emergency_market:
                 # Emergency MARKET is a one-shot call after cancel-all HTTP,
                 # not the maker-close cancel/requote state machine. Its caller
                 # has checked only the side needed for the market order.
-                submit_prepared_close(int(now_ts))
+                _resume_maker_close({**continuation, "action": "submit"}, int(now_ts))
                 return
             if not close_orders and opening_orders:
                 if any(order.get("state") != ORDER_OPEN for order in opening_orders):
@@ -24931,9 +24956,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     opening_orders, int(now_ts), reason="circuit_breaker_opening_side",
                 )
                 if main_loop_waiting_request is not None:
-                    main_loop_waiting_request["resume_close"] = continue_prepared_close
+                    main_loop_waiting_request["resume_close"] = continuation
                 return
-            continue_prepared_close(int(now_ts))
+            _resume_maker_close(continuation, int(now_ts))
             return
 
         existing = next(
@@ -28439,9 +28464,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _process_order_transitions(ask_orders, "SELL", t, p)
                     if risk_emergency_latched and async_rest_gateway:
                         if main_loop_waiting_request is not None:
-                            main_loop_waiting_request["resume_close"] = (
-                                _attempt_async_emergency_close
-                            )
+                            main_loop_waiting_request["resume_close"] = {"action": "emergency"}
                         else:
                             _attempt_async_emergency_close(int(t))
                     continue
