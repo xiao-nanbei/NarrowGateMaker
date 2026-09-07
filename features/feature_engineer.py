@@ -682,7 +682,7 @@ def load_bars(date_filter: str = None, symbol: str = DEFAULT_SYMBOL,
 
     dfs = []
     for f in files:
-        df = pd.read_parquet(f)
+        df = _read_bars_utc(f)
         dfs.append(df)
         print(f"  加载 {f.name}: {len(df):,} bars")
 
@@ -699,6 +699,13 @@ def _as_utc_index(index_like) -> pd.DatetimeIndex:
     if isinstance(index_like, pd.DatetimeIndex):
         return pd.to_datetime(index_like, utc=True).tz_convert("UTC")
     return pd.to_datetime(index_like, unit="ms", utc=True)
+
+
+def _read_bars_utc(path: Path) -> pd.DataFrame:
+    """Normalize each supported bar index before mixing historical day files."""
+    bars = pd.read_parquet(path)
+    bars.index = _as_utc_index(bars.index)
+    return bars
 
 
 def _calendar_bounds_for_tag(tag: Optional[str], index: pd.DatetimeIndex) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -2518,7 +2525,7 @@ def main():
             warmup_days=args.warmup_days,
         )
         bars_1s = pd.concat(
-            [pd.read_parquet(path) for path in warmup_paths]
+            [_read_bars_utc(path) for path in warmup_paths]
         ).sort_index()
         bars_1s = filter_frame_for_orderbook_quality(bars_1s, symbol, label="1s bar")
         qprint(

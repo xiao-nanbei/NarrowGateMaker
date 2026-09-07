@@ -10,9 +10,24 @@ from features.feature_engineer import (
     _contiguous_warmup_paths,
     _load_label_quote_params,
     _quote_half_spread,
+    _read_bars_utc,
     add_sample_weights,
     chronological_good_day_split,
 )
+
+
+def test_warmup_concatenates_epoch_ms_and_datetime_day_indices(tmp_path: Path) -> None:
+    previous = pd.DataFrame({"close": [100.]}, index=[1787615999000])
+    current = pd.DataFrame({"close": [101.]},
+                           index=pd.to_datetime(["2026-08-25T00:00:00Z"]))
+    paths = [tmp_path / "previous.parquet", tmp_path / "current.parquet"]
+    previous.to_parquet(paths[0])
+    current.to_parquet(paths[1])
+    combined = pd.concat([_read_bars_utc(path) for path in paths]).sort_index()
+    assert combined.index.equals(pd.to_datetime([
+        "2026-08-24T23:59:59Z", "2026-08-25T00:00:00Z"]))
+    assert combined.close.tolist() == [100., 101.]
+    pd.testing.assert_frame_equal(pd.read_parquet(paths[0]), previous)
 
 
 def test_warmup_uses_only_immediately_contiguous_prior_days() -> None:
