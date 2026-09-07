@@ -78,6 +78,26 @@ def test_feature_books_route_btcusdc_and_btcusdt_separately(
     )
 
 
+def test_reference_trade_bars_survive_unrelated_historical_book_exclusion(tmp_path, monkeypatch):
+    from data_quality import excluded_orderbook_days
+
+    day = "2026-03-31"
+    assert day in excluded_orderbook_days("BTCUSDT")
+    index = pd.date_range(day, periods=3, freq="s", tz="UTC")
+    bars = pd.DataFrame({"close": [100., 101., 102.], "volume": [1., 2., 3.]}, index=index)
+    bars.to_parquet(tmp_path / f"BTCUSDT-1s-{day}.parquet")
+    monkeypatch.setattr(fe, "market_bars_dir", lambda *_: tmp_path)
+    pd.testing.assert_frame_equal(fe._load_market_bars_for_tag("BTCUSDT", fe.PERP_MARKET, day), bars, check_freq=False)
+
+    book_path = tmp_path / f"BTCUSDT-bbo-{day}.parquet"
+    book_path.touch()
+    monkeypatch.setattr(fe, "_book_dirs_for_symbol", lambda *_: (tmp_path, tmp_path))
+    monkeypatch.setattr(fe, "_load_bbo_10s", lambda *_: bars)
+    rejected_book = fe._load_market_bbo_for_tag("BTCUSDT", fe.PERP_MARKET, day)
+    assert rejected_book is not None and rejected_book.empty
+    assert fe._load_market_bars_for_tag("BTCUSDT", fe.PERP_MARKET, "2026-03-30") is None
+
+
 def test_feature_book_environment_overrides_apply_to_both_symbols(
     tmp_path: Path,
 ) -> None:

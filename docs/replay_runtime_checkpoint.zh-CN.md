@@ -38,6 +38,8 @@ Python BUY/SELL 冷却适配器会保留 EMA、窗口、截止时间和计数器
 
 F01 接受 `--exchange-book-source-plan`，读取包含 `symbol` 和 `days` 的 owner 本地 JSON。每天明确选择 `provider=tardis` 加 `raw_file`，或者 `provider=cryptohft` 加 `raw_root`，必须包含请求的输入日和预热日。这条路径要求 Python、diagnostic 盘口模式和 diagnostic 回测用途，不能与隐式 native 根目录同时使用，也不会自动更换供应商。两种来源复用同一调度器和运行断点；来源计划只读取一次，并记录摘要。处理后 BBO/L2 仍需单独选择，且必须与来源时钟匹配。
 
+来源排除只应作用于它描述的输入。参考市场特征加载器不会再仅因该交易对／日期存在历史 CryptoHFT 盘口排除，就丢弃已经可用的官方成交 Bar；参考 BBO 加载器仍保留盘口检查。这不会编造缺失 Bar、接纳无效盘口或改写旧特征；改变来源选择环境时，应生成新特征产物。
+
 现有 Tardis 规范化入口接受 `--timestamp-source exchange`，生成单独的 `normalized_tardis_l2_exchange_100ms_v1` 产物。每行只包含严格早于 100ms 右边界的交易所事件。时钟伴随文件保留原始供应商接收时间，但报告 `exchange_resample_age_us`，不再用供应商可见年龄；历史供应商传输耗时不会叠加到当前主机的模拟到达延迟。默认供应商时钟产物不变，即使 `--force` 也不能原位改变已有日期产物的时钟。原始时钟倒退不会被静默排序。这属于处理输入环境变化，旧冻结结果仍绑定原产物。
 
 当前测试中的局部排名需要 120 秒历史成交，成交诊断可能读取未来 5 秒。其他启用的消费者可能需要更长上下文，未决订单或计算也可能引用更早的盘口。必须保留实际数据，不能用新造快照替代。每个来源的延迟抽样使用全局行号；`execution_message_delivery_params(..., prior_delivery=previous)` 保留已有消息到达时间和各连接的回调积压。每批覆盖统计不自动等于全区间覆盖报告，最终元数据必须保留各批来源记录。

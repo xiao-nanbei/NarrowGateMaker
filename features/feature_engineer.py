@@ -1001,7 +1001,10 @@ def _load_market_bars_for_tag(symbol: str, market_type: str,
         return None
     path = bars_dir / f"{symbol}-1s-{day_tag}.parquet"
     if path.exists():
-        return filter_frame_for_orderbook_quality(pd.read_parquet(path), symbol, label=f"{market_type} 1s bar")
+        # Official trade bars are a separate source from historical book data.
+        # A rejected CryptoHFT book day must not erase an available reference bar.
+        # Book-specific exclusions remain in _load_market_bbo_for_tag.
+        return pd.read_parquet(path)
     print(f"  [WARN] cross-market bars missing: {symbol} {market_type} ({day_tag})")
     return None
 
