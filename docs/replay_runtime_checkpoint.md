@@ -32,6 +32,11 @@ runtime, remove the two checkpoint-output flags and append:
 
 You may supply another later cutoff/output path to save again. Funding and
 campaign finalization run once after the resumed replay actually finishes.
+
+For automatic bounded execution, use `--runtime-batch-seconds 21600 --runtime-batch-context-seconds 300 --save-runtime-checkpoint /private/run/b0.runtime.pickle` instead of manual cut/input-bound flags. These are example resource settings, not strategy parameters. After each durable save, the process replaces itself and resumes the same checkpoint with the next overlapping input batch; no parent retains the old arrays and no parallel arm is created. Keep a single owner for the checkpoint path and use a frozen source/runtime directory throughout. The final batch alone publishes accounting. On a failed batch, the last successfully saved checkpoint remains available; restart with the same automatic options plus `--resume-runtime-checkpoint` pointing to that file. Do not resume an already completed result as a new experiment. The caller still chooses batch size and enough real context for enabled consumers; this is not adaptive memory sizing or a waiver for missing inputs. A real ten-minute cold-start run passed two automatic process replacements at minutes four and eight, matching uninterrupted decisions, quotes, fills, campaigns and funding exactly; this does not qualify every date or provider boundary.
+
+An additional real one-hour native-book diagnostic crossed midnight with an automatic save at midnight. All 1,768 decisions, 649 quotes, 32 fills, 12 campaigns, funding records and aggregate accounting matched uninterrupted execution. Only execution time and explicitly labelled loaded-batch metadata differed. These diagnostic artifacts remain in the private evidence store, not distributed with the public repository; this is checkpoint equivalence, not historical live economic exactness.
+
 The accounting dates stay unchanged between invocations. To load a bounded
 input batch, add `--runtime-input-bounds-ms START END` (inclusive milliseconds).
 Only intersecting daily inputs are loaded; each is sliced before concatenation.
@@ -50,7 +55,7 @@ The start stays on the original timer grid. Batch message-count and latency
 summaries describe loaded inputs, not cumulative full-run observations; the
 final daily row labels this scope explicitly. Parent packet completion retains
 all required child timestamps even when execution rows are cropped.
-The caller still schedules these overlapping batches; automatic batch sizing
+The caller selects batch duration and context; adaptive memory-based sizing
 and the complete multi-source 401-day execution remain unfinished. Daily input
 preparation can still transiently load a full day before slicing it.
 

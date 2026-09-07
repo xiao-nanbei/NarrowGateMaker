@@ -2883,7 +2883,34 @@ def _arm_chunks(arms: list[smoke.SmokeArm], chunk_size: int) -> list[list[smoke.
     return [arms[i : i + chunk_size] for i in range(0, len(arms), chunk_size)]
 
 
+def _runtime_batch_bounds(start: int, end: int, resume_at: int, duration: int,
+                          context: int) -> tuple[tuple[int, int], int | None]:
+    """Bound memory-loaded input, not the continuous accounting interval."""
+    if duration <= 0 or context <= 0 or not start <= resume_at < end:
+        raise ValueError("invalid runtime batch duration, context or resume point")
+    cut = resume_at + duration
+    return ((max(start, resume_at - context), min(end, cut + context)),
+            cut if cut < end else None)
+
+
+def _exec_next_runtime_batch(argv: list[str], checkpoint_path: Path) -> None:
+    # Replace this process only after its checkpoint is durable. No second
+    # worker, account reset or in-memory parent retaining the previous batch.
+    remaining = iter(argv)
+    next_argv = []
+    for value in remaining:
+        if value == "--resume-runtime-checkpoint":
+            next(remaining)
+        elif not value.startswith("--resume-runtime-checkpoint="):
+            next_argv.append(value)
+    next_argv.extend(["--resume-runtime-checkpoint", str(checkpoint_path.resolve())])
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *next_argv])
+
+
 def main(argv: list[str] | None = None) -> None:
+    cli_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", default=DEFAULT_SYMBOL)
     parser.add_argument(
@@ -2906,6 +2933,10 @@ def main(argv: list[str] | None = None) -> None:
                         help="Trusted local checkpoint from the same inputs/runtime; never accept an uploaded pickle")
     parser.add_argument("--runtime-input-bounds-ms", type=int, nargs=2, metavar=("START", "END"),
                         help="Inclusive loaded batch bounds within --days; retain overlap/lookahead and save state before a nonfinal end")
+    parser.add_argument("--runtime-batch-seconds", type=int,
+                        help="Automatically checkpoint and replace the process after each bounded interval; requires one continuous Python arm and --save-runtime-checkpoint")
+    parser.add_argument("--runtime-batch-context-seconds", type=int, default=300,
+                        help="Real input overlap/lookahead for automatic batches (default: 300s); must cover enabled consumers and all pending callbacks")
     parser.add_argument(
         "--continuous", action="store_true",
         help="Run contiguous --days in one state machine, without midnight strategy resets",
@@ -3434,10 +3465,17 @@ def main(argv: list[str] | None = None) -> None:
             "more workers can be used when the day count is small."
         ),
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(cli_argv)
+    if args.runtime_batch_seconds is not None:
+        if (args.runtime_batch_seconds <= 0 or args.runtime_batch_context_seconds <= 0
+                or args.save_runtime_checkpoint is None):
+            raise SystemExit("automatic batches require positive duration/context and --save-runtime-checkpoint")
+        if args.checkpoint_at_ts_ms is not None or args.runtime_input_bounds_ms is not None:
+            raise SystemExit("automatic batches cannot also use manual cut/input bounds")
     if args.checkpoint_at_ts_ms is not None and args.save_runtime_checkpoint is None:
         raise SystemExit("--checkpoint-at-ts-ms requires --save-runtime-checkpoint")
-    if args.checkpoint_at_ts_ms is not None or args.resume_runtime_checkpoint is not None or args.runtime_input_bounds_ms is not None:
+    if (args.checkpoint_at_ts_ms is not None or args.resume_runtime_checkpoint is not None
+            or args.runtime_input_bounds_ms is not None or args.runtime_batch_seconds is not None):
         if not args.continuous or args.engine != "python" or args.workers != 1:
             raise SystemExit("runtime checkpoint requires --continuous --engine python --workers 1")
     if args.replay_end_ts_ms is not None and not args.continuous:
@@ -4120,6 +4158,8 @@ def main(argv: list[str] | None = None) -> None:
             save_runtime_checkpoint(args.save_runtime_checkpoint, day_result["_replay_checkpoint"])
             print(json.dumps({"status": "checkpoint_saved", "completed": False,
                               "cut_ts_ms": day_result["_replay_checkpoint"]["cut_ts_ms"]}), flush=True)
+            if args.runtime_batch_seconds is not None:
+                _exec_next_runtime_batch(cli_argv, args.save_runtime_checkpoint)
             return True
         _write_partial_day_outputs(out_dir, stem, day_result)
         partial_day = (
@@ -4161,6 +4201,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.resume_runtime_checkpoint is not None:
         from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint
         loaded_runtime_checkpoint = load_trusted_runtime_checkpoint(args.resume_runtime_checkpoint)
+    if args.runtime_batch_seconds is not None:
+        run_start, run_end = _continuous_replay_bounds(
+            days, (args.replay_end_ts_ms if args.replay_end_ts_ms is not None
+                   else int((_day_start_ts(days[-1]) + 86400) * 1000) - 1),
+            args.replay_start_ts_ms,
+        )
+        resume_at = int(loaded_runtime_checkpoint["cut_ts_ms"]) if loaded_runtime_checkpoint else run_start
+        args.runtime_input_bounds_ms, args.checkpoint_at_ts_ms = _runtime_batch_bounds(
+            run_start, run_end, resume_at, args.runtime_batch_seconds * 1000,
+            args.runtime_batch_context_seconds * 1000,
+        )
     if workers <= 1:
         for day in (days[:1] if args.continuous else days):
             day_initial = initial_states.get(

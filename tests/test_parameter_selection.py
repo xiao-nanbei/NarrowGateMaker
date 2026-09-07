@@ -494,6 +494,73 @@ def test_checkpoint_cli_writes_state_not_partial_economics(monkeypatch, tmp_path
     assert '"status": "checkpoint_saved"' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("resume_at,expected,cut", [
+    (1000, (1000, 2300), 2000),
+    (2000, (1700, 3300), 3000),
+    (3000, (2700, 3999), None),
+])
+def test_automatic_runtime_batches_keep_context_and_one_accounting_end(resume_at, expected, cut):
+    assert campaign_audit._runtime_batch_bounds(1000, 3999, resume_at, 1000, 300) == (expected, cut)
+
+
+@pytest.mark.parametrize("duration,context,resume_at", [(0, 300, 1000), (1000, 0, 1000),
+                                                       (1000, 300, 999), (1000, 300, 3999)])
+def test_automatic_runtime_batch_rejects_nonadvancing_bounds(duration, context, resume_at):
+    with pytest.raises(ValueError, match="runtime batch"):
+        campaign_audit._runtime_batch_bounds(1000, 3999, resume_at, duration, context)
+
+
+@pytest.mark.parametrize("resume_spelling", ["separate", "equals"])
+def test_automatic_runtime_cli_replaces_process_only_after_durable_save(monkeypatch, tmp_path, resume_spelling):
+    from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint
+
+    class Replaced(Exception):
+        pass
+    monkeypatch.setenv("MM_RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setattr(campaign_audit, "load_tick_base_params", lambda **_kw: _runtime_fifo_params())
+    start = int(campaign_audit._day_start_ts("2026-01-01") * 1000)
+    path = tmp_path / "runtime.pickle"
+    rounds = []
+    def run(**kwargs):
+        rounds.append(kwargs)
+        if len(rounds) == 1:
+            assert kwargs["resume_checkpoint"] is None
+            assert kwargs["runtime_input_bounds"] == (start, start + 4000)
+        else:
+            assert kwargs["resume_checkpoint"]["runtime"] == {"inventory": .001}
+            assert kwargs["runtime_input_bounds"] == (start + 2000, start + 7000)
+        cut = start + len(rounds) * 3000
+        assert kwargs["checkpoint_at_ts_ms"] == cut
+        return {"day": "2026-01-01", "_replay_checkpoint": {
+            "schema": "tick_replay_runtime.v1", "cut_ts_ms": cut, "runtime": {"inventory": .001}}}
+    monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", run)
+    monkeypatch.setattr(campaign_audit, "_write_partial_day_outputs",
+                        lambda *_a, **_kw: pytest.fail("premature accounting"))
+    commands = []
+    def execute(executable, command):
+        assert executable == command[0] == campaign_audit.sys.executable
+        assert load_trusted_runtime_checkpoint(path)["cut_ts_ms"] == start + len(rounds) * 3000
+        commands.append(command)
+        raise Replaced
+    monkeypatch.setattr(campaign_audit.os, "execv", execute)
+    argv = ["--days", "2026-01-01", "--arms", "baseline", "--continuous",
+            "--replay-purpose", "diagnostic", "--runtime-batch-seconds", "3",
+            "--runtime-batch-context-seconds", "0", "--save-runtime-checkpoint", str(path)]
+    with pytest.raises(SystemExit, match="positive duration/context"):
+        campaign_audit_main(argv)
+    argv[argv.index("--runtime-batch-context-seconds")+1] = "1"
+    with pytest.raises(Replaced):
+        campaign_audit_main(argv)
+    next_args = commands[-1][2:]
+    if resume_spelling == "equals":
+        index = next_args.index("--resume-runtime-checkpoint")
+        next_args[index:index+2] = ["--resume-runtime-checkpoint=" + next_args[index+1]]
+    with pytest.raises(Replaced):
+        campaign_audit_main(next_args)
+    assert commands[-1].count("--resume-runtime-checkpoint") == 1
+    assert not list((tmp_path / "results").iterdir())
+
+
 @pytest.mark.parametrize("days,offset,valid", [
     (["2026-01-01"], 0, False), (["2026-01-01"], -1, False),
     (["2026-01-01"], 3_599_999, True), (["2026-01-01"], 86_399_999, True),
