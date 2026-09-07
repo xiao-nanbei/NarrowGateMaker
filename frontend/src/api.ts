@@ -346,6 +346,11 @@ export type QualitySource = Omit<QualityDataset, "id"> & {
     reason: string;
   }[];
   replica: {
+    file_counts?: {
+      expected: number | null;
+      present: number;
+      missing: number | null;
+    } | null;
     status: "verified" | "present_unverified" | "missing" | "unknown" | "stale";
     last_checked_at: string | null;
     node_status: string;
@@ -360,6 +365,7 @@ export type QualityDay = {
   sources: QualitySource[];
 };
 export type QualityCatalog = {
+  calendar?: { start_day: string; end_day: string } | null;
   datasets: QualityDataset[];
   nodes: { id: string; status: string; last_seen: string | null }[];
   updated_at: string | null;

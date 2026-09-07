@@ -465,15 +465,40 @@ def test_not_applicable_scope_remains_na_without_an_audit_row(registered):
     assert source["audit_applicability"]["status"] == "no_audit"
 
 
-def test_import_calendar_can_exceed_http_page_bound(registered):
+def test_full_research_calendar_is_visible_without_splitting_years(registered):
     state, manifest, _ = registered
     data = json.loads(manifest.read_text())
     data.update(start_day="2025-08-01", end_day="2026-09-05")
     manifest.write_text(json.dumps(data))
     quality.import_quality(state, manifest)
     assert len(json.loads((state / quality.NAME).read_text())["records"]["provider-book"]) == 401
-    with pytest.raises(ValueError, match="366 days"):
-        quality.quality_days(state, "2025-08-01", "2026-09-05")
+    assert len(quality.quality_days(state, "2025-08-01", "2026-09-05")["items"]) == 401
+    assert quality.quality_catalog(state)["calendar"] == {
+        "start_day": "2025-08-01", "end_day": "2026-09-05",
+    }
+    with pytest.raises(ValueError, match="730 days"):
+        quality.quality_days(state, "2024-08-01", "2026-09-05")
+
+
+def test_raw_hourly_files_keep_partial_counts_without_claiming_content_quality(tmp_path):
+    paths = [tmp_path / f"hour-{hour:02d}.zst" for hour in range(24)]
+    for path in paths[:23]:
+        path.write_bytes(b"source")
+    result = quality._observe_inventory(
+        {"node": "local", "directory": str(tmp_path),
+         "files_by_day": {"2026-08-01": [str(p) for p in paths]}},
+        "2026-08-01", "BTCUSDC", "provider-original",
+    )
+    assert result["status"] == "missing"
+    assert result["file_counts"] == {"expected": 24, "present": 23, "missing": 1}
+    paths[-1].write_bytes(b"source")
+    complete = quality._observe_inventory(
+        {"node": "local", "directory": str(tmp_path),
+         "files_by_day": {"2026-08-01": [str(p) for p in paths]}},
+        "2026-08-01", "BTCUSDC", "provider-original",
+    )
+    assert complete["status"] == "present_unverified"
+    assert complete["file_counts"] == {"expected": 24, "present": 24, "missing": 0}
 
 
 def test_refresh_endpoint_rejects_paths_commands_and_unknown_ids(registered):
@@ -498,7 +523,7 @@ def test_refresh_endpoint_rejects_paths_commands_and_unknown_ids(registered):
     )
     assert client.post("/api/data-quality/refresh", json=request("unknown")).status_code == 404
     assert (
-        client.post("/api/data-quality/refresh", json=request(start_day="2025-01-01")).status_code
+        client.post("/api/data-quality/refresh", json=request(start_day="2024-01-01")).status_code
         == 400
     )
 

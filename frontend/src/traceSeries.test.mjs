@@ -341,6 +341,48 @@ const qualityFixture = (changes = {}) => ({
   ...changes,
 });
 
+test("raw and prepared calendars never mix absent audits with missing raw files", () => {
+  const raw = qualityFixture({
+    dataset_id: "provider",
+    stage: "raw",
+    check_status: "unchecked",
+    replica: { status: "present_unverified" },
+    audit_applicability: undefined,
+  });
+  const product = qualityFixture({
+    dataset_id: "bars",
+    stage: "processed",
+    availability: "missing",
+  });
+  const days = [{ day: "2026-08-01", sources: [raw, product] }];
+  assert.deepEqual(
+    filterQualityDays(days, { ...noQualityFilters, stage: "raw" })[0].sources,
+    [raw],
+  );
+  assert.equal(
+    filterQualityDays(days, {
+      ...noQualityFilters,
+      stage: "raw",
+      problemOnly: true,
+    }).length,
+    0,
+  );
+  assert.deepEqual(
+    filterQualityDays(days, {
+      ...noQualityFilters,
+      stage: "processed",
+      problemOnly: true,
+    })[0].sources,
+    [product],
+  );
+  assert.equal(
+    filterQualityDays(days, { ...noQualityFilters, stage: "registered" })
+      .length,
+    0,
+  );
+  assert.equal(days[0].sources.length, 2);
+});
+
 test("historical audit success never becomes current task success without its current mapping", () => {
   const historical = qualityFixture({
     audit_applicability: undefined,

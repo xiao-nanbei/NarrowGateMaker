@@ -72,6 +72,8 @@ function SourceDetails({
     processed: "处理后产物",
     registered: "登记产物（未声明处理阶段）",
   }[source.stage ?? "registered"];
+  const raw = source.stage === "raw";
+  const counts = source.replica.file_counts;
   return (
     <details className="quality-source">
       <summary>
@@ -80,8 +82,24 @@ function SourceDetails({
           {source.exchange} / {source.market} / {source.symbol} /{" "}
           {source.data_type}
         </span>
-        <State value={source.availability} />
-        <State value={audit.state} label={audit.label} />
+        <State
+          value={source.availability}
+          label={
+            raw
+              ? undefined
+              : {
+                  present: "产物已生成",
+                  missing: "产物未找到 / 待生成",
+                  unknown: "产物尚未观察",
+                }[source.availability]
+          }
+        />
+        {!raw && <State value={audit.state} label={audit.label} />}
+        {raw && counts && (
+          <span className="tag">
+            文件 {counts.present} / {counts.expected ?? "未固定数量"}
+          </span>
+        )}
         <span className="muted">
           <State value={replica.state} label={replica.label} />
         </span>
@@ -126,7 +144,10 @@ function SourceDetails({
             </p>
           </section>
         </div>
-        <h4 className="quality-subtitle">3 · 当前各用途的适用范围</h4>
+        <h4 className="quality-subtitle">
+          3 ·{" "}
+          {raw ? "原始源检查（不代表处理产物已生成）" : "当前各用途的适用范围"}
+        </h4>
         <div className="quality-usability">
           {Object.entries(TASKS).map(([key, label]) => {
             const current = qualityTask(source, key as keyof typeof TASKS);
@@ -238,6 +259,10 @@ export function DataQuality({
   const [market, setMarket] = useState("");
   const [symbol, setSymbol] = useState("");
   const [dataset, setDataset] = useState("");
+  const [stage, setStage] = useState<"raw" | "processed" | "registered">(
+    "processed",
+  );
+  const [page, setPage] = useState(0);
   const [task, setTask] = useState<QualityTask | "">("");
   const [problem, setProblem] = useState(false);
   const [missingReplica, setMissingReplica] = useState(false);
@@ -253,7 +278,7 @@ export function DataQuality({
   } | null>(null);
   const refreshController = useRef<AbortController | null>(null);
   const days = useMemo(() => utcDays(start, end), [start, end]);
-  const valid = days.length > 0 && days.length <= 366;
+  const valid = days.length > 0 && days.length <= 730;
   const query = useMemo(
     () =>
       new URLSearchParams({
@@ -308,7 +333,13 @@ export function DataQuality({
       });
     return () => controller.abort();
   }, [query, valid, authVersion, refresh]);
-  const matches = (entry: { source: string; market: string; symbol: string }) =>
+  const matches = (entry: {
+    source: string;
+    market: string;
+    symbol: string;
+    stage?: string;
+  }) =>
+    (entry.stage ?? "registered") === stage &&
     (!source || entry.source === source) &&
     (!market || entry.market === market) &&
     (!symbol || entry.symbol === symbol);
@@ -317,10 +348,44 @@ export function DataQuality({
     market,
     symbol,
     datasetId: dataset,
+    stage,
     task,
     problemOnly: problem,
     missingReplicaOnly: missingReplica,
   });
+  useEffect(
+    () => setPage(0),
+    [
+      start,
+      end,
+      source,
+      market,
+      symbol,
+      dataset,
+      stage,
+      task,
+      problem,
+      missingReplica,
+      node,
+    ],
+  );
+  const visibleDays = items.slice(page * 20, (page + 1) * 20);
+  const lastPage = Math.max(0, Math.ceil(items.length / 20) - 1);
+  const coverage = new Map<
+    string,
+    { label: string; present: number; missing: number; unknown: number }
+  >();
+  for (const day of items)
+    for (const entry of day.sources) {
+      const row = coverage.get(entry.dataset_id) ?? {
+        label: entry.label,
+        present: 0,
+        missing: 0,
+        unknown: 0,
+      };
+      row[entry.availability] += 1;
+      coverage.set(entry.dataset_id, row);
+    }
   const refreshInventory = async () => {
     if (!valid || refreshingInventory || node !== "local") return;
     const controller = new AbortController();
@@ -357,7 +422,9 @@ export function DataQuality({
       const result = await api<QualityExport>(`/data-quality/export?${query}`);
       const allowed = new Set(
         items.flatMap((day) =>
-          day.sources.map((s) => `${day.day}:${s.dataset_id}`),
+          day.sources
+            .filter((s) => stage !== "raw" || s.availability !== "present")
+            .map((s) => `${day.day}:${s.dataset_id}`),
         ),
       );
       const selected = result.items.filter((item) =>
@@ -402,7 +469,13 @@ export function DataQuality({
     </label>
   );
   const options = (key: "source" | "market" | "symbol") =>
-    [...new Set((catalog?.datasets ?? []).map((item) => item[key]))].sort();
+    [
+      ...new Set(
+        (catalog?.datasets ?? [])
+          .filter((item) => (item.stage ?? "registered") === stage)
+          .map((item) => item[key]),
+      ),
+    ].sort();
   return (
     <section className="panel quality-panel">
       <div className="result-header">
@@ -410,7 +483,7 @@ export function DataQuality({
           <span className="eyebrow">
             UTC DATA CALENDAR / REGISTERED INVENTORY
           </span>
-          <h2>先看数据是否在，再看能否使用。</h2>
+          <h2>原始行情与可用产物，分开查看。</h2>
         </div>
         <button
           className="button secondary"
@@ -420,6 +493,53 @@ export function DataQuality({
         </button>
       </div>
       <div className="result-body">
+        <div className="quality-actions" role="group" aria-label="数据层">
+          {(
+            [
+              ["raw", "原始行情"],
+              ["processed", "训练 / 回测产物"],
+              ["registered", "待分类记录"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              className={`button ${stage === value ? "" : "secondary"}`}
+              aria-pressed={stage === value}
+              onClick={() => {
+                setStage(value);
+                setDataset("");
+                setSource("");
+                setTask("");
+              }}
+            >
+              {label} ·{" "}
+              {
+                (catalog?.datasets ?? []).filter(
+                  (d) => (d.stage ?? "registered") === value,
+                ).length
+              }
+            </button>
+          ))}
+          <button
+            className="button secondary"
+            disabled={!catalog?.calendar}
+            onClick={() => {
+              if (catalog?.calendar) {
+                setStart(catalog.calendar.start_day);
+                setEnd(catalog.calendar.end_day);
+              }
+            }}
+          >
+            查看全部登记日期
+          </button>
+        </div>
+        <div className="notice">
+          {stage === "raw"
+            ? "本栏检查购买 / 下载的原始文件是否在。一个供应商某日缺文件，不等于其他供应商也缺；没有产物审计，不会在这里把源文件判为坏数据。"
+            : "本栏只列处理后产物。产物缺失可能只是尚未生成，不等于原始行情缺失；已有文件也不自动代表所有模型的训练特征和标签齐全。"}
+          连续回测可以跨日维护状态，无须按盈利或旧研究名单挑日；需要保留具体输入、用途和补齐区间。
+          沿用快照生成的网格应记录原快照年龄；丢失增量期间的盘口未知，不能记成已确认零变化。
+        </div>
         <div className="notice">
           本页只展示当前选入目录的数据，不是每个回测的必需输入清单。参考行情与执行盘口需求不同；未启用的数据应在需要时再纳入。
           原始数据、处理后产物、用途检查与机器副本分开记录。未观察副本不等于缺失；有文件不等于完成处理后检查。某秒没有成交不等于丢数据，ffill
@@ -580,7 +700,7 @@ export function DataQuality({
         )}
         {!valid && (
           <div className="notice error" role="alert">
-            请选择有序、有效且不超过 366 天的 UTC 日期范围。
+            请选择有序、有效且不超过 730 天的 UTC 日期范围。
           </div>
         )}
         {error && (
@@ -596,12 +716,39 @@ export function DataQuality({
         </p>
         {!loading && !error && report && items.length === 0 && (
           <div className="empty">
-            <h3>当前筛选没有记录</h3>
+            <h3>当前数据层与筛选没有记录</h3>
             <p>清除待复核日 / 副本筛选或选择其他来源。空结果不是质量通过。</p>
           </div>
         )}
         <div className="quality-calendar">
-          {items.map((day) => (
+          {coverage.size > 0 && (
+            <div className="table-scroll">
+              <table>
+                <caption>当前层 / 筛选范围的文件覆盖（不是质量评级）</caption>
+                <thead>
+                  <tr>
+                    <th>数据集</th>
+                    <th>{stage === "raw" ? "原始文件组在" : "产物已生成"}</th>
+                    <th>
+                      {stage === "raw" ? "登记路径缺文件" : "未生成 / 未找到"}
+                    </th>
+                    <th>未观察 / 未登记</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...coverage].map(([id, row]) => (
+                    <tr key={id}>
+                      <td>{row.label}</td>
+                      <td>{row.present}</td>
+                      <td>{row.missing}</td>
+                      <td>{row.unknown}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {visibleDays.map((day) => (
             <article className="quality-day" key={day.day}>
               <header>
                 <div>
@@ -637,6 +784,28 @@ export function DataQuality({
             </article>
           ))}
         </div>
+        {items.length > 20 && (
+          <div className="quality-actions">
+            <button
+              className="button secondary"
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              上一页
+            </button>
+            <span>
+              第 {page + 1} / {lastPage + 1} 页 · 每页 20
+              日（导出仍包含整个筛选范围）
+            </span>
+            <button
+              className="button secondary"
+              disabled={page >= lastPage}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              下一页
+            </button>
+          </div>
+        )}
         {report?.limitations.length ? (
           <ul className="limitations">
             {report.limitations.map((limit, i) => (

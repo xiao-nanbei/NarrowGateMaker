@@ -31,7 +31,7 @@ LIMITATIONS = [
 ]
 
 
-def _days(start: str, end: str, *, limit: int = 366) -> list[str]:
+def _days(start: str, end: str, *, limit: int = 730) -> list[str]:
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     count = (last - first).days + 1
     if not 1 <= count <= limit:
@@ -154,17 +154,24 @@ def _observe_inventory(inventory: dict, day: str, symbol: str, version: str) -> 
         return {"reason": "inventory_snapshot_only"}
     try:
         snapshot = []
+        missing = 0
         for path in paths:
             if not path.is_file():
-                return {"status": "missing", "reason": "local_file_missing", "snapshot": []}
+                missing += 1
+                continue
             stat = path.stat()
             snapshot.append([str(path), stat.st_size, stat.st_mtime_ns, stat.st_ino, stat.st_dev])
     except OSError:
         return {"status": "unknown", "reason": "local_inventory_root_unavailable", "snapshot": None}
     return {
-        "status": "present_unverified" if snapshot else "missing",
-        "reason": "local_presence_only" if snapshot else "local_file_missing",
+        "status": "present_unverified" if snapshot and not missing else "missing",
+        "reason": "local_presence_only" if snapshot and not missing else "local_file_missing",
         "snapshot": snapshot,
+        "file_counts": {
+            "expected": len(paths) if "files_by_day" in inventory else None,
+            "present": len(snapshot),
+            "missing": missing if paths else None,
+        },
         "size_bytes": sum(item[1] for item in snapshot),
         "audit_size_matched": bool(snapshot) and expected == [item[1] for item in snapshot],
         "binding_reason": (
@@ -183,6 +190,7 @@ def _apply_observation(record, node, observation, now, baseline=None):
     if "status" not in observation:
         return
     replica.update(status=observation["status"], last_checked_at=now)
+    replica["file_counts"] = observation.get("file_counts")
     replica["observed_at"] = now
     changed = baseline is not None and observation.get("snapshot") != baseline.get("snapshot")
     matched = observation.get("audit_size_matched", False) and not changed
@@ -228,7 +236,11 @@ def _current_usability(record):
 
 def quality_catalog(root: Path) -> dict:
     payload = _load(root)
-    return {key: payload[key] for key in ("datasets", "nodes", "updated_at")}
+    days = sorted({day for records in payload["records"].values() for day in records})
+    return {
+        **{key: payload[key] for key in ("datasets", "nodes", "updated_at")},
+        "calendar": {"start_day": days[0], "end_day": days[-1]} if days else None,
+    }
 
 
 def quality_days(

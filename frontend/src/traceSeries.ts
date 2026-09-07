@@ -303,17 +303,23 @@ export function filterQualityDays(
     market: string;
     symbol: string;
     datasetId: string;
+    stage?: "raw" | "processed" | "registered" | "";
     task?: QualityTask | "";
     problemOnly: boolean;
     missingReplicaOnly: boolean;
   },
 ): QualityDay[] {
   const sourceFilter = Boolean(
-    filters.source || filters.market || filters.symbol || filters.datasetId,
+    filters.source ||
+      filters.market ||
+      filters.symbol ||
+      filters.datasetId ||
+      filters.stage,
   );
   return days.flatMap((day) => {
     const sources = day.sources.filter(
       (source) =>
+        (!filters.stage || (source.stage ?? "registered") === filters.stage) &&
         (!filters.source || source.source === filters.source) &&
         (!filters.market || source.market === filters.market) &&
         (!filters.symbol || source.symbol === filters.symbol) &&
@@ -328,6 +334,11 @@ export function filterQualityDays(
         if (filters.task) {
           const state = qualityTask(source, filters.task).state;
           return state !== "passed" && state !== "not_applicable";
+        }
+        if (filters.stage === "raw") {
+          // Raw inventory is not a list of replay-ready products. Do not make
+          // a missing processing audit look like a missing provider file.
+          return source.availability !== "present";
         }
         return (
           source.availability !== "present" ||
