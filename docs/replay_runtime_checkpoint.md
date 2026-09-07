@@ -41,6 +41,8 @@ batch retains the cutoff, every still-referenced pending cursor, and the require
 lookback. Its final input end must reach the original accounting end before any
 economic report is published. Input bounds are not new daily initial states.
 
+For a bounded qualification spanning midnight, F01 also accepts `--replay-start-ts-ms START --replay-end-ts-ms END --continuous`. The inclusive start must lie in the first supplied UTC day and the inclusive end in the last. The experimental account starts at that declared origin; this does not restore historical live inventory. Full source/pre-roll inputs remain available, funding outside the declared window is excluded, and partial-window reports never count the result as complete UTC days. Keep this original start/end unchanged across checkpoint batches; `--runtime-input-bounds-ms` only rotates loaded data inside it. Omitting the start preserves the existing midnight-origin behavior.
+
 Batch source identities are retained in the checkpoint and final metadata.
 The start stays on the original timer grid. Batch message-count and latency
 summaries describe loaded inputs, not cumulative full-run observations; the

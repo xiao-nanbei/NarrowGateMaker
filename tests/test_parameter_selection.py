@@ -349,17 +349,20 @@ def test_risk_pair_arms_cannot_redefine_even_an_identical_window(field):
 def test_continuous_prefix_cli_requires_continuous_before_loading_data():
     with pytest.raises(SystemExit, match="--replay-end-ts-ms requires --continuous"):
         campaign_audit_main(["--days", "2026-01-01", "--replay-end-ts-ms", "1000"])
+    with pytest.raises(SystemExit, match="--replay-start-ts-ms requires"):
+        campaign_audit_main(["--days", "2026-01-01", "--continuous", "--replay-start-ts-ms", "1000"])
 
 
 @pytest.mark.parametrize("rotate_inputs", [False, True])
 @pytest.mark.parametrize("source_plan", [False, True])
-def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path, rotate_inputs, source_plan):
+@pytest.mark.parametrize("start_offset", [0, 3_600_000])
+def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path, rotate_inputs, source_plan, start_offset):
     from dataclasses import replace
     from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
     from tests.test_tick_runtime_checkpoint import scenario, assert_same
 
     day = "2026-01-01"
-    start = int(campaign_audit._day_start_ts(day) * 1000)
+    start = int(campaign_audit._day_start_ts(day) * 1000) + start_offset
     args, kwargs = scenario("async")
     trades = args[0].copy()
     trades["transact_time"] += start
@@ -380,6 +383,7 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
                 arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")],
                 engine="python", day_initial={}, day_live_state=None, use_initial_state=False,
                 replay_end_ts_ms=start + 4_000, save_fill_trace=True,
+                replay_start_ts_ms=start if start_offset else None,
                 funding_events=[{"fundingTime": start + 2_000, "fundingRate": .01, "markPrice": 100.}])
     if source_plan:
         call.update(native_exchange_book_mode="diagnostic", native_exchange_book_warmup_hours=0)
@@ -407,6 +411,11 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
             row.pop("runtime_s", None)
     assert_same(actual, expected)
     assert actual["funding_trace_rows"]
+    row = actual["daily_rows"][0]
+    assert row["replay_start_ts_ms"] == start
+    assert row["window_duration_ms"] == 4001
+    assert row["window_complete_utc_day_count"] == 0
+    assert row["accounting_window"] == ("continuous_window" if start_offset else "continuous_prefix")
     if source_plan:
         assert actual["daily_rows"][0]["exchange_book_queue_scope"] == "strategy_independent_provider_ordered_l2_exchange_time_v1"
 
@@ -501,6 +510,18 @@ def test_continuous_prefix_bounds_stay_inside_final_source_day(days, offset, val
     else:
         with pytest.raises(ValueError, match="within the final --days UTC day"):
             campaign_audit._continuous_replay_bounds(days, start_ms + offset)
+
+
+def test_continuous_explicit_origin_stays_in_first_day():
+    days = ["2026-01-01", "2026-01-02"]
+    midnight = int(campaign_audit._day_start_ts(days[0]) * 1000)
+    start, end = midnight + 86_000_000, midnight + 86_800_000
+    assert campaign_audit._continuous_replay_bounds(days, end, start) == (start, end)
+    for invalid in (True, float(start), midnight - 1, midnight + 86_400_000):
+        with pytest.raises(ValueError, match="within the first --days UTC day"):
+            campaign_audit._continuous_replay_bounds(days, end, invalid)
+    with pytest.raises(ValueError, match="after segment start"):
+        campaign_audit._continuous_replay_bounds(days[:1], start, start)
 
 
 @pytest.mark.parametrize("unmatched_tail", [False, True])

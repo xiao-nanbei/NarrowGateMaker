@@ -1939,7 +1939,11 @@ def _rollup(daily: pd.DataFrame) -> pd.DataFrame:
         if "window_is_partial" in grp:
             partial = bool(grp["window_is_partial"].any())
             row.update({
-                "observation_unit": "continuous_prefix" if partial else "continuous_segment",
+                "observation_unit": (
+                    "continuous_window" if "accounting_window" in grp
+                    and grp["accounting_window"].eq("continuous_window").any()
+                    else "continuous_prefix" if partial else "continuous_segment"
+                ),
                 "observation_count": len(grp),
                 "n_days": None if partial else row["n_days"],
                 "window_is_partial": partial,
@@ -2004,7 +2008,7 @@ def _write_markdown(
         ]
     if meta.get("window_is_partial"):
         lines[9:9] = [
-            "## Predeclared continuous prefix",
+            "## Predeclared continuous window",
             "",
             f"Executed UTC milliseconds [{meta['replay_start_ts_ms']}, "
             f"{meta['replay_end_ts_ms']}] inclusive, with full source-day and warmup inputs. "
@@ -2149,9 +2153,15 @@ def _load_risk_policy_for_arms(
     return payload
 
 
-def _continuous_replay_bounds(days: list[str], end_ts_ms: int) -> tuple[int, int]:
-    """An inclusive terminal inside the final source day; initial state stays at midnight."""
-    start_ms = int(_day_start_ts(days[0]) * 1000)
+def _continuous_replay_bounds(
+    days: list[str], end_ts_ms: int, start_ts_ms: int | None = None,
+) -> tuple[int, int]:
+    """Explicit inclusive window; source and causal pre-roll remain separate."""
+    first_start_ms = int(_day_start_ts(days[0]) * 1000)
+    start_ms = first_start_ms if start_ts_ms is None else start_ts_ms
+    if (type(start_ms) is not int
+            or not first_start_ms <= start_ms < first_start_ms + 86_400_000):
+        raise ValueError("replay start must be within the first --days UTC day")
     final_start_ms = int(_day_start_ts(days[-1]) * 1000)
     if (isinstance(end_ts_ms, bool) or not isinstance(end_ts_ms, int)
             or not max(start_ms + 1, final_start_ms) <= end_ts_ms < final_start_ms + 86_400_000):
@@ -2191,6 +2201,7 @@ def _run_day_campaign_audit(
     continuous_days: list[str] | None = None,
     risk_pair_baseline_arm: str = "",
     replay_end_ts_ms: int | None = None,
+    replay_start_ts_ms: int | None = None,
     checkpoint_at_ts_ms: int | None = None,
     resume_checkpoint: dict[str, Any] | None = None,
     runtime_input_bounds: tuple[int, int] | None = None,
@@ -2231,24 +2242,36 @@ def _run_day_campaign_audit(
             (_day_start_ts(source_days[-1]) + 86400) * 1000 - 1
         )
     prefix_metadata: dict[str, Any] = {}
+    if replay_start_ts_ms is not None and replay_end_ts_ms is None:
+        raise ValueError("explicit replay start requires an explicit replay end")
     if replay_end_ts_ms is not None:
         if not continuous_days:
             raise ValueError("replay end requires a continuous prefix")
-        start_ms, end_ms = _continuous_replay_bounds(source_days, replay_end_ts_ms)
+        start_ms, end_ms = _continuous_replay_bounds(
+            source_days, replay_end_ts_ms, replay_start_ts_ms,
+        )
         if any({"replay_event_clock_start_ts_ms", "replay_event_clock_end_ts_ms"}
                .intersection(arm.overrides) for arm in arms):
             raise ValueError("arms cannot override the common replay window")
         if base.get("replay_event_clock") not in {"merged", "empirical"}:
             raise ValueError("continuous prefix requires a merged or empirical event clock")
+        base["replay_event_clock_start_ts_ms"] = start_ms
         base["replay_event_clock_end_ts_ms"] = end_ms
-        partial = end_ms < int((_day_start_ts(source_days[-1]) + 86400) * 1000 - 1)
+        partial_start = start_ms != int(_day_start_ts(source_days[0]) * 1000)
+        partial = partial_start or end_ms < int((_day_start_ts(source_days[-1]) + 86400) * 1000 - 1)
+        complete_days = sum(
+            start_ms <= int(_day_start_ts(value) * 1000)
+            and int((_day_start_ts(value) + 86400) * 1000 - 1) <= end_ms
+            for value in source_days
+        )
         prefix_metadata = {
             "replay_start_ts_ms": start_ms, "replay_end_ts_ms": end_ms,
             "replay_end_boundary": "inclusive_millisecond",
             "window_duration_ms": end_ms - start_ms + 1,
             "window_is_partial": partial,
-            "window_complete_utc_day_count": len(source_days) - int(partial),
-            "accounting_window": "continuous_prefix" if partial else "continuous_segment",
+            "window_complete_utc_day_count": complete_days,
+            "accounting_window": ("continuous_window" if partial_start else
+                                  "continuous_prefix" if partial else "continuous_segment"),
         }
         if funding_events is not None:
             funding_events = [row for row in funding_events
@@ -2875,11 +2898,17 @@ def main(argv: list[str] | None = None) -> None:
         help="Run contiguous --days in one state machine, without midnight strategy resets",
     )
     parser.add_argument(
+        "--replay-start-ts-ms", type=int,
+        help=("Inclusive UTC millisecond origin within the first --days date; "
+              "requires --continuous and --replay-end-ts-ms. Starts the experimental "
+              "state at this origin, not a restored historical live state."),
+    )
+    parser.add_argument(
         "--replay-end-ts-ms", type=int,
         help=(
             "Inclusive UTC millisecond terminal within the final --days date; requires "
-            "--continuous. Keeps midnight initial state and full source/warmup inputs, "
-            "but executes only this predeclared prefix, not a complete-day observation."
+            "--continuous. Uses midnight origin unless --replay-start-ts-ms is given; "
+            "retains source/warmup inputs. A partial window is not a full-day observation."
         ),
     )
     parser.add_argument(
@@ -3398,6 +3427,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("runtime checkpoint requires --continuous --engine python --workers 1")
     if args.replay_end_ts_ms is not None and not args.continuous:
         raise SystemExit("--replay-end-ts-ms requires --continuous")
+    if args.replay_start_ts_ms is not None and (
+        not args.continuous or args.replay_end_ts_ms is None
+    ):
+        raise SystemExit("--replay-start-ts-ms requires --continuous and --replay-end-ts-ms")
     if args.risk_pair_baseline_arm:
         if not args.continuous or args.funding_history is None:
             raise SystemExit("risk pairs require --continuous and --funding-history")
@@ -3481,7 +3514,7 @@ def main(argv: list[str] | None = None) -> None:
             )
     if args.replay_end_ts_ms is not None:
         try:
-            _continuous_replay_bounds(days, args.replay_end_ts_ms)
+            _continuous_replay_bounds(days, args.replay_end_ts_ms, args.replay_start_ts_ms)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     funding_history = (
@@ -4123,6 +4156,7 @@ def main(argv: list[str] | None = None) -> None:
                     continuous_days=days if args.continuous else None,
                     risk_pair_baseline_arm=args.risk_pair_baseline_arm,
                     replay_end_ts_ms=args.replay_end_ts_ms,
+                    replay_start_ts_ms=args.replay_start_ts_ms,
                     checkpoint_at_ts_ms=args.checkpoint_at_ts_ms,
                     resume_checkpoint=loaded_runtime_checkpoint,
                     runtime_input_bounds=(tuple(args.runtime_input_bounds_ms)
