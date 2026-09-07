@@ -525,8 +525,9 @@ def test_continuous_explicit_origin_stays_in_first_day():
 
 
 @pytest.mark.parametrize("unmatched_tail", [False, True])
+@pytest.mark.parametrize("window_start_offset", [0, 500])
 def test_continuous_prefix_preserves_complete_parent_readiness_and_source_preroll(
-    monkeypatch, unmatched_tail,
+    monkeypatch, unmatched_tail, window_start_offset,
 ):
     from dataclasses import replace
 
@@ -568,6 +569,7 @@ def test_continuous_prefix_preserves_complete_parent_readiness_and_source_prerol
     )["_exec_message_delivery"]
     result = campaign_audit._run_day_campaign_audit(
         day=day, continuous_days=[day], replay_end_ts_ms=start_ms + 1200, symbol="BTCUSDC",
+        replay_start_ts_ms=start_ms + window_start_offset if window_start_offset else None,
         base={**inputs["params"], "risk_selection_collect_opportunities": True,
               "exec_message_delivery_profile_path": "synthetic"},
         arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")],
@@ -576,7 +578,9 @@ def test_continuous_prefix_preserves_complete_parent_readiness_and_source_prerol
         market_data_latency_mode="profile_empirical",
     )
     trades, params, kwargs = captures[0]
-    assert len(trades) == 4 < len(window["trades"])
+    first = int(np.searchsorted(window["trades"]["transact_time"], start_ms + window_start_offset))
+    assert len(trades) == 4 - first < len(window["trades"])
+    assert trades["transact_time"].min() >= start_ms + window_start_offset
     for name in ("bbo_data", "l2_data"):
         np.testing.assert_array_equal(kwargs[name].ts_ms, inputs[name].ts_ms)
         assert kwargs[name].ts_ms[0] < start_ms
@@ -585,8 +589,8 @@ def test_continuous_prefix_preserves_complete_parent_readiness_and_source_prerol
         for name in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns"):
             np.testing.assert_array_equal(projected[feed][name], clock[name])
     np.testing.assert_array_equal(projected["trade"]["visible_child_mask"],
-                                  complete["trade"]["visible_child_mask"][:4])
-    assert max(projected["trade"]["last_child_row_index"]) == (2 if unmatched_tail else 3)
+                                  complete["trade"]["visible_child_mask"][first:4])
+    assert max(projected["trade"]["last_child_row_index"]) == (2 if unmatched_tail else 3) - first
     assert result["daily_rows"][0]["replay_end_ts_ms"] == start_ms + 1200
 
 

@@ -43,6 +43,8 @@ economic report is published. Input bounds are not new daily initial states.
 
 For a bounded qualification spanning midnight, F01 also accepts `--replay-start-ts-ms START --replay-end-ts-ms END --continuous`. The inclusive start must lie in the first supplied UTC day and the inclusive end in the last. The experimental account starts at that declared origin; this does not restore historical live inventory. Full source/pre-roll inputs remain available, funding outside the declared window is excluded, and partial-window reports never count the result as complete UTC days. Keep this original start/end unchanged across checkpoint batches; `--runtime-input-bounds-ms` only rotates loaded data inside it. Omitting the start preserves the existing midnight-origin behavior.
 
+Execution rows are cropped at the declared origin, with parent-message child indices rebased to that actual slice; source/pre-roll rows do not become earlier simulated fills. Day-specific quality eligibility may differ within one continuous window: the combined eligibility is true only if every component explicitly passes, and `book_quality_by_day` preserves each original result. This does not waive source/version compatibility or promote an ineligible day.
+
 Batch source identities are retained in the checkpoint and final metadata.
 The start stays on the original timer grid. Batch message-count and latency
 summaries describe loaded inputs, not cumulative full-run observations; the
@@ -87,7 +89,7 @@ fresh starts. The configured Python receive-time BUY/SELL adapter now has
 stateful save/restore and rotation tests, including an actual replay fill that
 updates cooldown. Process locks are recreated; protected EMA, pending window,
 cooldown and counters are retained. Every undelivered callback must remain in the
-next input batch. The optional native cooldown hot-path object still needs state
+next input batch. Before discarding an old prefix, the adapter can fold lazy depth callbacks strictly before the saved next event into the existing EMA in source order, without evaluating a policy or creating a fill. Equal-time and future callbacks cannot be discarded. A real cross-midnight bounded comparison also matched the uninterrupted decision, quote, fill, campaign and funding tables exactly; no-fill intervals before the cut are covered by the regression tests. The optional native cooldown hot-path object still needs state
 export; it is rejected rather than replaced with fresh Python state. The full
 private B0 configuration has passed a representative one-hour comparison for
 both same-window file resume and actual input cropping. Decisions, quotes,

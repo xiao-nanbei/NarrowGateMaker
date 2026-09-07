@@ -171,6 +171,7 @@ def rotate_runtime_inputs(saved, fresh, next_event, *, exchange_book_event_tape=
         # The emitter and evaluator are aliases to one stateful live adapter.
         saved.cooldown_duration_policy_evaluator.resume_input_window(
             fresh.cooldown_duration_policy_evaluator,
+            before_ts_ns=int(next_event[1]) * 1_000_000,
         )
         for name in ("cooldown_duration_policy_evaluator", "cooldown_v2_snapshot_emitter"):
             if name in saved.quote_core_params:

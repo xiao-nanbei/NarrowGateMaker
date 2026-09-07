@@ -20,7 +20,8 @@ def test_rotated_clock_retains_price_before_first_new_execution():
     assert clock.loc[clock.transact_time == first, "price"].iloc[-1] == trades.price.iloc[0]
 
 
-def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch):
+@pytest.mark.parametrize("capture_cutoffs", [(500, 1_250, 2_050), (500,)])
+def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch, capture_cutoffs):
     from models.exchange_book_replay import HistoricalMessageDeliverySchedule, ReceiveTimeCooldownReplayAdapter
     from models.tick_data_types import HistoricalL2Data
     from strategy.boolean_cooldown_live import (
@@ -61,7 +62,7 @@ def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeyp
         )
         return subject.evaluate(snapshot, 85_000.)
 
-    for cutoff in (500, 1_250, 2_050):
+    for cutoff in capture_cutoffs:
         for side in ("BUY", "SELL"):
             assert capture(actual, cutoff, side) == capture(expected, cutoff, side)
     path = tmp_path / "policies.pickle"
@@ -71,7 +72,14 @@ def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeyp
     actual = restored["adapter"]
     assert restored["emitter"] is actual
     assert actual._policies["BUY"].windows._updates > 0
-    actual.resume_input_window(adapter(10, len(ts), tmp_path / "second"))
+    fresh = adapter(10, len(ts), tmp_path / "second")
+    if len(capture_cutoffs) == 1:
+        saved_cursor = actual._cursor
+        # An equal-time callback is still causally ambiguous, not disposable.
+        with pytest.raises(ValueError, match="undelivered depth callbacks"):
+            actual.resume_input_window(fresh, before_ts_ns=int(actual._ready[9]))
+        assert actual._cursor == saved_cursor
+    actual.resume_input_window(fresh, before_ts_ns=2_450_000_000)
     for cutoff in (2_450, 3_999, 5_100):
         for side in ("BUY", "SELL"):
             assert capture(actual, cutoff, side) == capture(expected, cutoff, side)

@@ -2004,12 +2004,13 @@ class ReceiveTimeCooldownReplayAdapter:
         self._evaluations = 0
         self._cpp_window_arrays_cache = None
 
-    def resume_input_window(self, fresh):
+    def resume_input_window(self, fresh, *, before_ts_ns=None):
         """Rebind depth inputs without replacing policy, EMA or pending windows.
 
-        Keep every not-yet-delivered callback. In particular the pre-roll must
-        extend to the saved cursor, not just the most recent fill timestamp.
-        The caller supplies already-continued receive/ready clocks.
+        Keep every not-yet-delivered callback. Lazy callbacks strictly before
+        the next replay event can be folded into the saved EMA before dropping
+        their input rows; no policy decision or fill is manufactured. The caller
+        supplies already-continued receive/ready clocks.
         """
         if type(fresh) is not type(self) or self.cpp_policy_bindings != fresh.cpp_policy_bindings:
             raise ValueError("cooldown input rotation changed the configured policy")
@@ -2018,7 +2019,9 @@ class ReceiveTimeCooldownReplayAdapter:
         count = min(len(old) - offset, len(new))
         if count <= 0 or not np.array_equal(old[offset:offset + count], new[:count]):
             raise ValueError("cooldown depth windows need unchanged overlapping timestamps")
-        if offset > self._cursor:
+        if offset > self._cursor and (
+            before_ts_ns is None or self._ready[offset - 1] >= int(before_ts_ns)
+        ):
             raise ValueError("cooldown input window discarded undelivered depth callbacks")
         for name in ("bid_px", "ask_px", "bid_qty", "ask_qty"):
             if not np.array_equal(getattr(self._depth, name)[offset:offset + count],
@@ -2028,6 +2031,8 @@ class ReceiveTimeCooldownReplayAdapter:
             if not np.array_equal(getattr(self, name)[offset:offset + count],
                                   getattr(fresh, name)[:count]):
                 raise ValueError("cooldown input rotation changed message delivery clocks")
+        if offset > self._cursor:
+            self._consume_depth_callbacks(offset)
         self._cursor -= offset
         self._source_row_offset += offset
         self._depth = fresh._depth
@@ -2238,6 +2243,18 @@ class ReceiveTimeCooldownReplayAdapter:
             )
         return runtime
 
+    def _consume_depth_callbacks(self, last):
+        for index in range(self._cursor, last):
+            bids = list(zip(self._depth.bid_px[index], self._depth.bid_qty[index], strict=True))
+            asks = list(zip(self._depth.ask_px[index], self._depth.ask_qty[index], strict=True))
+            for observer in self._policies.values():
+                observer.observe_depth(
+                    receive_ts_ns=int(self._receive[index]), bids=bids, asks=asks,
+                    market_generation=self._source_row_offset + index + 1,
+                    depth_generation=self._source_row_offset + index + 1,
+                )
+        self._cursor = last
+
     def capture_exposure_fill(
         self, *, assignment_id, fill_exchange_ts_ns, fill_visible_ts_ns, m0_context, **_lineage
     ):
@@ -2254,16 +2271,7 @@ class ReceiveTimeCooldownReplayAdapter:
         last = int(np.searchsorted(self._ready, cutoff, side="left"))
         # All callbacks are delivered, not just the latest book. A same-time
         # callback is withheld because its order relative to the fill is unknown.
-        for index in range(self._cursor, last):
-            bids = list(zip(self._depth.bid_px[index], self._depth.bid_qty[index], strict=True))
-            asks = list(zip(self._depth.ask_px[index], self._depth.ask_qty[index], strict=True))
-            for observer in self._policies.values():
-                observer.observe_depth(
-                    receive_ts_ns=int(self._receive[index]), bids=bids, asks=asks,
-                    market_generation=self._source_row_offset + index + 1,
-                    depth_generation=self._source_row_offset + index + 1,
-                )
-        self._cursor = last
+        self._consume_depth_callbacks(last)
         self._last_cutoff = cutoff
         snapshot_id = f"{assignment_id}:receive-time-policy"
         raw = (

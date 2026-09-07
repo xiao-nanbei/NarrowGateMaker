@@ -2547,7 +2547,8 @@ def _run_day_campaign_audit(
                 # Preserve full source/pre-roll arrays and their cache identity.
                 # Only the exchange execution view ends at the common terminal.
                 execution_prefix_cache[id(window)] = execution_trades.loc[
-                    execution_trades["transact_time"] <= replay_end_ts_ms
+                    (execution_trades["transact_time"] >= params["replay_event_clock_start_ts_ms"])
+                    & (execution_trades["transact_time"] <= replay_end_ts_ms)
                 ].copy()
                 if execution_prefix_cache[id(window)].empty:
                     raise ValueError("continuous prefix has no execution trades")
@@ -2570,10 +2571,14 @@ def _run_day_campaign_audit(
                     delivery = dict(message_cache[id(window)]["_exec_message_delivery"])
                     trade_delivery = dict(delivery["trade"])
                     count = len(execution_trades)
-                    trade_delivery["visible_child_mask"] = trade_delivery["visible_child_mask"][:count]
+                    first = int(np.searchsorted(
+                        window["trades"]["transact_time"].to_numpy(),
+                        params["replay_event_clock_start_ts_ms"], side="left",
+                    ))
+                    trade_delivery["visible_child_mask"] = trade_delivery["visible_child_mask"][first:first + count]
                     visible_rows = np.flatnonzero(trade_delivery["visible_child_mask"])
                     last_visible = int(visible_rows[-1]) if visible_rows.size else -1
-                    child_rows = np.minimum(trade_delivery["last_child_row_index"], last_visible)
+                    child_rows = np.clip(trade_delivery["last_child_row_index"] - first, -1, last_visible)
                     child_rows.setflags(write=False)
                     trade_delivery["last_child_row_index"] = child_rows
                     delivery["trade"] = trade_delivery
@@ -2613,6 +2618,7 @@ def _run_day_campaign_audit(
         batch_record = ({
             "days": input_days, "bounds_ms": list(runtime_input_bounds),
             "native_exchange_book_identity": native_exchange_book_identity,
+            "book_quality_by_day": window.get("book_quality_by_day", {}),
             "message_delivery_input_semantics": params.get("exec_message_delivery_input_semantics"),
         } if runtime_input_bounds is not None else None)
         result = bt._simulate_tick_with_engine(
@@ -2849,6 +2855,11 @@ def _run_day_campaign_audit(
             base.get("risk_selection_collect_opportunities")
         ),
         "native_exchange_book_identity": native_exchange_book_identity,
+        "book_quality_by_day": {
+            **{day: quality for batch in (resume_checkpoint or {}).get("f01_input_batches", [])
+               for day, quality in batch.get("book_quality_by_day", {}).items()},
+            **window.get("book_quality_by_day", {}),
+        },
         **({"runtime_input_batches": [
             *(resume_checkpoint or {}).get("f01_input_batches", []),
             batch_record,
@@ -4077,6 +4088,7 @@ def main(argv: list[str] | None = None) -> None:
     fill_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
     native_exchange_book_identities: dict[str, dict[str, Any]] = {}
+    book_quality_by_day: dict[str, dict[str, Any]] = {}
     runtime_input_batches: dict[str, list[dict[str, Any]]] = {}
     funding_trace_rows: list[dict[str, Any]] = []
     risk_selection_opportunity_rows: list[dict[str, Any]] = []
@@ -4131,6 +4143,7 @@ def main(argv: list[str] | None = None) -> None:
             native_exchange_book_identities[str(day_result.get("day", ""))] = identity
         if day_result.get("runtime_input_batches"):
             runtime_input_batches[str(day_result["day"])] = day_result["runtime_input_batches"]
+        book_quality_by_day.update(day_result.get("book_quality_by_day", {}))
         return False
 
     workers = max(1, int(args.workers or 1))
@@ -4495,6 +4508,7 @@ def main(argv: list[str] | None = None) -> None:
         "exchange_book_source_plan_sha256": base.get("exchange_book_source_plan_sha256", ""),
         "native_exchange_book_warmup_hours": int(args.native_exchange_book_warmup_hours),
         "native_exchange_book_identities": native_exchange_book_identities,
+        "book_quality_by_day": book_quality_by_day,
         **({"runtime_input_batches": runtime_input_batches} if runtime_input_batches else {}),
         "sync_adjust_replay_mode": str(args.sync_adjust_replay_mode),
         "sync_adjust_event_tape": str(args.sync_adjust_event_tape or ""),

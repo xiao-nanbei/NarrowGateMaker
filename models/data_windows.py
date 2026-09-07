@@ -1509,10 +1509,20 @@ def concatenate_tick_windows(days: list[str], windows: list[dict[str, Any]]) -> 
         if any(window.get(name) is not None for window in windows):
             raise ValueError(f"continuous window concatenation does not yet support {name}")
     for name in ("execution_trade_source", "toxicity_horizon_s", "book_source_authority",
-                 "book_dataset_version", "formal_lifecycle_replay_eligible",
-                 "provider_sensitivity_replay_eligible", "exact_queue_policy_eligible"):
+                 "book_dataset_version"):
         if any(window.get(name) != out.get(name) for window in windows):
             raise ValueError(f"continuous windows disagree on {name}")
+    eligibility = ("formal_lifecycle_replay_eligible", "provider_sensitivity_replay_eligible",
+                   "exact_queue_policy_eligible")
+    # These are per-day qualifications, not input schemas. A diagnostic may
+    # cross differently qualified days without promoting the weaker source.
+    out["book_quality_by_day"] = {
+        day: {name: window.get(name) for name in (
+            "book_source_authority", "book_dataset_version", *eligibility,
+        )} for day, window in zip(days, windows, strict=True)
+    }
+    for name in eligibility:
+        out[name] = all(window.get(name) is True for window in windows)
 
     def mask_for(ts, index):
         clock = np.asarray(ts)
