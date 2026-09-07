@@ -133,6 +133,48 @@ def test_explicit_daily_source_plan_keeps_global_ordinals_and_source_identity(tm
                                symbol="BTCUSDC", tick_size=.1)
 
 
+@pytest.mark.parametrize("opening_snapshot", [True, False])
+@pytest.mark.parametrize("overlap", [True, False])
+def test_daily_source_handover_uses_actual_snapshot_not_file_date(tmp_path, opening_snapshot, overlap):
+    from models.exchange_book_replay import PlannedExchangeBookTape
+    header = "exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+    old, new = tmp_path / "old.csv", tmp_path / "new.csv"
+    old.write_text(header + "binance-futures,BTCUSDC,1000,1001,true,bid,100,1\n"
+                   "binance-futures,BTCUSDC,1994,1995,false,bid,100,99\n")
+    opening_us = 1916 if overlap else 2000
+    new.write_text(header + f"binance-futures,BTCUSDC,{opening_us},2001,{str(opening_snapshot).lower()},bid,99,2\n"
+                   "binance-futures,BTCUSDC,2100,2101,false,bid,99,3\n")
+    plan = {"symbol": "BTCUSDC", "days": [
+        {"day": day, "provider": "tardis", "raw_file": str(path)}
+        for day, path in (("2025-12-31", old), ("2026-01-01", new))]}
+    tape = PlannedExchangeBookTape(plan, days=[r["day"] for r in plan["days"]],
+                                   symbol="BTCUSDC", tick_size=.1)
+    if not opening_snapshot and overlap:
+        # Without a snapshot, keep the actual updates; the scheduler must
+        # reject this overlapping delta clock rather than silently trim it.
+        assert [e.exchange_ts_ns for e in tape] == [1_000_000, 1_994_000, 1_916_000, 2_100_000]
+        with pytest.raises(ValueError, match="not exchange-time sorted"):
+            HistoricalExchangeBookScheduler(tape, strict_sequence=False).advance_to(2_200_000)
+        return
+    events = list(tape)
+    expected = [1_000_000] + ([] if overlap else [1_994_000]) + [opening_us * 1000, 2_100_000]
+    assert [e.exchange_ts_ns for e in events] == expected
+    assert [e.source_ordinal for e in events] == list(range(len(events)))
+    assert events == list(tape)
+    full = HistoricalExchangeBookScheduler(tape, strict_sequence=False)
+    full.advance_to(2_200_000)
+    partial = HistoricalExchangeBookScheduler(tape, strict_sequence=False)
+    partial.advance_to(2_050_000)
+    saved = pickle.loads(pickle.dumps(partial.checkpoint()))
+    restored = HistoricalExchangeBookScheduler.from_checkpoint(saved, ())
+    restored.resume_input_source(PlannedExchangeBookTape(plan, days=["2026-01-01"],
+                                                       symbol="BTCUSDC", tick_size=.1))
+    restored.advance_to(2_200_000)
+    expected_bids = [(990., 3.)] if opening_snapshot else [(1000., 99.), (990., 3.)]
+    assert full.top_levels(2) == restored.top_levels(2) == (expected_bids, [])
+    assert full.stats() == restored.stats()
+
+
 @pytest.mark.parametrize("defect", ["depth", "channel", "delivery", "flag"])
 def test_configured_cooldown_refuses_missing_source_instead_of_static_baseline(defect):
     depth = SimpleNamespace(

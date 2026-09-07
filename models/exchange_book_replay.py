@@ -643,17 +643,51 @@ class PlannedExchangeBookTape:
             self.tapes.append(tape)
 
     def __iter__(self) -> Iterator[HistoricalExchangeBookEvent]:
+        if not self.tapes:
+            return
         ordinal = 0
-        for tape in self.tapes:
-            for event in tape:
-                yield replace(event, source_ordinal=ordinal)
-                ordinal += 1
+        current = iter(self.tapes[0])
+        following = None
+        event = next(current, None)
+        try:
+            for index in range(len(self.tapes)):
+                if event is None:
+                    raise ValueError("selected daily exchange-book source is empty")
+                next_first = None
+                if index + 1 < len(self.tapes):
+                    following = iter(self.tapes[index + 1])
+                    next_first = next(following, None)
+                    if next_first is None:
+                        raise ValueError("selected daily exchange-book source is empty")
+                    if (type(self.tapes[index]) is not type(self.tapes[index + 1])
+                            and next_first.event_type != "snapshot"):
+                        raise ValueError("daily source handover requires an actual opening snapshot")
+                    if next_first.exchange_ts_ns <= event.exchange_ts_ns:
+                        raise ValueError("daily source handover must advance exchange time")
+                # A file's opening snapshot can precede midnight. Hand over
+                # at that actual source time, not after the old file's later,
+                # overlapping tail. Never rewrite clocks or replay both tails.
+                while event is not None:
+                    if (next_first is not None and next_first.event_type == "snapshot"
+                            and event.exchange_ts_ns >= next_first.exchange_ts_ns):
+                        break
+                    yield replace(event, source_ordinal=ordinal)
+                    ordinal += 1
+                    event = next(current, None)
+                current.close()
+                current, following, event = following, None, next_first
+        finally:
+            if current is not None:
+                current.close()
+            if following is not None:
+                following.close()
 
     def identity(self) -> dict[str, object]:
         return {"source": "explicit_daily_source_plan", "days": self.days,
                 "sources": [tape.identity(include_sha256=False) if isinstance(tape, CryptoHFTExchangeBookTape)
                             else tape.identity() for tape in self.tapes],
-                "automatic_source_fallback": False}
+                "automatic_source_fallback": False,
+                "daily_handover": "opening_snapshot_excludes_old_overlap_otherwise_preserve_deltas"}
 
 
 class HistoricalExchangeBookScheduler:
