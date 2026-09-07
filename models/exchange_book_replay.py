@@ -14,6 +14,7 @@ import json
 import math
 import re
 import warnings
+from copy import deepcopy
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, replace
@@ -589,6 +590,7 @@ class HistoricalExchangeBookScheduler:
         self._latest_batch_touched_levels: set[tuple[str, int]] = set()
         self._latest_batch_discontinuous = False
         self._consumed = 0
+        self._source_read_count = 0
         self._accepted = 0
         self._rejected = 0
         self._snapshot_events = 0
@@ -601,6 +603,54 @@ class HistoricalExchangeBookScheduler:
             "unknown": 0,
         }
         self._push_next()
+
+    def checkpoint(self) -> dict[str, object]:
+        """Detach book/sequence/lookahead state without retaining the input tape.
+
+        This is one component of a replay checkpoint, not strategy or account
+        state. Persist the returned object graph together (for example in a
+        trusted local pickle) so ``sequence.book`` keeps its shared identity.
+        The caller saves its source cursor after ``source_read_count`` reads;
+        prefetched events are already included here and must not be replayed
+        from that cursor. No future input is consumed while saving.
+        """
+        return {
+            "schema": "exchange_book_scheduler.v1",
+            "state": deepcopy({key: value for key, value in vars(self).items()
+                               if key != "_iterator"}),
+        }
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        checkpoint: Mapping[str, object],
+        remaining_events: Iterable[HistoricalExchangeBookEvent],
+    ) -> HistoricalExchangeBookScheduler:
+        """Resume from the unread source tail, retaining buffered same-time events.
+
+        At an exhausted input-batch boundary, ``remaining_events`` is simply
+        the next batch. Otherwise it starts after the saved source read count,
+        not after the consumed-event count. The iterator is supplied by the
+        caller rather than serialized with open file handles or the old tape.
+        """
+        if checkpoint.get("schema") != "exchange_book_scheduler.v1":
+            raise ValueError("unsupported exchange-book scheduler checkpoint")
+        state = deepcopy(checkpoint["state"])
+        if not isinstance(state, dict) or "_iterator" in state:
+            raise ValueError("invalid exchange-book scheduler checkpoint state")
+        restored = cls.__new__(cls)
+        restored.__dict__.update(state)
+        if restored.sequence.book is not restored.book:
+            raise ValueError("checkpoint lost shared sequence/book identity")
+        restored._iterator = iter(remaining_events)
+        if restored._next_event is None:
+            restored._push_next()
+        return restored
+
+    @property
+    def source_read_count(self) -> int:
+        """Source cursor including lookahead, distinct from applied events."""
+        return self._source_read_count
 
     def _strict_at(self, exchange_ts_ns: int) -> bool:
         return bool(
@@ -626,6 +676,7 @@ class HistoricalExchangeBookScheduler:
                 f"{event.exchange_ts_ns} < {self._last_source_ts_ns}"
             )
         self._last_source_ts_ns = int(event.exchange_ts_ns)
+        self._source_read_count += 1
         return event
 
     def _push_next(self) -> None:

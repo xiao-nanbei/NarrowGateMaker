@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pickle
 from types import SimpleNamespace
 
 import numpy as np
@@ -255,6 +256,77 @@ def _events() -> list[HistoricalExchangeBookEvent]:
             ordinal=3,
         ),
     ]
+
+
+def test_book_checkpoint_round_trip_preserves_prefetch_and_sequence(tmp_path):
+    events = _events() + [_event(
+        750, event_type="delta", levels=(("ask", 1001, 1.5),),
+        first_update_id=103, final_update_id=103,
+        previous_final_update_id=102, ordinal=4,
+    )]
+    scheduler = HistoricalExchangeBookScheduler(events, track_mid_changes=True)
+    scheduler.advance_to((BASE_MS + 500) * 1_000_000)
+    # Preview reads both same-time messages but does not apply them.
+    assert scheduler.preview_at((BASE_MS + 750) * 1_000_000).event_count == 2
+    assert scheduler.source_read_count == 4
+    assert scheduler.stats().consumed_events == 2
+    saved = scheduler.checkpoint()
+    path = tmp_path / "book-state.pkl"
+    with path.open("wb") as stream:
+        pickle.dump(saved, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    with path.open("rb") as stream:
+        restored = HistoricalExchangeBookScheduler.from_checkpoint(
+            pickle.load(stream), events[scheduler.source_read_count:],
+        )
+    assert restored.sequence.book is restored.book
+    assert restored.state_fingerprint() == scheduler.state_fingerprint()
+    expected = scheduler.advance_to((BASE_MS + 800) * 1_000_000)
+    actual = restored.advance_to((BASE_MS + 800) * 1_000_000)
+    assert actual == expected
+    assert restored.stats() == scheduler.stats()
+    assert restored.mid_changes == scheduler.mid_changes
+    assert restored.state_fingerprint() == scheduler.state_fingerprint()
+    # Advancing either instance cannot mutate the saved checkpoint.
+    again = HistoricalExchangeBookScheduler.from_checkpoint(saved, [])
+    assert again.stats().consumed_events == 2
+    assert again.lookup("bid", 990).quantity == 3.0
+
+
+@pytest.mark.parametrize("cut", [1, 2])
+def test_book_checkpoint_continues_exhausted_input_batch_without_reset(cut):
+    events = _events()
+    boundary = events[cut - 1].exchange_ts_ns
+    expected = HistoricalExchangeBookScheduler(events, track_mid_changes=True)
+    expected.advance_to(boundary)
+    chunk = HistoricalExchangeBookScheduler(events[:cut], track_mid_changes=True)
+    chunk.advance_to(boundary)
+    assert chunk.next_exchange_ts_ns is None
+    resumed = HistoricalExchangeBookScheduler.from_checkpoint(
+        pickle.loads(pickle.dumps(chunk.checkpoint())), events[cut:],
+    )
+    assert resumed.sequence.book is resumed.book
+    end = events[-1].exchange_ts_ns
+    assert resumed.advance_to(end) == expected.advance_to(end)
+    assert resumed.state_fingerprint() == expected.state_fingerprint()
+    assert resumed.stats() == expected.stats()
+    assert resumed.source_read_count == len(events)
+
+
+def test_book_checkpoint_does_not_hide_sequence_gap_or_time_regression():
+    scheduler = HistoricalExchangeBookScheduler(_events()[:1])
+    scheduler.advance_to((BASE_MS + 100) * 1_000_000)
+    saved = scheduler.checkpoint()
+    wrong_sequence = _event(
+        200, event_type="delta", levels=(("bid", 990, 1.0),),
+        first_update_id=999, final_update_id=999, previous_final_update_id=998,
+    )
+    resumed = HistoricalExchangeBookScheduler.from_checkpoint(saved, [wrong_sequence])
+    with pytest.raises(ValueError, match="sequence gap"):
+        resumed.advance_to((BASE_MS + 200) * 1_000_000)
+    with pytest.raises(ValueError, match="not exchange-time sorted"):
+        HistoricalExchangeBookScheduler.from_checkpoint(saved, [_event(
+            99, event_type="snapshot", levels=(("bid", 990, 1.0),), last_update_id=100,
+        )])
 
 
 def test_exchange_book_event_is_not_visible_before_its_exchange_timestamp() -> None:
