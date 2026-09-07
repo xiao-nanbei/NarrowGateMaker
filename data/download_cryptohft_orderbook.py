@@ -1455,6 +1455,27 @@ class OrderBookSequenceStats:
     message_time_reversals: int = 0
 
 
+def recorder_snapshot_anchor_ms(
+    *, event_type: str, event_time_ms: int, transaction_time_ms: int,
+    snapshot_update_id: int | None, preceding_update_id: int | None,
+    preceding_update_time_ms: int | None,
+) -> int | None:
+    """Identify a rounded recorder snapshot's state by an observed update ID.
+
+    This is not permission to sort deltas or infer a missing clock. The returned
+    timestamp belongs to the actual immediately preceding update; the snapshot
+    must describe exactly that update's state and have no transaction timestamp.
+    Callers retain the original snapshot timestamp as provenance.
+    """
+    if (event_type != "snapshot" or transaction_time_ms > 0 or event_time_ms <= 0
+            or event_time_ms % 3_600_000 != 0 or snapshot_update_id is None
+            or snapshot_update_id != preceding_update_id
+            or preceding_update_time_ms is None
+            or not 0 < preceding_update_time_ms < event_time_ms):
+        return None
+    return int(preceding_update_time_ms)
+
+
 class OrderBookSequenceState:
     """Validate Binance snapshot/delta continuity across batches and hours."""
 

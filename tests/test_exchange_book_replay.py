@@ -24,6 +24,73 @@ from models.tick_data_types import (
 BASE_MS = 1_700_000_000_000
 
 
+@pytest.mark.parametrize("bad_anchor", [False, True])
+def test_recorder_snapshot_sequence_clock_keeps_original_time_and_checkpoint(tmp_path, monkeypatch, bad_anchor):
+    from datetime import datetime, timezone
+    from models.exchange_book_replay import CryptoHFTExchangeBookTape
+
+    hour_ms = (BASE_MS // 3_600_000 + 1) * 3_600_000
+    hour = datetime.fromtimestamp(hour_ms / 1000, timezone.utc)
+    paths = [tmp_path / name for name in ("previous.parquet.zst", "current.parquet.zst")]
+    for path in paths:
+        path.touch()
+    def event(kind, time_ms, identifier, previous=None):
+        return HistoricalExchangeBookEvent("market", kind, time_ms * 1_000_000,
+            event_time_ns=time_ms * 1_000_000,
+            transaction_time_ns=0 if kind == "snapshot" else time_ms * 1_000_000,
+            last_update_id=identifier if kind == "snapshot" else None,
+            first_update_id=identifier, final_update_id=identifier,
+            previous_final_update_id=previous,
+            levels=(("bid", 1000, 2.), ("ask", 1010, 3.)))
+    first = [event("snapshot", hour_ms - 2000, 10), event("update", hour_ms - 200, 11, 10)]
+    second = [event("snapshot", hour_ms, 99 if bad_anchor else 11),
+              event("update", hour_ms - 100, 12, 11), event("update", hour_ms + 100, 13, 12)]
+    def tape(mode):
+        out = CryptoHFTExchangeBookTape(raw_root=tmp_path, day=hour.strftime("%Y-%m-%d"),
+            symbol="BTCUSDC", tick_size=.1, warmup_hours=0, strict_complete=False,
+            cache_enabled=False, recorder_snapshot_clock=mode)
+        out._expected = tuple((hour, path) for path in paths)
+        monkeypatch.setattr(out, "_iter_hour", lambda p: iter(first if p == paths[0] else second))
+        return out
+    with pytest.raises(ValueError, match="exchange time regressed"):
+        list(tape("original"))
+    source = tape("preceding_update_id")
+    if bad_anchor:
+        with pytest.raises(ValueError, match="exchange time regressed"):
+            list(source)
+        return
+    events = list(source)
+    assert len(events) == 5  # No raw snapshot or delta was deleted.
+    assert events[2].exchange_ts_ms == hour_ms - 200
+    assert events[2].event_time_ns == hour_ms * 1_000_000
+    assert events[2].exchange_ts_source == "preceding_update_sequence_anchor"
+    assert source.cache_stats()["snapshot_sequence_anchors"] == 1
+    assert events == list(source)
+    full = HistoricalExchangeBookScheduler(source)
+    full.advance_to((hour_ms + 200) * 1_000_000)
+    assert full.stats().message_time_reversals == 0
+    partial = HistoricalExchangeBookScheduler(source)
+    partial.advance_to((hour_ms - 200) * 1_000_000)
+    resumed = HistoricalExchangeBookScheduler.from_checkpoint(pickle.loads(pickle.dumps(partial.checkpoint())), ())
+    resumed.resume_input_source(source)
+    resumed.advance_to((hour_ms + 200) * 1_000_000)
+    assert resumed.stats() == full.stats()
+    assert resumed.top_levels(2) == full.top_levels(2)
+
+    # After dropping an input prefix, the opening snapshot must retain exactly
+    # the same anchor, using the preceding raw hour rather than a future delta.
+    import data.build_active_order_queue_tape as raw_parser
+    cropped = tape("preceding_update_id")
+    cropped._expected = ((hour, paths[1]),)
+    cropped._snapshot_anchor_context = paths[0]
+    monkeypatch.setattr(raw_parser, "iter_cryptohft_logical_messages",
+                        lambda *args, **kwargs: iter(first))
+    assert list(cropped)[0].exchange_ts_ns == events[2].exchange_ts_ns
+    identity = cropped.identity(include_sha256=False)
+    assert identity["snapshot_anchor_context"]["path"] == str(paths[0])
+    assert identity["recorder_snapshot_clock"] == "preceding_update_id"
+
+
 def test_tardis_raw_messages_keep_full_depth_and_no_invented_sequence(tmp_path, monkeypatch):
     import pyarrow.csv as pacsv
     import data.normalize_tardis_orderbook as normalizer

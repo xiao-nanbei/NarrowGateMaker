@@ -93,11 +93,17 @@ class HistoricalExchangeBookEvent:
             "receive",
             "source_gap",
             "unknown",
+            "preceding_update_sequence_anchor",
         }:
             raise ValueError(
                 "unsupported exchange-book timestamp source: "
                 f"{self.exchange_ts_source!r}"
             )
+        if exchange_ts_source == "preceding_update_sequence_anchor" and (
+            event_type != "snapshot" or self.transaction_time_ns > 0
+            or not 0 < self.exchange_ts_ns < self.event_time_ns
+        ):
+            raise ValueError("sequence-anchored clock requires a recorder snapshot")
 
         normalized_levels: list[tuple[str, int, float]] = []
         for raw_side, raw_tick, raw_quantity in self.levels:

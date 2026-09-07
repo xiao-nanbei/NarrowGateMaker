@@ -28,6 +28,7 @@ from data.download_cryptohft_orderbook import (
     DEFAULT_EXCHANGE,
     OrderBookSequenceState,
     OrderBookState,
+    recorder_snapshot_anchor_ms,
 )
 from data_paths import native_exchange_book_cache_root, resolve_portable_path
 from models.native_exchange_book_cache import (
@@ -178,6 +179,7 @@ class CryptoHFTExchangeBookTape:
         cache_enabled: bool = True,
         refresh_cache: bool = False,
         cache_read_only: bool = False,
+        recorder_snapshot_clock: str = "original",
     ) -> None:
         if tick_size <= 0.0:
             raise ValueError("tick_size must be positive")
@@ -185,6 +187,8 @@ class CryptoHFTExchangeBookTape:
             raise ValueError("warmup_hours must be non-negative")
         if continuation_hours < 0:
             raise ValueError("continuation_hours must be non-negative")
+        if recorder_snapshot_clock not in {"original", "preceding_update_id"}:
+            raise ValueError("unsupported recorder snapshot clock")
         day_start = datetime.strptime(str(day), "%Y-%m-%d").replace(
             tzinfo=timezone.utc
         )
@@ -245,6 +249,13 @@ class CryptoHFTExchangeBookTape:
         self._cache_hits = 0
         self._cache_misses = 0
         self._cache_failures = 0
+        self.recorder_snapshot_clock = recorder_snapshot_clock
+        self._snapshot_sequence_anchors = 0
+        self._snapshot_anchor_context = (
+            self.raw_root / self.exchange
+            / (process_start - timedelta(hours=1)).strftime("%Y-%m-%d/%H")
+            / f"{self.symbol}_orderbook.parquet.zst"
+        )
 
     @property
     def source_paths(self) -> tuple[Path, ...]:
@@ -461,8 +472,11 @@ class CryptoHFTExchangeBookTape:
     def __iter__(self) -> Iterator[HistoricalExchangeBookEvent]:
         ordinal = 0
         last_exchange_ns = 0
-        for hour, path in self._expected:
+        preceding_update = None
+        self._snapshot_sequence_anchors = 0
+        for hour_index, (hour, path) in enumerate(self._expected):
             if not path.is_file():
+                preceding_update = None
                 ordinal += 1
                 yield HistoricalExchangeBookEvent(
                     market_id=self.market_id,
@@ -474,6 +488,33 @@ class CryptoHFTExchangeBookTape:
                 )
                 continue
             for event in self._iter_hour(path):
+                if (self.recorder_snapshot_clock == "preceding_update_id"
+                        and event.event_type == "snapshot"):
+                    if ordinal == 0 and hour_index == 0 and self._snapshot_anchor_context.is_file():
+                        # Input rotation may begin at an archive snapshot. Read
+                        # only the prior hour's terminal message, never fabricate
+                        # an anchor from the next (future) update.
+                        from data.build_active_order_queue_tape import iter_cryptohft_logical_messages
+                        terminal = None
+                        for message in iter_cryptohft_logical_messages(
+                            self._snapshot_anchor_context, self.tick_size, include_levels=False,
+                        ):
+                            terminal = message
+                        if terminal is not None and terminal.event_type != "snapshot":
+                            preceding_update = (terminal.final_update_id, terminal.exchange_ts_ms)
+                    anchor = recorder_snapshot_anchor_ms(
+                        event_type=event.event_type,
+                        event_time_ms=_optional_ms(event.event_time_ns),
+                        transaction_time_ms=_optional_ms(event.transaction_time_ns),
+                        snapshot_update_id=(event.last_update_id if event.last_update_id is not None
+                                            else event.final_update_id),
+                        preceding_update_id=preceding_update[0] if preceding_update else None,
+                        preceding_update_time_ms=preceding_update[1] if preceding_update else None,
+                    )
+                    if anchor is not None:
+                        event = replace(event, exchange_ts_ns=anchor * 1_000_000,
+                                        exchange_ts_source="preceding_update_sequence_anchor")
+                        self._snapshot_sequence_anchors += 1
                 exchange_ns = int(event.exchange_ts_ns)
                 if exchange_ns < last_exchange_ns:
                     raise ValueError(
@@ -481,6 +522,8 @@ class CryptoHFTExchangeBookTape:
                         f"messages: {exchange_ns} < {last_exchange_ns} ({path})"
                     )
                 last_exchange_ns = exchange_ns
+                preceding_update = ((event.final_update_id, event.exchange_ts_ms)
+                                    if event.event_type != "snapshot" else None)
                 ordinal += 1
                 yield replace(
                     event,
@@ -497,6 +540,7 @@ class CryptoHFTExchangeBookTape:
             "hour_hits": self._cache_hits,
             "hour_misses_or_writes": self._cache_misses,
             "hour_failures_fallback_to_source": self._cache_failures,
+            "snapshot_sequence_anchors": self._snapshot_sequence_anchors,
         }
 
     def identity(self, *, include_sha256: bool = True) -> dict[str, object]:
@@ -516,6 +560,15 @@ class CryptoHFTExchangeBookTape:
             files.append(row)
         return {
             "schema_version": "native_exchange_book_tape.v1",
+            "recorder_snapshot_clock": self.recorder_snapshot_clock,
+            "snapshot_anchor_context": (
+                {"path": str(self._snapshot_anchor_context),
+                 "size_bytes": self._snapshot_anchor_context.stat().st_size,
+                 "sha256": hashlib.sha256(self._snapshot_anchor_context.read_bytes()).hexdigest()
+                 if include_sha256 else None}
+                if self.recorder_snapshot_clock == "preceding_update_id"
+                and self._snapshot_anchor_context.is_file() else None
+            ),
             "day": self.day,
             "symbol": self.symbol,
             "market_id": self.market_id,
@@ -641,7 +694,8 @@ class PlannedExchangeBookTape:
             if row["provider"] == "cryptohft":
                 tape = CryptoHFTExchangeBookTape(raw_root=Path(row["raw_root"]),
                     day=day, symbol=symbol, tick_size=tick_size, warmup_hours=0,
-                    strict_complete=True)
+                    strict_complete=True,
+                    recorder_snapshot_clock=row.get("recorder_snapshot_clock", "original"))
             elif row["provider"] == "tardis":
                 tape = TardisExchangeBookTape([Path(row["raw_file"])],
                     symbol=symbol, tick_size=tick_size)
@@ -1069,7 +1123,9 @@ class HistoricalExchangeBookScheduler:
             apply_message = self.sequence.begin_message(
                 event_type=event.event_type,
                 receive_time_ms=_optional_ms(event.local_receive_ts_ns),
-                event_time_ms=_optional_ms(event.event_time_ns),
+                event_time_ms=(event.exchange_ts_ms
+                               if event.exchange_ts_source == "preceding_update_sequence_anchor"
+                               else _optional_ms(event.event_time_ns)),
                 transaction_time_ms=_optional_ms(event.transaction_time_ns),
                 first_update_id=event.first_update_id,
                 final_update_id=event.final_update_id,
