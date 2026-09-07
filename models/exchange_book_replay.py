@@ -680,11 +680,15 @@ class HistoricalExchangeBookScheduler:
         within_file = 0
         current_file = None
         for event in iterator:
-            source_file = Path(event.source).name
+            source_file = event.source
             if source_file != current_file:
                 current_file, within_file = source_file, 0
             within_file += 1
-            if source_file != wanted_file or within_file != self._source_file_read_count:
+            if Path(source_file).name != wanted_file or within_file != self._source_file_read_count:
+                continue
+            # Providers reuse the same basename in every date/hour directory.
+            # An earlier file's matching ordinal is not the saved source cursor.
+            if int(event.exchange_ts_ns) < int(marker.exchange_ts_ns):
                 continue
             if replace(event, source=marker.source, source_ordinal=marker.source_ordinal) != marker:
                 raise ValueError("native input rotation changed the saved source message")

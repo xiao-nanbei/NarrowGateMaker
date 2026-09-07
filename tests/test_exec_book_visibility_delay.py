@@ -405,6 +405,24 @@ def test_message_profile_rotation_keeps_global_draws_and_prior_callback_backlog(
     assert_same(actual, expected)
 
 
+def test_cropped_execution_children_do_not_shorten_parent_packet_completion():
+    _, parents, profile, window = _profile_execution_message_fixture(trade_delay_ms=1.)
+    common = dict(symbol="BTCUSDC", profile=profile, seed=7,
+                  parent_trades=parents, parent_source_identity=[{"sha256": "synthetic"}])
+    full = data_windows.execution_message_delivery_params(window, **common)
+    first = data_windows.execution_message_delivery_params(
+        {**window, "trades": window["trades"].iloc[:4].copy()},
+        completion_trades=window["trades"][["trade_id", "transact_time"]], **common,
+    )
+    resumed = data_windows.execution_message_delivery_params(
+        {**window, "trades": window["trades"].iloc[4:].copy()}, prior_delivery=first, **common,
+    )
+    for payload in (first, resumed):
+        for clock in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns", "parent_complete_ts_ms"):
+            np.testing.assert_array_equal(payload["_exec_message_delivery"]["trade"][clock],
+                                          full["_exec_message_delivery"]["trade"][clock])
+
+
 @pytest.mark.parametrize("async_gateway", [False, True])
 def test_empirical_execution_profile_changes_real_source_and_prediction_visibility(async_gateway):
     fast, *_ = _profile_execution_message_fixture()

@@ -351,7 +351,8 @@ def test_continuous_prefix_cli_requires_continuous_before_loading_data():
         campaign_audit_main(["--days", "2026-01-01", "--replay-end-ts-ms", "1000"])
 
 
-def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path):
+@pytest.mark.parametrize("rotate_inputs", [False, True])
+def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkeypatch, tmp_path, rotate_inputs):
     from dataclasses import replace
     from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
     from tests.test_tick_runtime_checkpoint import scenario, assert_same
@@ -373,13 +374,23 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
                 replay_end_ts_ms=start + 4_000, save_fill_trace=True,
                 funding_events=[{"fundingTime": start + 2_000, "fundingRate": .01, "markPrice": 100.}])
     expected = campaign_audit._run_day_campaign_audit(**call)
-    partial = campaign_audit._run_day_campaign_audit(**call, checkpoint_at_ts_ms=start + 1_250)
+    partial = campaign_audit._run_day_campaign_audit(
+        **call, checkpoint_at_ts_ms=start + 1_250,
+        **({"runtime_input_bounds": (start, start + 2_499)} if rotate_inputs else {}))
     assert set(partial) == {"day", "logs", "_replay_checkpoint"}
     assert partial["_replay_checkpoint"]["runtime"].q != 0
     path = tmp_path / "b0.pickle"
     save_runtime_checkpoint(path, partial["_replay_checkpoint"])
     actual = campaign_audit._run_day_campaign_audit(**call,
-                                                  resume_checkpoint=load_trusted_runtime_checkpoint(path))
+        resume_checkpoint=load_trusted_runtime_checkpoint(path),
+        **({"runtime_input_bounds": (start + 500, start + 4_000)} if rotate_inputs else {}))
+    if rotate_inputs:
+        batches = actual.pop("runtime_input_batches")
+        assert len(batches) == 2
+        assert batches[1]["bounds_ms"][0] > batches[0]["bounds_ms"][0]
+        for row in actual["daily_rows"]:
+            assert row.pop("runtime_input_stats_scope") == "last_loaded_input_batch"
+            assert row.pop("runtime_input_batch_count") == 2
     for output in (actual, expected):
         output.pop("logs", None)
         for row in output["daily_rows"]:
@@ -391,6 +402,53 @@ def test_campaign_runtime_checkpoint_defers_finalizer_and_resumes_funding(monkey
 def test_checkpoint_cli_requires_durable_output_before_loading():
     with pytest.raises(SystemExit, match="requires --save-runtime-checkpoint"):
         campaign_audit_main(["--days", "2026-01-01", "--checkpoint-at-ts-ms", "1000"])
+
+
+def test_runtime_batch_loads_only_intersecting_days_and_keeps_accounting_origin(monkeypatch):
+    from tests.test_tick_runtime_checkpoint import scenario
+    from dataclasses import replace
+    days = ["2026-01-01", "2026-01-02", "2026-01-03"]
+    start = int(campaign_audit._day_start_ts(days[0]) * 1000)
+    args, kwargs = scenario("ordinary")
+    loaded = []
+    def load(day, params):
+        loaded.append(day)
+        origin = int(campaign_audit._day_start_ts(day) * 1000)
+        trades = args[0].copy()
+        trades["transact_time"] += origin
+        return dict(trades=trades, var_ts_ms=args[1] + origin, var_ssq=args[2],
+                    var_ti=None, var_retsq=None, ml_data=None, l2_data=None,
+                    bbo_data=replace(kwargs["bbo_data"], ts_ms=kwargs["bbo_data"].ts_ms + origin))
+    monkeypatch.setattr(campaign_audit.bt, "configure_symbol", lambda *_a, **_kw: None)
+    monkeypatch.setattr(campaign_audit.smoke, "_load_window", load)
+    def simulate(engine, trades, var_ts, var_ssq, params, **kwargs):
+        assert params["replay_event_clock_end_ts_ms"] == start + 86_400_000 + 4_000
+        assert kwargs["checkpoint_at_ts_ms"] == start + 86_400_000
+        return {"completed": False, "_replay_checkpoint": {"cut_ts_ms": kwargs["checkpoint_at_ts_ms"]}}
+    monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
+    result = campaign_audit._run_day_campaign_audit(
+        day=days[0], continuous_days=days, symbol="BTCUSDC", base=args[3],
+        arms=[campaign_audit.smoke.SmokeArm("B", "synthetic", {}, "")], engine="python",
+        day_initial={}, day_live_state=None, use_initial_state=False,
+        runtime_input_bounds=(start, start + 86_400_000 + 4_000),
+        checkpoint_at_ts_ms=start + 86_400_000,
+    )
+    assert loaded == days[:2]
+    assert result["day"] == days[0]
+    assert result["_replay_checkpoint"]["f01_input_batches"][0]["days"] == days[:2]
+
+
+def test_runtime_batch_slices_prediction_feature_dictionary():
+    from models.data_windows import slice_tuple_by_first_array
+    timestamps = np.arange(5)
+    actual = slice_tuple_by_first_array((timestamps, timestamps * 2,
+                                        {"feature": timestamps * 3}), 1, 4)
+    np.testing.assert_array_equal(actual[0], [1, 2, 3])
+    np.testing.assert_array_equal(actual[2]["feature"], [3, 6, 9])
+    actual = slice_tuple_by_first_array((timestamps, {"feature": timestamps * 3}),
+                                        2, 4, keep_predecessor=True)
+    np.testing.assert_array_equal(actual[0], [1, 2, 3])
+    np.testing.assert_array_equal(actual[1]["feature"], [3, 6, 9])
 
 
 def test_checkpoint_cli_writes_state_not_partial_economics(monkeypatch, tmp_path, capsys):
@@ -918,6 +976,11 @@ def test_campaign_runtime_compute_uses_actual_pre_roll(monkeypatch, clock):
     )
     assert not adapted["_runtime_compute_samples_by_path"]["new_bucket"].flags.writeable
     assert calibration["compute"]["consumed_by_replay"] is False
+    restored = campaign_audit._runtime_compute_for_window(
+        {"ml_data": (source_ms,)}, params, calibration, clock=clock,
+        start_ms=5_000, resume_bucket_end_ms=20_000,
+    )
+    assert restored["runtime_compute_initial_bucket_end_ms"] == 20_000
 
 
 @pytest.mark.parametrize(("source_ms", "clock", "message"), [

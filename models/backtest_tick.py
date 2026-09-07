@@ -3464,6 +3464,7 @@ def build_replay_event_clock(
     empirical_action: Optional[np.ndarray] = None,
     system_event_ts_ms: Optional[np.ndarray] = None,
     system_event_code: int = SYNC_EVENT_CODE,
+    initial_clock_price: Optional[float] = None,
 ) -> tuple[pd.DataFrame, int]:
     """Return the causal event stream consumed by Python and C++ replay.
 
@@ -3644,6 +3645,10 @@ def build_replay_event_clock(
             )
             bootstrap_mid[valid] = bid[valid] / 2.0 + ask[valid] / 2.0
             latest_source[valid] = source_ts[safe_indices[valid]]
+        if initial_clock_price is not None:
+            if not np.isfinite(initial_clock_price) or initial_clock_price <= 0:
+                raise ValueError("initial clock price must be a finite positive retained price")
+            bootstrap_mid[:] = float(initial_clock_price)
         if np.any(~np.isfinite(bootstrap_mid)):
             raise ValueError(
                 "explicit replay start has no causal BBO/L2 midpoint before the first trade"
@@ -4411,6 +4416,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "native exchange-book replay requires execution trades"
             )
     _tick_state.sync_degrade_events = _sync_degrade_events_for_replay(params, trades_df)
+    retained_clock_price = None
+    if resume_input_batch and resume_checkpoint is not None:
+        saved = resume_checkpoint["runtime"]
+        input_start = params.get("replay_event_clock_start_ts_ms", int(trades_df.transact_time.iloc[0]))
+        previous = int(np.searchsorted(saved.trade_ts, input_start, side="left")) - 1
+        if previous >= 0:
+            # Timer/BBO events carry the last execution price, not a new book
+            # midpoint merely because their execution prefix was unloaded.
+            retained_clock_price = float(saved.trade_price[previous])
     trades_df, _tick_state.n_execution_trades = build_replay_event_clock(
         trades_df,
         mode=_tick_state.replay_event_clock,
@@ -4423,6 +4437,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         empirical_action=params.get("_empirical_requote_action"),
         system_event_ts_ms=_tick_state.sync_degrade_events.timestamps_ms,
         system_event_code=_tick_state.sync_degrade_events.event_code,
+        initial_clock_price=retained_clock_price,
     )
     require_formal_dense_variance_timeline(
         var_ts_ms,

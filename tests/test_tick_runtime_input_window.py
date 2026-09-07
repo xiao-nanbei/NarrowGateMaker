@@ -8,6 +8,18 @@ from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint,
 from tests.test_tick_runtime_checkpoint import assert_same, scenario
 
 
+def test_rotated_clock_retains_price_before_first_new_execution():
+    from models.backtest_tick import build_replay_event_clock
+    args, kwargs = scenario("ordinary")
+    trades = args[0].iloc[-1:].copy()
+    first = int(trades.transact_time.iloc[0])
+    clock, _ = build_replay_event_clock(trades, mode="merged", interval_ms=100,
+        start_ts_ms=first - 100, end_ts_ms=first, bbo_data=kwargs["bbo_data"],
+        initial_clock_price=97.5)
+    assert (clock.loc[clock.transact_time < first, "price"] == 97.5).all()
+    assert clock.loc[clock.transact_time == first, "price"].iloc[-1] == trades.price.iloc[0]
+
+
 def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch):
     from models.exchange_book_replay import HistoricalMessageDeliverySchedule, ReceiveTimeCooldownReplayAdapter
     from models.tick_data_types import HistoricalL2Data
@@ -96,7 +108,8 @@ def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeyp
     assert_same(continued, uninterrupted)
 
 
-def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path):
+@pytest.mark.parametrize("repeated_basename", [False, True])
+def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path, repeated_basename):
     from models.exchange_book_replay import HistoricalExchangeBookEvent
 
     args, kwargs = scenario("async")
@@ -114,6 +127,9 @@ def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path):
         source_ordinal=index,
         levels=(("bid", 960, 1.), ("bid", 999, 1.), ("ask", 1001, 1.), ("ask", 1040, 1.)),
     ) for index, timestamp in enumerate((-100, 300, 800, 1_105, 1_105, 1_200, 2_000, 2_800))]
+    if repeated_basename:
+        events = [replace(event, source=event.source.removesuffix('.jsonl') + '/book.parquet')
+                  for event in events]
     expected = simulate_tick(*args, **kwargs, exchange_book_event_tape=events)
     partial = simulate_tick(*args, **kwargs, exchange_book_event_tape=events,
                             checkpoint_at_ts_ms=base + 1_110)
@@ -123,8 +139,11 @@ def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path):
     bbo = kwargs["bbo_data"]
     bbo = replace(bbo, **{name: getattr(bbo, name)[bbo.ts_ms >= base + 500].copy()
                           for name in ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")})
-    new_events = [replace(event, source="/new/01.jsonl", source_ordinal=index)
-                  for index, event in enumerate(events[2:])]
+    # Include the old file too: identical provider basenames in each hour must
+    # not match its cursor against an earlier hour's same within-file ordinal.
+    retained = events if repeated_basename else events[2:]
+    new_events = [replace(event, source=event.source.replace('/old/', '/new/'), source_ordinal=index)
+                  for index, event in enumerate(retained)]
     actual = simulate_tick(cropped, *args[1:], bbo_data=bbo,
                            exchange_book_event_tape=new_events,
                            resume_checkpoint=load_trusted_runtime_checkpoint(path),

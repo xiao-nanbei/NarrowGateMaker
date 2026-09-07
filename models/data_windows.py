@@ -583,6 +583,7 @@ def execution_message_delivery_params(
     parent_trades: pd.DataFrame, parent_source_identity: list[dict[str, Any]],
     unmatched_child_mode: str = "error",
     prior_delivery: dict[str, Any] | None = None,
+    completion_trades: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Delay frozen execution inputs without changing exchange matching rows.
 
@@ -625,6 +626,12 @@ def execution_message_delivery_params(
         parent_complete_ms, owner[visible_child_mask],
         trades["transact_time"].to_numpy(dtype=np.int64, copy=False)[visible_child_mask],
     )
+    if completion_trades is not None:
+        complete_ids = completion_trades["trade_id"].to_numpy(dtype=np.int64, copy=False)
+        complete_ts = completion_trades["transact_time"].to_numpy(dtype=np.int64, copy=False)
+        complete_owner = np.searchsorted(last, complete_ids, side="left")
+        valid = (complete_owner < len(first)) & (first[np.minimum(complete_owner, len(first) - 1)] <= complete_ids)
+        np.maximum.at(parent_complete_ms, complete_owner[valid], complete_ts[valid])
 
     simulator = MarketDataLatencySimulator(profile)
     delivery, source_stats = {}, {}
@@ -658,6 +665,11 @@ def execution_message_delivery_params(
         )
         floor_added_ns = np.zeros(len(exchange), dtype=np.int64)
         if feed == "trade":
+            if old is not None and "parent_complete_ts_ms" in old:
+                # Cropping old child rows cannot shorten a known parent packet.
+                parent_complete_ms[:overlap] = np.maximum(
+                    parent_complete_ms[:overlap], old["parent_complete_ts_ms"][offset:offset + overlap],
+                )
             floor_added_ns = np.maximum(parent_complete_ms * 1_000_000 - receive, 0)
             # Shift both clocks together to preserve observed service time.
             receive = receive + floor_added_ns
@@ -671,6 +683,8 @@ def execution_message_delivery_params(
             "receive_ts_ns": schedule.receive_ns_for_channel(),
             "feature_ready_ts_ns": schedule.ready_ns_for_channel(),
         }
+        if feed == "trade":
+            delivery[feed]["parent_complete_ts_ms"] = parent_complete_ms
         if old is not None:
             for clock_name in ("receive_ts_ns", "feature_ready_ts_ns"):
                 if not np.array_equal(old[clock_name][offset:offset + overlap],
@@ -1572,30 +1586,40 @@ def parse_bound(value: str | None, *, is_end: bool) -> int | None:
     return int(timestamp.value // 1_000_000)
 
 
-def slice_tuple_by_first_array(data, start_ms: int | None, end_ms: int | None):
+def slice_tuple_by_first_array(data, start_ms: int | None, end_ms: int | None, *, keep_predecessor=False):
     if data is None:
         return None
     ts = np.asarray(data[0])
     mask = np.ones(len(ts), dtype=bool)
     if start_ms is not None:
         mask &= ts >= start_ms
+        if keep_predecessor:
+            previous = int(np.searchsorted(ts, start_ms, side="left")) - 1
+            if previous >= 0:
+                mask[previous] = True
     if end_ms is not None:
         mask &= ts < end_ms
     if not np.any(mask):
         return data
     return tuple(
+        {key: np.asarray(value)[mask] for key, value in item.items()}
+        if isinstance(item, dict) else
         np.asarray(item)[mask] if hasattr(item, "__len__") and len(item) == len(ts) else item
         for item in data
     )
 
 
-def slice_history_object(data, start_ms: int | None, end_ms: int | None):
+def slice_history_object(data, start_ms: int | None, end_ms: int | None, *, keep_predecessor=False):
     if data is None:
         return None
     ts = np.asarray(data.ts_ms)
     mask = np.ones(len(ts), dtype=bool)
     if start_ms is not None:
         mask &= ts >= start_ms
+        if keep_predecessor:
+            previous = int(np.searchsorted(ts, start_ms, side="left")) - 1
+            if previous >= 0:
+                mask[previous] = True
     if end_ms is not None:
         mask &= ts < end_ms
     if not np.any(mask):
@@ -1622,7 +1646,7 @@ def slice_history_object(data, start_ms: int | None, end_ms: int | None):
 
 
 def slice_window(
-    window: dict[str, Any], start_ms: int | None, end_ms: int | None
+    window: dict[str, Any], start_ms: int | None, end_ms: int | None, *, keep_predecessor=False,
 ) -> dict[str, Any]:
     if start_ms is None and end_ms is None:
         return window
@@ -1642,6 +1666,10 @@ def slice_window(
     var_mask = np.ones(len(var_ts), dtype=bool)
     if start_ms is not None:
         var_mask &= var_ts >= start_ms
+        if keep_predecessor:
+            previous = int(np.searchsorted(var_ts, start_ms, side="left")) - 1
+            if previous >= 0:
+                var_mask[previous] = True
     if end_ms is not None:
         var_mask &= var_ts < end_ms
     if np.any(var_mask):
@@ -1654,9 +1682,9 @@ def slice_window(
 
     # trade/variance/ML/BBO/L2 必须用同一 UTC 毫秒边界切片；
     # 否则 quote context 和成交路径会出现看似微小但会放大的错位。
-    out["bbo_data"] = slice_history_object(out.get("bbo_data"), start_ms, end_ms)
-    out["l2_data"] = slice_history_object(out.get("l2_data"), start_ms, end_ms)
-    out["ml_data"] = slice_tuple_by_first_array(out.get("ml_data"), start_ms, end_ms)
+    out["bbo_data"] = slice_history_object(out.get("bbo_data"), start_ms, end_ms, keep_predecessor=keep_predecessor)
+    out["l2_data"] = slice_history_object(out.get("l2_data"), start_ms, end_ms, keep_predecessor=keep_predecessor)
+    out["ml_data"] = slice_tuple_by_first_array(out.get("ml_data"), start_ms, end_ms, keep_predecessor=keep_predecessor)
     print(
         f"  Date slice: {len(out['trades']):,} trades "
         f"({pd.Timestamp(int(out['trades']['transact_time'].iloc[0]), unit='ms', tz='UTC')} -> "

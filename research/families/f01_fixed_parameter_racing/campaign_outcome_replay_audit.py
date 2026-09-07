@@ -159,7 +159,7 @@ def _apply_runtime_timing_samples(
 
 def _runtime_compute_for_window(
     window: dict[str, Any], params: dict[str, Any], calibration: dict[str, Any],
-    *, clock: str, start_ms: int,
+    *, clock: str, start_ms: int, resume_bucket_end_ms: int | None = None,
 ) -> dict[str, Any]:
     """Restore the completed signal bucket from this window's causal pre-roll."""
     ml_data = window.get("ml_data")
@@ -189,11 +189,18 @@ def _runtime_compute_for_window(
         ready_ns = prediction_ms * 1_000_000
     else:
         raise ValueError("runtime compute clock must explicitly identify its source")
-    completed = prediction_ms[ready_ns < start_ms * 1_000_000]
-    if not completed.size:
-        raise ValueError("runtime compute requires a completed prediction before replay start")
+    if resume_bucket_end_ms is None:
+        completed = prediction_ms[ready_ns < start_ms * 1_000_000]
+        if not completed.size:
+            raise ValueError("runtime compute requires a completed prediction before replay start")
+        initial_bucket = int(completed[-1])
+    else:
+        # Reuse the original initialization watermark for construction. The
+        # tick checkpoint separately restores the current computed bucket;
+        # neither is reconstructed from the cropped input prefix.
+        initial_bucket = int(resume_bucket_end_ms)
     overrides = runtime_compute_overrides(
-        calibration, initial_bucket_end_ms=int(completed[-1]), clock=clock,
+        calibration, initial_bucket_end_ms=initial_bucket, clock=clock,
     )
     for rows in overrides["_runtime_compute_samples_by_path"].values():
         rows.flags.writeable = False
@@ -2185,6 +2192,7 @@ def _run_day_campaign_audit(
     replay_end_ts_ms: int | None = None,
     checkpoint_at_ts_ms: int | None = None,
     resume_checkpoint: dict[str, Any] | None = None,
+    runtime_input_bounds: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """Run all requested arms for one UTC day.
 
@@ -2194,11 +2202,13 @@ def _run_day_campaign_audit(
     """
     source_days = continuous_days or [day]
     checkpoint_options = {}
-    if checkpoint_at_ts_ms is not None or resume_checkpoint is not None:
+    if checkpoint_at_ts_ms is not None or resume_checkpoint is not None or runtime_input_bounds is not None:
         if engine != "python" or len(arms) != 1 or not continuous_days or risk_pair_baseline_arm:
             raise ValueError("runtime checkpoint requires one continuous Python arm, without paired forks")
         checkpoint_options = dict(checkpoint_at_ts_ms=checkpoint_at_ts_ms,
                                   resume_checkpoint=resume_checkpoint)
+        if runtime_input_bounds is not None and resume_checkpoint is not None:
+            checkpoint_options["resume_input_batch"] = True
     policy_active = any(
         arm.overrides.get("risk_selection_mode", base.get("risk_selection_mode", "B")) != "B"
         or arm.overrides.get("risk_selection_control", base.get("risk_selection_control", "learned"))
@@ -2250,6 +2260,26 @@ def _run_day_campaign_audit(
         start_ms = int(_day_start_ts(day) * 1000)
         base.setdefault("replay_event_clock_start_ts_ms", start_ms)
         base.setdefault("replay_event_clock_end_ts_ms", start_ms + 86_400_000 - 1)
+    input_days = source_days
+    if runtime_input_bounds is not None:
+        input_start, input_end = map(int, runtime_input_bounds)
+        run_start = int(base["replay_event_clock_start_ts_ms"])
+        run_end = int(base["replay_event_clock_end_ts_ms"])
+        if not run_start <= input_start < input_end <= run_end:
+            raise ValueError("runtime input bounds must be within the continuous accounting window")
+        if (input_start - run_start) % int(base.get("replay_clock_interval_ms", 100) or 100):
+            raise ValueError("runtime input start must preserve the original timer grid")
+        if resume_checkpoint is None and input_start != run_start:
+            raise ValueError("first input batch must start at the accounting origin")
+        if resume_checkpoint is not None and not input_start <= resume_checkpoint["cut_ts_ms"] <= input_end:
+            raise ValueError("input batch must retain the saved cutoff and its pending context")
+        if input_end < run_end and checkpoint_at_ts_ms is None:
+            raise ValueError("nonfinal input batch requires a checkpoint, not early accounting")
+        if checkpoint_at_ts_ms is not None and not input_start < checkpoint_at_ts_ms < input_end:
+            raise ValueError("checkpoint must be inside the input batch with real lookahead")
+        input_days = [value for value in source_days
+                      if int(_day_start_ts(value) * 1000) <= input_end
+                      and int((_day_start_ts(value) + 86400) * 1000) > input_start]
     if risk_pair_baseline_arm:
         if (base.get("risk_selection_mode", "B") != "B"
                 or base.get("risk_selection_control", "learned") != "learned"):
@@ -2305,7 +2335,8 @@ def _run_day_campaign_audit(
         )
         if key not in window_cache:
             windows = []
-            for source_day in source_days:
+            completion_parts = []
+            for source_day in input_days:
                 input_params = params
                 if continuous_days:
                     # Loading is still daily; only execution owns the full
@@ -2315,11 +2346,31 @@ def _run_day_campaign_audit(
                     input_start_ms = int(_day_start_ts(source_day) * 1000)
                     input_params["replay_event_clock_start_ts_ms"] = input_start_ms
                     input_params["replay_event_clock_end_ts_ms"] = input_start_ms + 86_400_000 - 1
-                windows.append(smoke._load_window(source_day, input_params))
+                loaded = smoke._load_window(source_day, input_params)
+                if runtime_input_bounds is not None and params.get("exec_message_delivery_profile_path"):
+                    # Only two scalar columns are retained outside the bounded
+                    # execution view. A packet's completion must still include
+                    # its children after the input cut (and before a new prefix).
+                    frame = loaded["trades"]
+                    midnight = int(_day_start_ts(source_day) * 1000)
+                    completion_parts.append(frame.loc[
+                        (frame.transact_time >= midnight) & (frame.transact_time < midnight + 86_400_000),
+                        ["trade_id", "transact_time"],
+                    ].copy())
+                if runtime_input_bounds is not None:
+                    # Slice each daily load before retaining it for concatenation;
+                    # do not first materialize the entire requested study period.
+                    loaded = data_windows.slice_window(
+                        loaded, input_start if resume_checkpoint is not None else None,
+                        input_end + 1, keep_predecessor=True,
+                    )
+                windows.append(loaded)
             window_cache[key] = (
-                data_windows.concatenate_tick_windows(source_days, windows)
+                data_windows.concatenate_tick_windows(input_days, windows)
                 if continuous_days else windows[0]
             )
+            if completion_parts:
+                window_cache[key]["_parent_completion_trades"] = pd.concat(completion_parts, ignore_index=True)
         return window_cache[key]
 
     window = _window_for_params(base)
@@ -2329,7 +2380,7 @@ def _run_day_campaign_audit(
         if market_data_latency_profile_payload is None or market_data_latency_mode != "profile_empirical":
             raise ValueError("execution message delivery requires the paired empirical profile")
         parent_parts, parent_source_identity = [], []
-        for source_day in source_days:
+        for source_day in input_days:
             frame, identities = data_windows.load_replay_aggregate_parents(source_day, base)
             parent_parts.append(frame)
             parent_source_identity.extend(identities)
@@ -2380,11 +2431,11 @@ def _run_day_campaign_audit(
     if native_exchange_book_root:
         native_exchange_book_tape = CryptoHFTExchangeBookTape(
             raw_root=Path(native_exchange_book_root),
-            day=day,
+            day=input_days[0],
             symbol=symbol,
             tick_size=float(base.get("tick_size", 0.1) or 0.1),
             warmup_hours=max(0, int(native_exchange_book_warmup_hours)),
-            continuation_hours=24 * (len(source_days) - 1),
+            continuation_hours=24 * (len(input_days) - 1),
             strict_complete=native_exchange_book_mode == "strict",
         )
         native_exchange_book_identity = native_exchange_book_tape.identity(
@@ -2397,6 +2448,9 @@ def _run_day_campaign_audit(
     for idx, arm in enumerate(arms, 1):
         params = dict(base)
         params.update(arm.overrides)
+        if runtime_input_bounds is not None:
+            params["replay_event_clock_start_ts_ms"] = input_start
+            params["replay_event_clock_end_ts_ms"] = input_end
         arm_queue_path = arm.overrides.get("queue_calibration_path")
         if arm_queue_path:
             add_queue_calibration_params(
@@ -2473,6 +2527,10 @@ def _run_day_campaign_audit(
                     seed=market_data_latency_seed, parent_trades=parent_trades,
                     parent_source_identity=parent_source_identity,
                     unmatched_child_mode="matching_only",
+                    prior_delivery=(resume_checkpoint["runtime"].quote_core_params
+                                    if runtime_input_bounds is not None and resume_checkpoint is not None
+                                    else None),
+                    completion_trades=window.get("_parent_completion_trades"),
                 )
                 if replay_end_ts_ms is not None:
                     # Build visibility from ALL retained children first. Cutting
@@ -2499,6 +2557,8 @@ def _run_day_campaign_audit(
                     window, params, runtime_compute_calibration,
                     clock=runtime_compute_clock,
                     start_ms=int(params["replay_event_clock_start_ts_ms"]),
+                    resume_bucket_end_ms=(resume_checkpoint["runtime"].quote_core_params["runtime_compute_initial_bucket_end_ms"]
+                                          if resume_checkpoint is not None else None),
                 )
             params.update(compute_cache[id(window)])
             params["replay_evidence_scope"] = "runtime_gateway_diagnostic"
@@ -2518,6 +2578,11 @@ def _run_day_campaign_audit(
             bool(params.get("post_fill_quote_response_enabled", False))
             and arm_response_mode in {"flow_add_widen", "hybrid"}
         )
+        batch_record = ({
+            "days": input_days, "bounds_ms": list(runtime_input_bounds),
+            "native_exchange_book_identity": native_exchange_book_identity,
+            "message_delivery_input_semantics": params.get("exec_message_delivery_input_semantics"),
+        } if runtime_input_bounds is not None else None)
         result = bt._simulate_tick_with_engine(
             engine,
             execution_trades,
@@ -2541,6 +2606,11 @@ def _run_day_campaign_audit(
         if result.get("completed") is False:
             # No funding/campaign finalizer or partial economic publication at
             # an operational pause. The next process resumes the same runtime.
+            if runtime_input_bounds is not None:
+                result["_replay_checkpoint"]["f01_input_batches"] = [
+                    *(resume_checkpoint or {}).get("f01_input_batches", []),
+                    batch_record,
+                ]
             return {"day": day, "logs": logs, "_replay_checkpoint": result["_replay_checkpoint"]}
         result["strict_calibration_validated"] = bool(
             params.get("strict_calibration_validated", False)
@@ -2681,6 +2751,9 @@ def _run_day_campaign_audit(
             "funding_risk_feedback": "not_applied_current_live_uses_trading_pnl",
             "funding_same_ms_fill_count": sum(row["same_ms_fill_count"] for row in arm_funding_trace),
             **prefix_metadata,
+            **({"runtime_input_stats_scope": "last_loaded_input_batch",
+                "runtime_input_batch_count": len((resume_checkpoint or {}).get("f01_input_batches", [])) + 1}
+               if runtime_input_bounds is not None else {}),
         })
         if params.get("risk_selection_collect_opportunities"):
             daily.update({
@@ -2744,6 +2817,10 @@ def _run_day_campaign_audit(
             base.get("risk_selection_collect_opportunities")
         ),
         "native_exchange_book_identity": native_exchange_book_identity,
+        **({"runtime_input_batches": [
+            *(resume_checkpoint or {}).get("f01_input_batches", []),
+            batch_record,
+        ]} if runtime_input_bounds is not None else {}),
         "logs": logs,
     }
 
@@ -2780,6 +2857,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="Private local checkpoint output, atomically saved before this process exits")
     parser.add_argument("--resume-runtime-checkpoint", type=Path,
                         help="Trusted local checkpoint from the same inputs/runtime; never accept an uploaded pickle")
+    parser.add_argument("--runtime-input-bounds-ms", type=int, nargs=2, metavar=("START", "END"),
+                        help="Inclusive loaded batch bounds within --days; retain overlap/lookahead and save state before a nonfinal end")
     parser.add_argument(
         "--continuous", action="store_true",
         help="Run contiguous --days in one state machine, without midnight strategy resets",
@@ -3303,7 +3382,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.checkpoint_at_ts_ms is not None and args.save_runtime_checkpoint is None:
         raise SystemExit("--checkpoint-at-ts-ms requires --save-runtime-checkpoint")
-    if args.checkpoint_at_ts_ms is not None or args.resume_runtime_checkpoint is not None:
+    if args.checkpoint_at_ts_ms is not None or args.resume_runtime_checkpoint is not None or args.runtime_input_bounds_ms is not None:
         if not args.continuous or args.engine != "python" or args.workers != 1:
             raise SystemExit("runtime checkpoint requires --continuous --engine python --workers 1")
     if args.replay_end_ts_ms is not None and not args.continuous:
@@ -3945,6 +4024,7 @@ def main(argv: list[str] | None = None) -> None:
     fill_trace_rows: list[dict[str, Any]] = []
     decision_trace_rows: list[dict[str, Any]] = []
     native_exchange_book_identities: dict[str, dict[str, Any]] = {}
+    runtime_input_batches: dict[str, list[dict[str, Any]]] = {}
     funding_trace_rows: list[dict[str, Any]] = []
     risk_selection_opportunity_rows: list[dict[str, Any]] = []
     risk_selection_paired_labels: list[dict[str, Any]] = []
@@ -3996,6 +4076,8 @@ def main(argv: list[str] | None = None) -> None:
         identity = day_result.get("native_exchange_book_identity") or {}
         if identity:
             native_exchange_book_identities[str(day_result.get("day", ""))] = identity
+        if day_result.get("runtime_input_batches"):
+            runtime_input_batches[str(day_result["day"])] = day_result["runtime_input_batches"]
         return False
 
     workers = max(1, int(args.workers or 1))
@@ -4023,6 +4105,8 @@ def main(argv: list[str] | None = None) -> None:
                     replay_end_ts_ms=args.replay_end_ts_ms,
                     checkpoint_at_ts_ms=args.checkpoint_at_ts_ms,
                     resume_checkpoint=loaded_runtime_checkpoint,
+                    runtime_input_bounds=(tuple(args.runtime_input_bounds_ms)
+                                          if args.runtime_input_bounds_ms is not None else None),
                     base=base,
                     arms=arms,
                     engine=args.engine,
@@ -4356,6 +4440,7 @@ def main(argv: list[str] | None = None) -> None:
         ),
         "native_exchange_book_warmup_hours": int(args.native_exchange_book_warmup_hours),
         "native_exchange_book_identities": native_exchange_book_identities,
+        **({"runtime_input_batches": runtime_input_batches} if runtime_input_batches else {}),
         "sync_adjust_replay_mode": str(args.sync_adjust_replay_mode),
         "sync_adjust_event_tape": str(args.sync_adjust_event_tape or ""),
         "sync_adjust_event_tape_sha256": str(

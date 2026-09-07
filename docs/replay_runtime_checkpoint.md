@@ -1,5 +1,10 @@
 # Replay runtime checkpoint: implementation status
 
+[简体中文](replay_runtime_checkpoint.zh-CN.md)
+
+Last materially modified: 2026-09-07
+Last materially synchronized: 2026-09-07
+
 The Python tick loop can pause **before** an event and save its runtime graph,
 then resume that event once. A pause is not maintenance: it does not request
 cancels, flatten inventory, reset a campaign, or produce final accounting.
@@ -27,8 +32,23 @@ runtime, remove the two checkpoint-output flags and append:
 
 You may supply another later cutoff/output path to save again. Funding and
 campaign finalization run once after the resumed replay actually finishes.
-This CLI does not yet change the input date set between invocations; the bounded
-loader integration below remains separate work.
+The accounting dates stay unchanged between invocations. To load a bounded
+input batch, add `--runtime-input-bounds-ms START END` (inclusive milliseconds).
+Only intersecting daily inputs are loaded; each is sliced before concatenation.
+The first batch starts at the original accounting origin. A nonfinal batch must
+save a checkpoint **before** its input end, leaving real lookahead. A resumed
+batch retains the cutoff, every still-referenced pending cursor, and the required
+lookback. Its final input end must reach the original accounting end before any
+economic report is published. Input bounds are not new daily initial states.
+
+Batch source identities are retained in the checkpoint and final metadata.
+The start stays on the original timer grid. Batch message-count and latency
+summaries describe loaded inputs, not cumulative full-run observations; the
+final daily row labels this scope explicitly. Parent packet completion retains
+all required child timestamps even when execution rows are cropped.
+The caller still schedules these overlapping batches; automatic batch sizing
+and the complete multi-source 401-day execution remain unfinished. Daily input
+preparation can still transiently load a full day before slicing it.
 
 ## Python interface and input rotation
 
@@ -59,15 +79,19 @@ accounting and order state are preserved. Native book files are reopened at the
 saved within-file read cursor, retaining prefetched messages and book state.
 Supply complete files containing that cursor, not arbitrary sliced iterators.
 
-This is not yet wired into the production bounded multi-window runner. It must
-not be described as a completed 401-day baseline or used to combine independent
-daily fresh starts. The configured Python receive-time BUY/SELL adapter now has
+The F01 input-bounds interface uses this rotation mechanism. It must not be
+described as a completed 401-day baseline or used to combine independent daily
+fresh starts. The configured Python receive-time BUY/SELL adapter now has
 stateful save/restore and rotation tests, including an actual replay fill that
 updates cooldown. Process locks are recreated; protected EMA, pending window,
 cooldown and counters are retained. Every undelivered callback must remain in the
 next input batch. The optional native cooldown hot-path object still needs state
 export; it is rejected rather than replaced with fresh Python state. The full
-private B0 configuration still needs a representative paired run.
+private B0 configuration has passed a representative one-hour comparison for
+both same-window file resume and actual input cropping. Decisions, quotes,
+fills, campaign accounting and funding matched the uninterrupted reference;
+wall time and loaded-input summary counts are not equality claims. This does
+not qualify every date, source-provider transition or optional policy.
 C++ tick-loop restore and arbitrary research emitter/native object serialization
 are not supplied by this interface.
 
