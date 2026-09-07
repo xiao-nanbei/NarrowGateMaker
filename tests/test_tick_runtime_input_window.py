@@ -8,6 +8,94 @@ from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint,
 from tests.test_tick_runtime_checkpoint import assert_same, scenario
 
 
+def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch):
+    from models.exchange_book_replay import HistoricalMessageDeliverySchedule, ReceiveTimeCooldownReplayAdapter
+    from models.tick_data_types import HistoricalL2Data
+    from strategy.boolean_cooldown_live import (
+        LiveBooleanCooldownPolicy, RuntimeCooldownPolicyEvaluator, OWNER_POLICY_SELECTED_PREDICATES,
+    )
+    from tests.test_boolean_cooldown_buy_e3 import _artifact
+
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "0")
+    ts = np.arange(10, 5_010, 100, dtype=np.int64)
+    depth = HistoricalL2Data(ts, (100 + np.sin(np.arange(len(ts))))[:, None],
+                             np.ones((len(ts), 1)), (102 + np.sin(np.arange(len(ts))))[:, None],
+                             np.ones((len(ts), 1)))
+
+    def adapter(start, end, directory):
+        directory.mkdir()
+        buy, _ = _artifact(directory)
+        sell = LiveBooleanCooldownPolicy(evaluator=RuntimeCooldownPolicyEvaluator(
+            rules=(("FIXED_166S", (tuple((name, False) for name in OWNER_POLICY_SELECTED_PREDICATES),)),),
+            policy_sha256="1" * 64, predicate_bundle_sha256="2" * 64,
+        ), warmup_s=.2, max_feature_age_s=5., native_runtime=False)
+        part = replace(depth, **{name: getattr(depth, name)[start:end].copy()
+                                for name in ("ts_ms", "bid_px", "bid_qty", "ask_px", "ask_qty")})
+        clock = part.ts_ms * 1_000_000
+        return ReceiveTimeCooldownReplayAdapter(
+            part, HistoricalMessageDeliverySchedule(clock, clock + 1, clock + 2),
+            policies={"BUY": buy, "SELL": sell},
+        )
+
+    expected = adapter(0, len(ts), tmp_path / "full")
+    actual = adapter(0, 35, tmp_path / "first")
+
+    def capture(subject, cutoff, side):
+        cutoff *= 1_000_000
+        snapshot = subject.capture_exposure_fill(
+            assignment_id=f"{cutoff}:{side}", fill_exchange_ts_ns=cutoff - 1,
+            fill_visible_ts_ns=cutoff, m0_context={"side": side, "fill_visible_ts_ns": cutoff,
+                "baseline_duration_ms": 85_000., "campaign_age_s": 300.},
+        )
+        return subject.evaluate(snapshot, 85_000.)
+
+    for cutoff in (500, 1_250, 2_050):
+        for side in ("BUY", "SELL"):
+            assert capture(actual, cutoff, side) == capture(expected, cutoff, side)
+    path = tmp_path / "policies.pickle"
+    save_runtime_checkpoint(path, {"schema": "tick_replay_runtime.v1", "adapter": actual,
+                                   "emitter": actual})
+    restored = load_trusted_runtime_checkpoint(path)
+    actual = restored["adapter"]
+    assert restored["emitter"] is actual
+    assert actual._policies["BUY"].windows._updates > 0
+    actual.resume_input_window(adapter(10, len(ts), tmp_path / "second"))
+    for cutoff in (2_450, 3_999, 5_100):
+        for side in ("BUY", "SELL"):
+            assert capture(actual, cutoff, side) == capture(expected, cutoff, side)
+    for side in ("BUY", "SELL"):
+        assert_same(vars(actual._policies[side].windows._state),
+                    vars(expected._policies[side].windows._state))
+        assert actual._policies[side].windows._feature_ready_ts_ns == expected._policies[side].windows._feature_ready_ts_ns
+    for key in ("depth_callbacks_consumed", "depth_rows_available", "snapshots_emitted", "evaluations"):
+        assert actual.audit()[key] == expected.audit()[key]
+
+    def replay_inputs(directory, depth_start=0):
+        args, kwargs = scenario("async")
+        policy = adapter(depth_start, len(ts), directory)
+        args[3].update(fill_cooldown=85., requote_threshold_bps=1., cooldown_duration_policy_evaluator=policy,
+                       cooldown_v2_snapshot_emitter=policy)
+        return args, kwargs
+
+    args, kwargs = replay_inputs(tmp_path / "runtime-full")
+    uninterrupted = simulate_tick(*args, **kwargs)
+    args, kwargs = replay_inputs(tmp_path / "runtime-first")
+    partial = simulate_tick(*args, **kwargs, checkpoint_at_ts_ms=1_250)
+    saved = partial["_replay_checkpoint"]
+    assert saved["runtime"].cooldown_duration_policy_evaluator._captures > 0
+    save_runtime_checkpoint(path, saved)
+    args, kwargs = replay_inputs(tmp_path / "runtime-next", depth_start=10)
+    args = (args[0][args[0].transact_time >= 500].copy(), *args[1:])
+    continued = simulate_tick(*args, **kwargs, resume_input_batch=True,
+                              resume_checkpoint=load_trusted_runtime_checkpoint(path))
+    # The health audit measures real host evaluation microseconds; it is not an
+    # economic/replay clock. All modeled outputs must still match exactly.
+    for result in (continued, uninterrupted):
+        for key in ("_cooldown_v2_snapshot_emitter_audit", "_cooldown_duration_policy_audit"):
+            result.pop(key, None)
+    assert_same(continued, uninterrupted)
+
+
 def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path):
     from models.exchange_book_replay import HistoricalExchangeBookEvent
 

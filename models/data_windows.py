@@ -582,6 +582,7 @@ def execution_message_delivery_params(
     window: dict[str, Any], *, symbol: str, profile: dict[str, Any], seed: int,
     parent_trades: pd.DataFrame, parent_source_identity: list[dict[str, Any]],
     unmatched_child_mode: str = "error",
+    prior_delivery: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Delay frozen execution inputs without changing exchange matching rows.
 
@@ -627,6 +628,7 @@ def execution_message_delivery_params(
 
     simulator = MarketDataLatencySimulator(profile)
     delivery, source_stats = {}, {}
+    source_offsets, initial_ready = {}, {}
     market_id = f"binance:perp:{symbol.upper()}"
     for feed, event_type, source_ms in (
         ("bbo", "book", getattr(window.get("bbo_data"), "ts_ms", None)),
@@ -636,9 +638,23 @@ def execution_message_delivery_params(
         if source_ms is None or not len(source_ms):
             raise ValueError(f"message delivery requires retained {feed} source rows")
         exchange = np.asarray(source_ms, dtype=np.int64) * 1_000_000
+        row_offset, previous_ready = 0, 0
+        old = None
+        if prior_delivery is not None:
+            old = prior_delivery["_exec_message_delivery"][feed]
+            offset = int(np.searchsorted(old["exchange_ts_ns"], exchange[0], side="left"))
+            overlap = min(len(old["exchange_ts_ns"]) - offset, len(exchange))
+            if overlap <= 0 or not np.array_equal(
+                old["exchange_ts_ns"][offset:offset + overlap], exchange[:overlap],
+            ):
+                raise ValueError(f"{feed} delivery rotation requires unchanged source overlap")
+            row_offset = prior_delivery["_exec_message_source_row_offsets"][feed] + offset
+            previous_ready = (int(old["feature_ready_ts_ns"][offset - 1]) if offset else
+                              prior_delivery["_exec_message_initial_ready_ns"][feed])
+        source_offsets[feed], initial_ready[feed] = row_offset, previous_ready
         receive, ready = simulator.message_clock_arrays(
             exchange, market_id=market_id, event_type=event_type,
-            transport="websocket", seed=seed,
+            transport="websocket", seed=seed, source_row_offset=row_offset,
         )
         floor_added_ns = np.zeros(len(exchange), dtype=np.int64)
         if feed == "trade":
@@ -648,12 +664,18 @@ def execution_message_delivery_params(
             ready = ready + floor_added_ns
         schedule = HistoricalMessageDeliverySchedule(
             exchange, receive, ready, serialize_callback_service=True,
+            initial_ready_by_connection={0: previous_ready},
         )
         delivery[feed] = {
             "exchange_ts_ns": schedule.exchange_ns_for_channel(),
             "receive_ts_ns": schedule.receive_ns_for_channel(),
             "feature_ready_ts_ns": schedule.ready_ns_for_channel(),
         }
+        if old is not None:
+            for clock_name in ("receive_ts_ns", "feature_ready_ts_ns"):
+                if not np.array_equal(old[clock_name][offset:offset + overlap],
+                                      delivery[feed][clock_name][:overlap]):
+                    raise ValueError(f"{feed} delivery rotation changed overlapping {clock_name}")
         source_stats[feed] = schedule.stats_dict()
         if feed == "trade":
             source_stats[feed].update({
@@ -722,6 +744,8 @@ def execution_message_delivery_params(
             values.setflags(write=False)
     return {
         "exec_book_visibility_mode": "message_schedule", "_exec_message_delivery": delivery,
+        "_exec_message_source_row_offsets": source_offsets,
+        "_exec_message_initial_ready_ns": initial_ready,
         "exec_message_delivery_input_semantics": {
             "profile_id": simulator.profile_id, "market_id": market_id,
             "transport": "websocket", "sampling": "same_message_pairs_once_per_source_row",

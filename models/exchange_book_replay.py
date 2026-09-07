@@ -1415,6 +1415,7 @@ class HistoricalMessageDeliverySchedule:
         channel_ids=None,
         connection_ids=None,
         serialize_callback_service: bool = False,
+        initial_ready_by_connection=None,
     ) -> None:
         def timestamps(values, name: str) -> np.ndarray:
             array = np.asarray(values)
@@ -1443,10 +1444,17 @@ class HistoricalMessageDeliverySchedule:
         assigned = proposed.copy()
         assigned_receive = receive.copy()
         connection_keys = np.unique(connections)
+        initial = dict(initial_ready_by_connection or {})
+        if (set(initial) - set(connection_keys) or any(
+            isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+            or not 0 <= int(value) <= np.iinfo(np.int64).max for value in initial.values()
+        )):
+            raise ValueError("initial connection completion must be an aligned nonnegative ns clock")
         for connection in connection_keys:
             indices = np.flatnonzero(connections == connection)
+            previous_ready = int(initial.get(connection, 0))
             if not serialize_callback_service:
-                assigned[indices] = np.maximum.accumulate(proposed[indices])
+                assigned[indices] = np.maximum(np.maximum.accumulate(proposed[indices]), previous_ready)
                 continue
             service = proposed[indices] - receive[indices]
             cumulative = np.cumsum(service, dtype=np.int64)
@@ -1455,7 +1463,7 @@ class HistoricalMessageDeliverySchedule:
             prior = cumulative - service
             # Max-plus FIFO recurrence, vectorized without rounding nanoseconds:
             # finish_i = cumulative_i + max_j<=i(receive_j - cumulative_(j-1)).
-            origin = np.maximum.accumulate(receive[indices] - prior)
+            origin = np.maximum(np.maximum.accumulate(receive[indices] - prior), previous_ready)
             if np.any(origin > np.iinfo(np.int64).max - cumulative):
                 raise ValueError("serialized callback completion exceeds int64")
             finish = cumulative + origin
@@ -1828,10 +1836,41 @@ class ReceiveTimeCooldownReplayAdapter:
         if not self._policies or set(self._policies) - {"BUY", "SELL"}:
             raise ValueError("receive-time policy sides must be BUY or SELL")
         self._cursor = 0
+        self._source_row_offset = 0
         self._last_cutoff = -1
         self._captures = 0
         self._fallbacks = 0
         self._evaluations = 0
+        self._cpp_window_arrays_cache = None
+
+    def resume_input_window(self, fresh):
+        """Rebind depth inputs without replacing policy, EMA or pending windows.
+
+        Keep every not-yet-delivered callback. In particular the pre-roll must
+        extend to the saved cursor, not just the most recent fill timestamp.
+        The caller supplies already-continued receive/ready clocks.
+        """
+        if type(fresh) is not type(self) or self.cpp_policy_bindings != fresh.cpp_policy_bindings:
+            raise ValueError("cooldown input rotation changed the configured policy")
+        old, new = self._depth.ts_ms, fresh._depth.ts_ms
+        offset = int(np.searchsorted(old, new[0], side="left"))
+        count = min(len(old) - offset, len(new))
+        if count <= 0 or not np.array_equal(old[offset:offset + count], new[:count]):
+            raise ValueError("cooldown depth windows need unchanged overlapping timestamps")
+        if offset > self._cursor:
+            raise ValueError("cooldown input window discarded undelivered depth callbacks")
+        for name in ("bid_px", "ask_px", "bid_qty", "ask_qty"):
+            if not np.array_equal(getattr(self._depth, name)[offset:offset + count],
+                                  getattr(fresh._depth, name)[:count], equal_nan=True):
+                raise ValueError("cooldown input rotation changed overlapping depth values")
+        for name in ("_receive", "_ready"):
+            if not np.array_equal(getattr(self, name)[offset:offset + count],
+                                  getattr(fresh, name)[:count]):
+                raise ValueError("cooldown input rotation changed message delivery clocks")
+        self._cursor -= offset
+        self._source_row_offset += offset
+        self._depth = fresh._depth
+        self._receive, self._ready = fresh._receive, fresh._ready
         self._cpp_window_arrays_cache = None
 
     @property
@@ -2060,7 +2099,8 @@ class ReceiveTimeCooldownReplayAdapter:
             for observer in self._policies.values():
                 observer.observe_depth(
                     receive_ts_ns=int(self._receive[index]), bids=bids, asks=asks,
-                    market_generation=index + 1, depth_generation=index + 1,
+                    market_generation=self._source_row_offset + index + 1,
+                    depth_generation=self._source_row_offset + index + 1,
                 )
         self._cursor = last
         self._last_cutoff = cutoff
@@ -2107,8 +2147,8 @@ class ReceiveTimeCooldownReplayAdapter:
             "feature_clock": "live_policy_receive_time_windows",
             "visibility": "depth_feature_ready_strictly_before_fill_visible",
             "research_snapshot_authority": False,
-            "depth_rows_available": len(self._ready),
-            "depth_callbacks_consumed": self._cursor,
+            "depth_rows_available": self._source_row_offset + len(self._ready),
+            "depth_callbacks_consumed": self._source_row_offset + self._cursor,
             "receive_head_of_line_clamped_events": self._receive_clamps,
             "delivery_ready_head_of_line_clamped_events": (
                 self._ready_schedule_clamps

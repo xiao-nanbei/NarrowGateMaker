@@ -167,4 +167,12 @@ def rotate_runtime_inputs(saved, fresh, next_event, *, exchange_book_event_tape=
             setattr(saved, name, getattr(fresh, name))
     if saved.exchange_book_scheduler is not None:
         saved.exchange_book_scheduler.resume_input_source(exchange_book_event_tape)
+    if saved.cooldown_duration_policy_evaluator is not None:
+        # The emitter and evaluator are aliases to one stateful live adapter.
+        saved.cooldown_duration_policy_evaluator.resume_input_window(
+            fresh.cooldown_duration_policy_evaluator,
+        )
+        for name in ("cooldown_duration_policy_evaluator", "cooldown_v2_snapshot_emitter"):
+            if name in saved.quote_core_params:
+                saved.quote_core_params[name] = getattr(saved, name)
     return next_event

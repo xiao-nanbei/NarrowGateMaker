@@ -33,8 +33,13 @@ Supply complete files containing that cursor, not arbitrary sliced iterators.
 
 This is not yet wired into the production bounded multi-window runner. It must
 not be described as a completed 401-day baseline or used to combine independent
-daily fresh starts. Qualification of the configured receive-time BUY/SELL policy
-adapter and end-to-end source delivery across input batches is still pending.
+daily fresh starts. The configured Python receive-time BUY/SELL adapter now has
+stateful save/restore and rotation tests, including an actual replay fill that
+updates cooldown. Process locks are recreated; protected EMA, pending window,
+cooldown and counters are retained. Every undelivered callback must remain in the
+next input batch. The optional native cooldown hot-path object still needs state
+export; it is rejected rather than replaced with fresh Python state. The full
+private B0 configuration still needs a representative paired run.
 C++ tick-loop restore and arbitrary research emitter/native object serialization
 are not supplied by this interface.
 
@@ -47,8 +52,12 @@ terminal accounting; unused intermediate end timers are not execution events.
 
 Per-message latency draws use global source-row positions. The latency sampler's
 `source_row_offset` preserves the existing full-window draws when input prefixes
-are dropped; FIFO delivery clocks also need their prior state preserved. Changing
-only the sampler offset does not by itself qualify end-to-end delivery rotation.
+are dropped. `execution_message_delivery_params(..., prior_delivery=previous)`
+also continues each feed's callback backlog from its prior completion clock and
+checks overlapping messages retain their delivery times. Runtime tests cover
+both ordinary and long callback-service cases. Source inventory/diagnostic
+metadata describes the loaded batch; that metadata is not a full-run cumulative
+coverage report. The finalizer must retain the per-batch source records.
 
 The persisted object graph retains shared order references, pending new/cancel
 and private-fill events, FIFO/HTTP and compute phases, policy state, random

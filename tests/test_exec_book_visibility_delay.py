@@ -351,6 +351,60 @@ def _profile_execution_message_fixture(*, depth_delay_ms=300.0, trade_delay_ms=5
     return inputs, parents, profile, window
 
 
+@pytest.mark.parametrize("long_callback", [False, True])
+def test_message_profile_rotation_keeps_global_draws_and_prior_callback_backlog(tmp_path, long_callback):
+    from dataclasses import replace
+    from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
+    from tests.test_tick_runtime_checkpoint import assert_same
+
+    inputs, parents, profile, window = _profile_execution_message_fixture()
+    # Drop only context outside the actual ten-second L2 diagnostic lookback.
+    # Removing the immediately prior frame would correctly change flip ratios.
+    for name in ("bbo_data", "l2_data"):
+        window[name].ts_ms[0] -= 20_000
+    for group in profile["groups"]:
+        group["rows"] = 3
+        group["simulation_clock_pair_samples_ms"] = (
+            [[5., 2_000.], [80., 1_500.], [200., 500.]] if long_callback
+            else [[5., 2.], [80., 1.5], [200., .5]]
+        )
+    common = dict(symbol="BTCUSDC", profile=profile, seed=7,
+                  parent_source_identity=[{"sha256": "synthetic"}])
+    full = data_windows.execution_message_delivery_params(window, parent_trades=parents, **common)
+    cropped = dict(window)
+    for name in ("bbo_data", "l2_data"):
+        source = window[name]
+        fields = ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty") if name == "bbo_data" else (
+            "ts_ms", "bid_px", "ask_px", "bid_qty", "ask_qty",
+        )
+        cropped[name] = replace(source, **{field: getattr(source, field)[1:] for field in fields})
+    result = data_windows.execution_message_delivery_params(
+        cropped, parent_trades=parents.iloc[1:].copy(), prior_delivery=full, **common,
+    )
+    assert result["_exec_message_source_row_offsets"] == {"bbo": 1, "depth": 1, "trade": 1}
+    for feed in ("bbo", "depth", "trade"):
+        for clock in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns"):
+            np.testing.assert_array_equal(result["_exec_message_delivery"][feed][clock],
+                                          full["_exec_message_delivery"][feed][clock][1:])
+    # Same-time duplicate source messages still keep distinct global identities.
+    assert result["_exec_message_initial_ready_ns"]["depth"] > 0
+    inputs["params"].update(full)
+    expected = bt.simulate_tick(**inputs)
+    partial = bt.simulate_tick(**inputs, checkpoint_at_ts_ms=1_003_501)
+    path = tmp_path / "message-window.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    inputs.update(bbo_data=cropped["bbo_data"], l2_data=cropped["l2_data"])
+    inputs["params"].update(result)
+    actual = bt.simulate_tick(**inputs, resume_checkpoint=load_trusted_runtime_checkpoint(path),
+                              resume_input_batch=True)
+    # Source inventory metadata describes the loaded batch; decisions, lifecycle,
+    # sampled visibility and accounting must describe the same complete run.
+    for output in (actual, expected):
+        output.pop("exec_message_delivery_sources", None)
+        output.pop("exec_message_delivery_input_semantics", None)
+    assert_same(actual, expected)
+
+
 @pytest.mark.parametrize("async_gateway", [False, True])
 def test_empirical_execution_profile_changes_real_source_and_prediction_visibility(async_gateway):
     fast, *_ = _profile_execution_message_fixture()

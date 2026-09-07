@@ -26339,15 +26339,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                   int(_tick_state.n_trades))
         if not resume_input_batch and tuple(resume_checkpoint["loaded_window"]) != window:
             raise ValueError("runtime checkpoint currently requires the same loaded window")
-        from copy import deepcopy
+        from models.replay.runtime_checkpoint_io import clone_runtime_state
         from itertools import islice
         fresh_book_scheduler = _tick_state.exchange_book_scheduler
         fresh_progress_callback = _tick_state.replay_progress_callback
         fresh_runtime = _tick_state
         saved_runtime = resume_checkpoint["runtime"]
-        saved_book = saved_runtime.exchange_book_scheduler
-        source_memo = {id(saved_book._iterator): None} if saved_book is not None else {}
-        _tick_state = deepcopy(saved_runtime, source_memo)
+        _tick_state = clone_runtime_state(saved_runtime)
         _tick_state.replay_progress_callback = fresh_progress_callback
         restored_book_scheduler = _tick_state.exchange_book_scheduler
         if restored_book_scheduler is not None and not resume_input_batch:
