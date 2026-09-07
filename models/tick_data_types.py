@@ -61,6 +61,7 @@ class HistoricalExchangeBookEvent:
     levels: tuple[tuple[str, int, float], ...] = ()
     source: str = ""
     source_ordinal: int = 0
+    sequence_scope: str = "exchange_sequence"
 
     def __post_init__(self) -> None:
         market_id = str(self.market_id).strip()
@@ -70,6 +71,13 @@ class HistoricalExchangeBookEvent:
             event_type = "delta"
         if not market_id:
             raise ValueError("historical exchange-book event requires market_id")
+        if self.sequence_scope not in {"exchange_sequence", "provider_ordered"}:
+            raise ValueError("unsupported exchange-book sequence scope")
+        if self.sequence_scope == "provider_ordered" and any(value is not None for value in (
+            self.first_update_id, self.final_update_id, self.previous_final_update_id,
+            self.last_update_id,
+        )):
+            raise ValueError("provider-ordered events must not manufacture exchange sequence IDs")
         if event_type not in {"snapshot", "delta", "source_gap"}:
             raise ValueError(
                 "historical exchange-book event_type must be snapshot, "

@@ -33103,7 +33103,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "active_order_queue_unusable_count": _tick_state.active_order_queue_unusable_count,
         "exchange_book_queue_mode": _tick_state.exchange_book_queue_mode,
         "exchange_book_queue_scope": (
-            "strategy_independent_native_snapshot_delta_exchange_time_v1"
+            _tick_state.exchange_book_scheduler.evidence_scope
             if _tick_state.exchange_book_scheduler is not None
             else "disabled"
         ),

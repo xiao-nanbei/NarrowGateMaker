@@ -2,8 +2,8 @@
 
 [简体中文](replay_runtime_checkpoint.zh-CN.md)
 
-Last materially modified: 2026-09-07
-Last materially synchronized: 2026-09-07
+Last materially modified: 2026-09-08
+Last materially synchronized: 2026-09-08
 
 The Python tick loop can pause **before** an event and save its runtime graph,
 then resume that event once. A pause is not maintenance: it does not request
@@ -94,6 +94,12 @@ wall time and loaded-input summary counts are not equality claims. This does
 not qualify every date, source-provider transition or optional policy.
 C++ tick-loop restore and arbitrary research emitter/native object serialization
 are not supplied by this interface.
+
+### Source-aware raw L2 restoration
+
+`TardisExchangeBookTape` in [the existing book scheduler](../models/exchange_book_replay.py) reads explicitly supplied raw Tardis L2 files. It groups a whole snapshot or update atomically across CSV reader batches, preserves exchange and provider-receive timestamps, and uses the same book reconstruction implementation. Provider timestamps are not deployment-host latency measurements. The component rejects malformed levels and regressing source clocks rather than reordering records or inventing missing events.
+
+These records do not carry Binance exchange sequence IDs. They therefore use `sequence_scope=provider_ordered`, with no fabricated `U/u/pu` values; strict exchange-sequence mode rejects them. A modeled diagnostic scheduler can apply them and save/restore its book, but reports a provider-ordered evidence scope even after subsequently switching to a native source. Switching providers requires a real snapshot, which replaces the prior source's levels without resetting strategy/account state. A component test and a short real-data reconstruction comparison do not establish full-calendar replay readiness. F01's source-plan routing and complete provider-transition qualification remain pending; this reader is not an automatic fallback for missing native inputs.
 
 Batch boundaries must retain **real lookback and lookahead context**, rather than
 inventing replacement snapshots: the tested local-rank consumer needs 120 seconds

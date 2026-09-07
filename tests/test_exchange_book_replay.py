@@ -24,6 +24,92 @@ from models.tick_data_types import (
 BASE_MS = 1_700_000_000_000
 
 
+def test_tardis_raw_messages_keep_full_depth_and_no_invented_sequence(tmp_path, monkeypatch):
+    import pyarrow.csv as pacsv
+    import data.normalize_tardis_orderbook as normalizer
+    from models.exchange_book_replay import TardisExchangeBookTape
+
+    path = tmp_path / "BTCUSDC.csv"
+    header = "exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+    def row(offset, snapshot, side, price, amount):
+        return f"binance-futures,BTCUSDC,{BASE_MS * 1000 + offset},{BASE_MS * 1000 + offset + 5},{snapshot},{side},{price},{amount}\n"
+    path.write_text(header + row(0, "true", "bid", 100., 3.)
+                    + row(0, "true", "ask", 101., 4.)
+                    + row(0, "true", "bid", 90., 8.)
+                    + row(100, "false", "bid", 100., 2.)
+                    + row(100, "false", "ask", 101., 0.)
+                    + row(100, "false", "ask", 102., 5.)
+                    + row(200, "false", "bid", 100., 1.))
+    # The snapshot spans Arrow batches; it must still be one atomic message.
+    monkeypatch.setattr(normalizer, "_open_csv", lambda path: pacsv.open_csv(
+        path, read_options=pacsv.ReadOptions(block_size=190)))
+    tape = TardisExchangeBookTape([path], symbol="BTCUSDC", tick_size=.1)
+    events = list(tape)
+    assert len(events) == 3
+    assert len(events[0].levels) == 3 and len(events[1].levels) == 3
+    assert events == list(tape)
+    assert all(event.last_update_id is None and event.final_update_id is None for event in events)
+    assert tape.identity()["exchange_sequence_available"] is False
+    with pytest.raises(ValueError, match="cannot prove strict exchange sequence"):
+        HistoricalExchangeBookScheduler(tape).advance_to(events[-1].exchange_ts_ns)
+    full = HistoricalExchangeBookScheduler(tape, strict_sequence=False)
+    full.advance_to(events[-1].exchange_ts_ns)
+    assert full.top_levels(3) == ([(1000., 1.), (900., 8.)], [(1020., 5.)])
+    assert full.stats().provider_ordered_events == 3
+    assert "provider_ordered" in full.evidence_scope
+    first = HistoricalExchangeBookScheduler(tape, strict_sequence=False)
+    first.advance_to(events[1].exchange_ts_ns)
+    saved = pickle.loads(pickle.dumps(first.checkpoint()))
+    restored = HistoricalExchangeBookScheduler.from_checkpoint(saved, ())
+    restored.resume_input_source(tape)
+    restored.advance_to(events[-1].exchange_ts_ns)
+    assert restored.top_levels(3) == full.top_levels(3)
+    assert restored.stats() == full.stats()
+
+
+@pytest.mark.parametrize("defect", ["exchange_clock", "receive_clock", "causality", "tick", "negative_qty"])
+def test_tardis_raw_input_rejects_invalid_rows_without_reordering(tmp_path, defect):
+    from models.exchange_book_replay import TardisExchangeBookTape
+    path = tmp_path / "BTCUSDC.csv"
+    exchange, receive, price, qty = 1001, 1006, 100., 1.
+    if defect == "exchange_clock":
+        exchange = 999
+    elif defect == "receive_clock":
+        receive = 1004
+    elif defect == "causality":
+        exchange, receive = 1007, 1006
+    elif defect == "tick":
+        price = 100.05
+    else:
+        qty = -1.
+    path.write_text("exchange,symbol,timestamp,local_timestamp,is_snapshot,side,price,amount\n"
+        "binance-futures,BTCUSDC,1000,1005,true,bid,100,1\n"
+        f"binance-futures,BTCUSDC,{exchange},{receive},false,bid,{price},{qty}\n")
+    with pytest.raises(ValueError):
+        list(TardisExchangeBookTape([path], symbol="BTCUSDC", tick_size=.1))
+
+
+def test_provider_change_requires_snapshot_and_never_carries_old_book_levels():
+    from dataclasses import replace
+    start = BASE_MS * 1_000_000
+    snapshot = HistoricalExchangeBookEvent("market", "snapshot", start,
+        levels=(("bid", 100, 2.), ("ask", 102, 3.)), sequence_scope="provider_ordered")
+    delta = replace(snapshot, event_type="delta", exchange_ts_ns=start + 100,
+        sequence_scope="exchange_sequence", first_update_id=2, final_update_id=2,
+        previous_final_update_id=1)
+    with pytest.raises(ValueError, match="requires an actual source snapshot"):
+        HistoricalExchangeBookScheduler([snapshot, delta], strict_sequence=False).advance_to(start + 100)
+    native_snapshot = replace(delta, event_type="snapshot", last_update_id=1,
+        levels=(("bid", 99, 4.), ("ask", 103, 5.)))
+    scheduler = HistoricalExchangeBookScheduler([snapshot, native_snapshot], strict_sequence=False)
+    scheduler.advance_to(start + 100)
+    assert scheduler.top_levels(3) == ([(99., 4.)], [(103., 5.)])
+    # Even after switching back, the run's evidence retains its provider-only prefix.
+    assert "provider_ordered" in scheduler.evidence_scope
+    with pytest.raises(ValueError, match="must not manufacture"):
+        replace(snapshot, last_update_id=123)
+
+
 @pytest.mark.parametrize("defect", ["depth", "channel", "delivery", "flag"])
 def test_configured_cooldown_refuses_missing_source_instead_of_static_baseline(defect):
     depth = SimpleNamespace(

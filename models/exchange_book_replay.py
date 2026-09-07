@@ -134,6 +134,7 @@ class ExchangeBookSchedulerStats:
     event_timestamp_fallback_events: int
     receive_timestamp_fallback_events: int
     unknown_timestamp_source_events: int
+    provider_ordered_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -530,6 +531,89 @@ class CryptoHFTExchangeBookTape:
         }
 
 
+class TardisExchangeBookTape:
+    """Stream raw provider L2 messages without inventing exchange sequence IDs.
+
+    Rows belonging to one (exchange timestamp, provider timestamp, snapshot)
+    message are applied atomically, including groups spanning Arrow batches.
+    Provider receive time remains provenance, not a deployment-host latency.
+    Files must be supplied in chronological order, with real snapshot context.
+    """
+
+    def __init__(self, paths: Iterable[Path], *, symbol: str, tick_size: float):
+        self.paths = tuple(Path(path).expanduser().resolve() for path in paths)
+        self.symbol = str(symbol).upper()
+        self.tick_size = float(tick_size)
+        if not self.paths or not math.isfinite(self.tick_size) or self.tick_size <= 0:
+            raise ValueError("Tardis tape requires source files and a positive finite tick size")
+        for path in self.paths:
+            if not path.is_file():
+                raise FileNotFoundError(path)
+
+    def __iter__(self) -> Iterator[HistoricalExchangeBookEvent]:
+        from data.normalize_tardis_orderbook import _open_csv
+
+        ordinal = 0
+        previous_exchange = previous_receive = 0
+        for path in self.paths:
+            message = None
+            levels: list[tuple[str, int, float]] = []
+
+            def event(message, levels, path, ordinal):
+                exchange_us, receive_us, snapshot = message
+                return HistoricalExchangeBookEvent(
+                    market_id=f"binance_futures:perpetual:{self.symbol}",
+                    event_type="snapshot" if snapshot else "delta",
+                    exchange_ts_ns=exchange_us * 1000,
+                    exchange_ts_source="event", event_time_ns=exchange_us * 1000,
+                    local_receive_ts_ns=receive_us * 1000,
+                    levels=tuple(levels), source=str(path), source_ordinal=ordinal,
+                    sequence_scope="provider_ordered",
+                )
+
+            with _open_csv(path) as reader:
+                for batch in reader:
+                    columns = [batch.column(name).to_numpy(zero_copy_only=False) for name in (
+                        "exchange", "symbol", "timestamp", "local_timestamp",
+                        "is_snapshot", "side", "price", "amount",
+                    )]
+                    for exchange, symbol, exchange_us, receive_us, snapshot, side, price, amount in zip(*columns, strict=True):
+                        exchange_us, receive_us = int(exchange_us), int(receive_us)
+                        price, amount = float(price), float(amount)
+                        if (str(exchange) != "binance-futures" or str(symbol) != self.symbol
+                                or str(side) not in {"bid", "ask"}
+                                or not math.isfinite(price) or price <= 0
+                                or not math.isfinite(amount) or amount < 0):
+                            raise ValueError(f"invalid Tardis L2 row in {path}")
+                        key = (exchange_us, receive_us, bool(snapshot))
+                        if key != message:
+                            if exchange_us < previous_exchange or receive_us < previous_receive:
+                                raise ValueError(f"Tardis source clock regressed in {path}")
+                            if exchange_us <= 0 or receive_us < exchange_us:
+                                raise ValueError(f"Tardis provider receive precedes exchange time in {path}")
+                            if message is not None:
+                                yield event(message, levels, path, ordinal)
+                                ordinal += 1
+                            message, levels = key, []
+                            previous_exchange, previous_receive = exchange_us, receive_us
+                        price_tick = round(price / self.tick_size)
+                        if not math.isclose(price_tick * self.tick_size, price,
+                                            rel_tol=0., abs_tol=max(1e-9, self.tick_size * 1e-7)):
+                            raise ValueError(f"Tardis price is not tick aligned in {path}")
+                        levels.append((str(side), price_tick, amount))
+            if message is not None:
+                yield event(message, levels, path, ordinal)
+                ordinal += 1
+
+    def identity(self) -> dict[str, object]:
+        return {
+            "source": "tardis_incremental_book_L2", "sequence_scope": "provider_ordered",
+            "exchange_sequence_available": False, "provider_receive_is_live_receive": False,
+            "symbol": self.symbol, "tick_size": self.tick_size,
+            "files": [{"path": str(path), "size_bytes": path.stat().st_size} for path in self.paths],
+        }
+
+
 class HistoricalExchangeBookScheduler:
     """Reconstruct a native book on the exchange clock.
 
@@ -599,6 +683,8 @@ class HistoricalExchangeBookScheduler:
         self._snapshot_events = 0
         self._delta_events = 0
         self._source_gap_events = 0
+        self._provider_ordered_events = 0
+        self._sequence_scope = "exchange_sequence"
         self._timestamp_source_counts = {
             "transaction": 0,
             "event": 0,
@@ -861,16 +947,38 @@ class HistoricalExchangeBookScheduler:
 
         was_initialized = bool(self.sequence.initialized)
         previous_gap_count = int(self.sequence.stats.sequence_gaps)
-        apply_message = self.sequence.begin_message(
-            event_type=event.event_type,
-            receive_time_ms=_optional_ms(event.local_receive_ts_ns),
-            event_time_ms=_optional_ms(event.event_time_ns),
-            transaction_time_ms=_optional_ms(event.transaction_time_ns),
-            first_update_id=event.first_update_id,
-            final_update_id=event.final_update_id,
-            previous_final_update_id=event.previous_final_update_id,
-            last_update_id=event.last_update_id,
-        )
+        if event.sequence_scope == "provider_ordered":
+            if self._strict_sequence:
+                raise ValueError("provider-ordered L2 cannot prove strict exchange sequence continuity")
+            self._provider_ordered_events += 1
+            if event.event_type == "snapshot":
+                self.sequence.initialized = True
+                self.sequence.initialization_source = "snapshot"
+                self.sequence.initialization_ts_ms = event.exchange_ts_ms
+                self.sequence.bridge_pending = False
+                self.sequence.last_update_id = None
+                self.sequence.current_message_key = None
+                self._sequence_scope = "provider_ordered"
+                apply_message = True
+            else:
+                if was_initialized and self._sequence_scope != "provider_ordered":
+                    raise ValueError("changing book providers requires an actual source snapshot")
+                apply_message = was_initialized and self._sequence_scope == "provider_ordered"
+        elif self._sequence_scope == "provider_ordered" and event.event_type != "snapshot":
+            raise ValueError("changing book providers requires an actual source snapshot")
+        else:
+            if event.event_type == "snapshot":
+                self._sequence_scope = "exchange_sequence"
+            apply_message = self.sequence.begin_message(
+                event_type=event.event_type,
+                receive_time_ms=_optional_ms(event.local_receive_ts_ns),
+                event_time_ms=_optional_ms(event.event_time_ns),
+                transaction_time_ms=_optional_ms(event.transaction_time_ns),
+                first_update_id=event.first_update_id,
+                final_update_id=event.final_update_id,
+                previous_final_update_id=event.previous_final_update_id,
+                last_update_id=event.last_update_id,
+            )
         if not apply_message:
             invalidated = (
                 int(self.sequence.stats.sequence_gaps) > previous_gap_count
@@ -1387,7 +1495,14 @@ class HistoricalExchangeBookScheduler:
             unknown_timestamp_source_events=int(
                 self._timestamp_source_counts["unknown"]
             ),
+            provider_ordered_events=int(self._provider_ordered_events),
         )
+
+    @property
+    def evidence_scope(self) -> str:
+        return ("strategy_independent_provider_ordered_l2_exchange_time_v1"
+                if self._provider_ordered_events else
+                "strategy_independent_native_snapshot_delta_exchange_time_v1")
 
     def stats_dict(self) -> dict[str, object]:
         return asdict(self.stats())
