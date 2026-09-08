@@ -1,13 +1,15 @@
 # Replay Studio frontend
 
-Last materially modified: 2026-09-07
-Last materially synchronized: 2026-09-07
+Last materially modified: 2026-09-08
+Last materially synchronized: 2026-09-08
 
 This English page is canonical; [简体中文](README.zh-CN.md).
 
 React + TypeScript workspace for the packaged Studio UI. The public default runner is `replay-demo` with the built-in `synthetic-demo` dataset. An optional owner-registered offline adapter queues already-prepared research, training or data-processing plans without exposing commands, paths or parameters in the browser. No real plan is enabled by a public clone. A separate default tab displays existing private B0 summaries imported through the [owner-local CLI](../docs/plans/remote_replay_studio.md#import-completed-b0-results-without-replay); viewing them never starts a new baseline. The interface does not provide arbitrary shell execution or cloud provisioning.
 
 Real results use read-only `/api/results` endpoints and remain separate from synthetic jobs, reports and comparison. The browser displays saved amounts and continuous-segment coverage without manufacturing daily PnL or Sharpe; fees already in trading PnL are not deducted again, and funding is added once. Local/Azure origin and existing cross-host verification describe historical provenance, not current cloud connectivity. Missing queue coverage and modeled-evidence limitations stay visible. No private evidence ships in the frontend bundle.
+
+A completed single-host continuous baseline may explicitly declare an empty `host_comparison_days` list. Import still requires complete result reconciliation; it neither requires a duplicate cloud run nor claims cross-host agreement. Segment warmup is read from the selected output metadata, not assumed to be 24 hours. Source-data gaps do not themselves imply account resets, and a multi-day segment total is not a daily PnL series.
 
 ## Market review and data quality
 

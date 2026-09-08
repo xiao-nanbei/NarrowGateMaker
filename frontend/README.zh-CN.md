@@ -1,13 +1,15 @@
 # Replay Studio 前端
 
-Last materially modified: 2026-09-07
-Last materially synchronized: 2026-09-07
+Last materially modified: 2026-09-08
+Last materially synchronized: 2026-09-08
 
 [English（权威版本）](README.md)
 
 用于 Python 安装包内置 Studio 界面的 React + TypeScript 工作目录。公共默认 runner 是 `replay-demo`，使用内置 `synthetic-demo` 数据集。可选 owner 登记离线适配器可排队执行已准备的研究、训练或数据处理计划，浏览器不暴露命令、路径或参数；公共 clone 不预启用真实计划。独立默认页展示通过 [owner 本地 CLI](../docs/plans/remote_replay_studio.zh-CN.md#只导入已完成-b0不重跑) 导入的已有私有 B0 摘要，查看不会启动新 baseline。界面不执行任意 shell，也不创建云资源。
 
 真实结果使用只读 `/api/results` 接口，与合成任务、报告及比较保持分离。浏览器展示已保存金额和连续段覆盖，不制造每日 PnL 或 Sharpe；交易 PnL 已扣的手续费不再次扣除，资金费只加一次。Local/Azure 来源及既有跨主机核验描述历史出处，不代表当前云连接。队列缺失覆盖和模型证据限制仍明确显示。前端包不包含私有证据。
+
+已完成的单机连续 baseline 可以显式提供空的 `host_comparison_days` 列表。导入仍要求完整结果对账，但不要求重复跑云端回测，也不声明跨主机一致。区段 warmup 读取选定输出的实际元数据，不固定假设为 24 小时。源行情缺口本身不代表账户重置，多日区段总额也不是逐日 PnL 序列。
 
 ## 行情复盘与数据质量
 

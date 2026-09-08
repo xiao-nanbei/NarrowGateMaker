@@ -184,6 +184,9 @@ def b0_projection(summary_path: Path) -> dict:
             "queue_mode": "strict"
             if row.get("exchange_book_queue_mode") == "strict"
             else "non_strict",
+            "native_warmup_hours": number(metadata["native_exchange_book_warmup_hours"])
+            if metadata.get("native_exchange_book_warmup_hours") is not None
+            else None,
         }
         for output, (summary_key, csv_key) in fields.items():
             equal(item[summary_key], row[csv_key])
@@ -201,7 +204,12 @@ def b0_projection(summary_path: Path) -> dict:
         sum(number(item["fill_fee_cost_usdc"]) for item in segments),
     )
     overlap = verified["host_comparison_days"]
-    if not overlap or overlap != sorted(set(overlap)) or not set(overlap).issubset(dates):
+    if (
+        not isinstance(overlap, list)
+        or any(not isinstance(day, str) for day in overlap)
+        or overlap != sorted(set(overlap))
+        or not set(overlap).issubset(dates)
+    ):
         raise ValueError("B0 host comparison days are invalid")
     report_id = "b0-" + hashlib.sha256(content).hexdigest()[:24]
     report = {
@@ -222,13 +230,16 @@ def b0_projection(summary_path: Path) -> dict:
             "passed": True,
             "description": (
                 "既有摘要记录的本地 / Azure 跨主机核验；本次只读导入，没有重跑或重新核验远端。"
+                if overlap
+                else "完整结果与摘要对账通过；本次没有跨主机对照，不声明本地 / Azure 一致性。"
             ),
         },
         "limitations": [
             "这是 modeled diagnostic B0，不是精确实盘经济复现、策略晋级或 E/C 训练结果。",
             (
-                "每行代表连续 segment；段内状态延续，数据缺口后重新开始。"
-                "不能视为每日收益或跨缺口连续账户曲线，也不计算 Sharpe、日胜率或日置信区间。"
+                "每行代表连续 segment；段内状态延续，不同行之间不保证账户状态衔接。"
+                "行情缺口按该次输入计划处理，不因缺口标签推断账户重置。"
+                "不能将区段总额视为每日收益，也不计算 Sharpe、日胜率或日置信区间。"
             ),
             (
                 "交易 PnL 已含成交手续费和终点 MTM；资金费仅加一次。"
@@ -245,12 +256,12 @@ def b0_projection(summary_path: Path) -> dict:
                 "本次导入不重新做原生数据资格核验。"
             ),
             (
-                "Python REST 异步 GLOBAL FIFO、24h native warmup；"
-                "短时延迟 pilot 与 bulk-cancel n=1 prior 不能证明长期尾部或实盘路径等价。"
+                "Warmup 与延迟配置属于各次运行，不能套用历史 B0 的固定值。"
+                "短时延迟样本不能证明长期尾部或实盘路径等价。"
             ),
             (
-                "部分回调、bulk terminal、IOC 查询和网关失败 / UNKNOWN 时序未建模；"
-                "资金费不反馈到当前 trading-PnL 风控，没有保证金 / 强平模型。"
+                "完成金额对账不代表所有回调、网关失败、UNKNOWN、保证金或强平机制已模拟；"
+                "具体覆盖以该次运行配置与合同为准。"
             ),
             (
                 "来源 local / Azure 描述已选产物的执行来源，不表示当前云节点在线；"

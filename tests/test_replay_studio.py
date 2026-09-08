@@ -612,6 +612,35 @@ def test_b0_import_is_private_idempotent_and_never_creates_or_executes_jobs(
     assert locked.get("/api/results").status_code == 401
 
 
+def test_b0_single_host_continuous_import_does_not_require_duplicate_cloud_run(store, b0_source):
+    source = json.loads(b0_source.read_text())
+    source["verification"]["host_comparison_days"] = []
+    b0_source.write_text(json.dumps(source))
+    metadata_path = b0_source.parent / "local_fixture/result.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["native_exchange_book_warmup_hours"] = 0
+    metadata_path.write_text(json.dumps(metadata))
+    report = store.import_b0(b0_source)
+    assert report["verification"]["passed"] is True
+    assert report["verification"]["overlap_days"] == []
+    assert "没有跨主机对照" in report["verification"]["description"]
+    assert report["segments"][0]["native_warmup_hours"] == 0
+    assert report["summary"]["segment_count"] == 1
+    assert "24h native warmup" not in json.dumps(report)
+    assert "数据缺口后重新开始" not in json.dumps(report, ensure_ascii=False)
+    assert store.jobs() == []
+
+
+@pytest.mark.parametrize("overlap", [None, "2026-04-20", [True], ["1900-01-01"]])
+def test_b0_invalid_host_comparison_is_not_treated_as_no_comparison(store, b0_source, overlap):
+    source = json.loads(b0_source.read_text())
+    source["verification"]["host_comparison_days"] = overlap
+    b0_source.write_text(json.dumps(source))
+    with pytest.raises(ValueError, match="host comparison"):
+        store.import_b0(b0_source)
+    assert store.results() == []
+
+
 @pytest.fixture
 def connected_market(store, b0_source, tmp_path):
     import pyarrow as pa

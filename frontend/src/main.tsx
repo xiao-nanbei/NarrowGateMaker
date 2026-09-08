@@ -214,13 +214,13 @@ function BaselineView({
             </dl>
           </section>
           <section>
-            <h3>既有本地 / Azure 核验</h3>
+            <h3>结果对账与跨主机核验范围</h3>
             <p className="baseline-verification">
               <span
                 className={`status ${verification.passed ? "status-completed" : "status-failed"}`}
               >
                 <i />
-                {verification.passed ? "源摘要声明通过" : "源摘要未通过"}
+                {verification.passed ? "结果对账通过" : "结果对账未通过"}
               </span>
               {verification.description}
             </p>
