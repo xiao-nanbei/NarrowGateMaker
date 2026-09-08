@@ -434,7 +434,7 @@ def _prefetch_raw_hours(
                 seen.add(key)
                 rel_path = _object_rel_path(exchange, symbol, hour_dt)
                 raw_path = raw_root / rel_path
-                if raw_path.exists() and raw_path.stat().st_size > 0:
+                if raw_hour_available(raw_path, nonempty=True):
                     continue
                 jobs.append((symbol, hour_dt, rel_path, raw_path))
     if not jobs:
@@ -602,7 +602,7 @@ def _raw_hour_counts(raw_root: Path, exchange: str, symbol: str, day_start_dt: d
     for hour in range(24):
         hour_dt = day_start_dt + timedelta(hours=hour)
         raw_path = raw_root / _object_rel_path(exchange, symbol, hour_dt)
-        if raw_path.exists() and raw_path.stat().st_size > 0:
+        if raw_hour_available(raw_path, nonempty=True):
             present += 1
         else:
             missing.append(hour_dt.strftime("%H"))
@@ -627,7 +627,7 @@ def _raw_day_summary(
     for hour in range(24):
         hour_dt = day_start_dt + timedelta(hours=hour)
         raw_path = raw_root / _object_rel_path(exchange, symbol, hour_dt)
-        if not raw_path.exists() or raw_path.stat().st_size <= 0:
+        if not raw_hour_available(raw_path, nonempty=True):
             missing_hours.append(hour_dt.strftime("%H"))
             continue
 
@@ -1921,7 +1921,53 @@ class DailyOutputWriter:
         self.l2_buffer = self._new_l2_buffer()
 
 
+def daily_raw_for_hour(path: Path) -> Path:
+    """Resolve a legacy hour locator to its lossless daily container."""
+    path = path.expanduser().resolve()
+    root = Path(os.environ.get("NARROWGATE_DAILY_ORDERBOOK_ROOT",
+                               str(path.parents[3].parent / "tardis_compatible")))
+    symbol = path.name.removesuffix("_orderbook.parquet.zst")
+    return root / path.parents[2].name / symbol / "incremental_book_L2" / f"{path.parents[1].name}.parquet"
+
+
+def raw_hour_storage_path(path: Path) -> Path:
+    return path if path.is_file() else daily_raw_for_hour(path)
+
+
+def raw_hour_available(path: Path, *, nonempty: bool = False) -> bool:
+    source = raw_hour_storage_path(path)
+    return source.is_file() and (not nonempty or source.stat().st_size > 0)
+
+
 def _decompress_parquet_zst(path: Path) -> Path:
+    if not path.is_file():
+        # Preserve the existing per-hour parser and its message boundaries.
+        # Read only row groups belonging to this hour, not the whole day.
+        source = pq.ParquetFile(daily_raw_for_hour(path))
+        hour = int(path.parent.name)
+        column = source.schema_arrow.get_field_index("source_hour")
+        if column < 0:
+            raise ValueError("Daily raw source lacks lossless hour boundaries")
+        extensions = {"exchange", "timestamp", "local_timestamp", "is_snapshot",
+                      "amount", "source_hour", "source_row"}
+        columns = [name for name in source.schema_arrow.names if name not in extensions]
+        fd, filename = tempfile.mkstemp(prefix="daily-orderbook-", suffix=".parquet")
+        os.close(fd)
+        temporary = Path(filename)
+        try:
+            with pq.ParquetWriter(temporary, pa.schema([source.schema_arrow.field(n) for n in columns])) as writer:
+                for group in range(source.num_row_groups):
+                    stats = source.metadata.row_group(group).column(column).statistics
+                    if stats is not None and (hour < stats.min or hour > stats.max):
+                        continue
+                    table = source.read_row_group(group)
+                    table = table.filter(pc.equal(table["source_hour"], hour)).select(columns)
+                    if len(table):
+                        writer.write_table(table)
+            return temporary
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
     with tempfile.NamedTemporaryFile(prefix="cryptohftdata-", suffix=".parquet", delete=False) as tmp:
         with open(path, "rb") as src:
             # CryptoHFT's SDK may transparently return an already decompressed
@@ -1940,19 +1986,16 @@ def _decompress_parquet_zst(path: Path) -> Path:
 
 
 def export_tardis_day(raw_root: Path, output_root: Path, exchange: str,
-                      symbol: str, day: str) -> dict:
+                      symbol: str, day: str, *, delete_hourly: bool = False) -> dict:
     """Lossless daily Tardis-compatible Parquet, retaining every source column.
 
     Timestamp aliases are microseconds; original received nanoseconds, event
     and transaction milliseconds, sequence IDs and row order remain unchanged.
     This is an encoding conversion, not gap repair or source-clock admission.
-    Existing hourly inputs are never deleted here: frozen readers still use them.
+    Optional retirement follows verified publication, never precedes it.
     """
     paths = [raw_root / exchange / day / f"{hour:02d}" / f"{symbol}_orderbook.parquet.zst"
              for hour in range(24)]
-    missing = [hour for hour, path in enumerate(paths) if not path.is_file()]
-    if missing:
-        return {"day": day, "symbol": symbol, "status": "missing_hours", "hours": missing}
     directory = output_root / exchange / symbol / "incremental_book_L2"
     directory.mkdir(parents=True, exist_ok=True)
     output = directory / f"{day}.parquet"
@@ -1966,15 +2009,63 @@ def export_tardis_day(raw_root: Path, output_root: Path, exchange: str,
                 value.update(chunk)
         return value.hexdigest()
 
-    sources = [{"hour": h, "sha256": digest(p), "bytes": p.stat().st_size}
-               for h, p in enumerate(paths)]
+    def publish_record(record):
+        with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as stream:
+            json.dump(record, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+            name = stream.name
+        os.replace(name, receipt)
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def retire(record):
+        if not delete_hourly:
+            return record
+        if daily_raw_for_hour(paths[0]).resolve() != output.resolve():
+            raise ValueError("Configure NARROWGATE_DAILY_ORDERBOOK_ROOT before retiring a custom destination")
+        # Verify every remaining input before deleting any. A partial retirement
+        # can resume; a changed source is never discarded as a duplicate.
+        for path, expected in zip(paths, record["sources"], strict=True):
+            if path.exists() and (path.stat().st_size != expected["bytes"] or digest(path) != expected["sha256"]):
+                raise ValueError(f"Hourly input changed before retirement: {path}")
+        for path in paths:
+            path.unlink(missing_ok=True)
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass  # Other symbols or provider metadata remain independent.
+        try:
+            paths[0].parent.parent.rmdir()
+        except OSError:
+            pass
+        record = {**record, "originals_deleted": True,
+                  "retired_source_bytes": sum(item["bytes"] for item in record["sources"])}
+        publish_record(record)
+        return record
+
     if receipt.exists() and output.exists():
         saved = json.loads(receipt.read_text())
-        if saved["sources"] != sources or saved["output_sha256"] != digest(output):
+        if (saved.get("schema") != "tardis_compatible_cryptohft_lossless.v1"
+                or saved.get("day") != day or saved.get("symbol") != symbol
+                or saved.get("round_trip_all_original_columns") is not True
+                or [s["hour"] for s in saved["sources"]] != list(range(24))
+                or saved["output_sha256"] != digest(output)):
             raise ValueError(f"Existing conversion differs: {day}")
-        return {**saved, "status": "reused_verified"}
+        for path, expected in zip(paths, saved["sources"], strict=True):
+            if path.exists() and (path.stat().st_size != expected["bytes"] or digest(path) != expected["sha256"]):
+                raise ValueError(f"Existing conversion differs: {day}")
+        return {**retire(saved), "status": "reused_verified"}
     if output.exists() or receipt.exists():
         raise ValueError(f"Incomplete conversion publication: {day}; retain for recovery")
+    missing = [hour for hour, path in enumerate(paths) if not path.is_file()]
+    if missing:
+        return {"day": day, "symbol": symbol, "status": "missing_hours", "hours": missing}
+    sources = [{"hour": h, "sha256": digest(p), "bytes": p.stat().st_size}
+               for h, p in enumerate(paths)]
     temporary = output.with_suffix(".partial.parquet")
     writer = None
     original_schema = None
@@ -2047,13 +2138,8 @@ def export_tardis_day(raw_root: Path, output_root: Path, exchange: str,
                   "output_sha256": digest(temporary), "output_bytes": temporary.stat().st_size,
                   "round_trip_all_original_columns": True, "originals_deleted": False}
         os.replace(temporary, output)
-        with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as stream:
-            json.dump(result, stream, indent=2)
-            stream.flush()
-            os.fsync(stream.fileno())
-            receipt_tmp = stream.name
-        os.replace(receipt_tmp, receipt)
-        return result
+        publish_record(result)
+        return retire(result)
     finally:
         if writer is not None:
             writer.close()
@@ -2449,7 +2535,7 @@ def _process_symbol(
 
             rel_path = _object_rel_path(exchange, symbol, hour_dt)
             raw_path = raw_root / rel_path
-            if raw_path.exists() and raw_path.stat().st_size > 0:
+            if raw_hour_available(raw_path, nonempty=True):
                 status = "exists"
             elif download_missing:
                 if client is None:
@@ -3149,6 +3235,8 @@ def main() -> None:
                         help="Export complete UTC days as lossless Tardis-compatible Parquet after download")
     parser.add_argument("--tardis-export-only", action="store_true",
                         help="Convert existing hours only; no download or normalized-book rebuild")
+    parser.add_argument("--keep-hourly-raw", action="store_true",
+                        help="Keep verified hourly staging inputs instead of retiring them")
     args = parser.parse_args()
     if args.tardis_export_only and args.tardis_output_root is None:
         raise SystemExit("--tardis-export-only requires --tardis-output-root")
@@ -3247,9 +3335,11 @@ def main() -> None:
         while day.date() <= end_dt.date():
             for symbol in symbols:
                 result = export_tardis_day(raw_root, output_root, args.exchange,
-                                          symbol, day.strftime("%Y-%m-%d"))
+                                          symbol, day.strftime("%Y-%m-%d"),
+                                          delete_hourly=not args.keep_hourly_raw)
                 print(json.dumps({key: result[key] for key in
-                      ("day", "symbol", "status", "rows", "output_bytes", "hours") if key in result}), flush=True)
+                      ("day", "symbol", "status", "rows", "output_bytes", "hours",
+                       "originals_deleted", "retired_source_bytes") if key in result}), flush=True)
             day += timedelta(days=1)
 
     if args.tardis_export_only:

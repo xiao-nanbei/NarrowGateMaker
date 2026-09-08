@@ -16,6 +16,7 @@ from typing import Any
 from models.cache_tier_lru import record_cache_access, register_cache_write
 from models.replay_cache_dag import REPLAY_WINDOW_CACHE_GRAPH_IDENTITY
 from models.tick_data_types import HistoricalExchangeBookEvent
+from data.download_cryptohft_orderbook import raw_hour_storage_path
 
 CACHE_SCHEMA_VERSION = "narrowgate.native_exchange_book_hour_cache.v1"
 EVENT_SCHEMA_VERSION = "historical_exchange_book_event.v1"
@@ -74,12 +75,14 @@ def native_book_hour_identity(
     parser_identity_sha256: str,
 ) -> dict[str, Any]:
     source = Path(source_path).expanduser().resolve()
-    stat = source.stat()
+    storage = raw_hour_storage_path(source)
+    stat = storage.stat()
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "dag_identity_sha256": REPLAY_WINDOW_CACHE_GRAPH_IDENTITY,
         "dag_node": "native_orderbook_logical_hour",
         "source_path": str(source),
+        "storage_path": str(storage),
         "source_size": int(stat.st_size),
         "source_mtime_ns": int(stat.st_mtime_ns),
         "symbol": str(symbol).upper(),

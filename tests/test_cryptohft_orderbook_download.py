@@ -30,7 +30,7 @@ def test_default_warmup_can_reach_a_prior_utc_day_snapshot():
     assert DEFAULT_WARMUP_HOURS >= 24
 
 
-def test_tardis_daily_export_preserves_all_raw_columns_and_reuses(tmp_path):
+def test_tardis_daily_export_preserves_all_raw_columns_and_reuses(tmp_path, monkeypatch):
     import pyarrow.parquet as pq
     day = "2026-09-05"
     for hour in range(24):
@@ -53,12 +53,50 @@ def test_tardis_daily_export_preserves_all_raw_columns_and_reuses(tmp_path):
     assert all(r["first_update_id"] == 10 for r in rows)
     assert cryptohft_orderbook.export_tardis_day(*args)["status"] == "reused_verified"
     assert path.exists() and not result["originals_deleted"]
+    from data.build_active_order_queue_tape import iter_cryptohft_logical_messages
+    before = list(iter_cryptohft_logical_messages(path, 0.1))
+    monkeypatch.setenv("NARROWGATE_DAILY_ORDERBOOK_ROOT", str(tmp_path / "daily"))
+    original_unlink = type(path).unlink
+    def interrupted_unlink(item, *args, **kwargs):
+        if item.name == "BTCUSDC_orderbook.parquet.zst" and item.parent.name == "12":
+            raise OSError("simulated retirement interruption")
+        return original_unlink(item, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(type(path), "unlink", interrupted_unlink)
+        with pytest.raises(OSError, match="simulated retirement interruption"):
+            cryptohft_orderbook.export_tardis_day(*args, delete_hourly=True)
+    assert output.exists() and path.exists()
+    retired = cryptohft_orderbook.export_tardis_day(*args, delete_hourly=True)
+    assert retired["originals_deleted"] and not path.exists()
+    assert cryptohft_orderbook.raw_hour_available(path)
+    assert list(iter_cryptohft_logical_messages(path, 0.1)) == before
+    from models.exchange_book_replay import CryptoHFTExchangeBookTape
+    tape = CryptoHFTExchangeBookTape(raw_root=tmp_path / "raw", day=day,
+        symbol="BTCUSDC", tick_size=0.1, warmup_hours=0, cache_enabled=False)
+    assert not tape.missing_paths and len(list(tape)) == 24
+    assert len(tape.identity()["files"]) == 24
+    cached = CryptoHFTExchangeBookTape(raw_root=tmp_path / "raw", day=day,
+        symbol="BTCUSDC", tick_size=0.1, warmup_hours=0, cache_dir=tmp_path / "cache")
+    assert list(cached) == list(tape)
+    assert list(cached) == list(tape)
+    assert cryptohft_orderbook.export_tardis_day(*args, delete_hourly=True)["originals_deleted"]
+    # A damaged daily container must not cause retirement of a redownloaded hour.
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"unique source")
+    with pytest.raises(ValueError, match="Existing conversion differs"):
+        cryptohft_orderbook.export_tardis_day(*args, delete_hourly=True)
+    assert path.read_bytes() == b"unique source"
+    with output.open("ab") as stream:
+        stream.write(b"corrupt")
+    with pytest.raises(ValueError, match="Existing conversion differs"):
+        cryptohft_orderbook.export_tardis_day(*args, delete_hourly=True)
+    assert path.read_bytes() == b"unique source"
 
 
 def test_tardis_export_incomplete_day_does_not_publish_or_delete(tmp_path):
     result = cryptohft_orderbook.export_tardis_day(tmp_path, tmp_path / "out", "binance_futures", "BTCUSDC", "2026-09-05")
     assert result["status"] == "missing_hours" and len(result["hours"]) == 24
-    assert not (tmp_path / "out").exists()
+    assert not list((tmp_path / "out").rglob("*.parquet"))
 
 
 @pytest.mark.parametrize("mode", ["original", "preceding_update_id"])

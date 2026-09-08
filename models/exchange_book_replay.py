@@ -29,6 +29,8 @@ from data.download_cryptohft_orderbook import (
     OrderBookSequenceState,
     OrderBookState,
     recorder_snapshot_anchor_ms,
+    raw_hour_available,
+    raw_hour_storage_path,
 )
 from data_paths import native_exchange_book_cache_root, resolve_portable_path
 from models.native_exchange_book_cache import (
@@ -210,7 +212,7 @@ class CryptoHFTExchangeBookTape:
             )
             expected.append((current, path))
             current += timedelta(hours=1)
-        missing = tuple(path for _, path in expected if not path.is_file())
+        missing = tuple(path for _, path in expected if not raw_hour_available(path))
         if strict_complete and missing:
             preview = ", ".join(str(path) for path in missing[:3])
             raise FileNotFoundError(
@@ -260,7 +262,7 @@ class CryptoHFTExchangeBookTape:
 
     @property
     def source_paths(self) -> tuple[Path, ...]:
-        return tuple(path for _, path in self._expected if path.is_file())
+        return tuple(path for _, path in self._expected if raw_hour_available(path))
 
     def _iter_source_hour(
         self,
@@ -476,7 +478,7 @@ class CryptoHFTExchangeBookTape:
         preceding_update = None
         self._snapshot_sequence_anchors = 0
         for hour_index, (hour, path) in enumerate(self._expected):
-            if not path.is_file():
+            if not raw_hour_available(path):
                 preceding_update = None
                 ordinal += 1
                 yield HistoricalExchangeBookEvent(
@@ -491,7 +493,7 @@ class CryptoHFTExchangeBookTape:
             for event in self._iter_hour(path):
                 if (self.recorder_snapshot_clock == "preceding_update_id"
                         and event.event_type == "snapshot"):
-                    if ordinal == 0 and hour_index == 0 and self._snapshot_anchor_context.is_file():
+                    if ordinal == 0 and hour_index == 0 and raw_hour_available(self._snapshot_anchor_context):
                         # Input rotation may begin at an archive snapshot. Read
                         # only the prior hour's terminal message, never fabricate
                         # an anchor from the next (future) update.
@@ -546,29 +548,35 @@ class CryptoHFTExchangeBookTape:
 
     def identity(self, *, include_sha256: bool = True) -> dict[str, object]:
         files = []
+        digests = {}
         for path in self.source_paths:
+            storage = raw_hour_storage_path(path)
             row: dict[str, object] = {
                 "path": str(path),
-                "size_bytes": int(path.stat().st_size),
-                "mtime_ns": int(path.stat().st_mtime_ns),
+                "storage_path": str(storage),
+                "size_bytes": int(storage.stat().st_size),
+                "mtime_ns": int(storage.stat().st_mtime_ns),
             }
             if include_sha256:
-                digest = hashlib.sha256()
-                with path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                row["sha256"] = digest.hexdigest()
+                if storage not in digests:
+                    digest = hashlib.sha256()
+                    with storage.open("rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    digests[storage] = digest.hexdigest()
+                row["sha256"] = digests[storage]
             files.append(row)
         return {
             "schema_version": "native_exchange_book_tape.v1",
             "recorder_snapshot_clock": self.recorder_snapshot_clock,
             "snapshot_anchor_context": (
                 {"path": str(self._snapshot_anchor_context),
-                 "size_bytes": self._snapshot_anchor_context.stat().st_size,
-                 "sha256": hashlib.sha256(self._snapshot_anchor_context.read_bytes()).hexdigest()
+                 "storage_path": str(raw_hour_storage_path(self._snapshot_anchor_context)),
+                 "size_bytes": raw_hour_storage_path(self._snapshot_anchor_context).stat().st_size,
+                 "sha256": hashlib.sha256(raw_hour_storage_path(self._snapshot_anchor_context).read_bytes()).hexdigest()
                  if include_sha256 else None}
                 if self.recorder_snapshot_clock == "preceding_update_id"
-                and self._snapshot_anchor_context.is_file() else None
+                and raw_hour_available(self._snapshot_anchor_context) else None
             ),
             "day": self.day,
             "symbol": self.symbol,

@@ -20,6 +20,7 @@ from data.build_active_order_queue_tape import (
 from data.download_cryptohft_orderbook import (
     OrderBookSequenceState,
     OrderBookState,
+    raw_hour_available,
 )
 
 SCHEMA_VERSION = "native_exchange_book_sequence_audit.v2"
@@ -193,7 +194,7 @@ def _audit_range(payload: dict[str, object]) -> dict[str, object]:
             symbol=symbol,
             hour=hour,
         )
-        if not path.is_file():
+        if not raw_hour_available(path):
             state.invalidate_source_gap()
             continue
         source_paths.append(str(path))

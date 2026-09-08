@@ -31,6 +31,8 @@ from data.download_cryptohft_orderbook import (
     OrderBookSequenceState,
     OrderBookState,
     _decompress_parquet_zst,
+    raw_hour_available,
+    raw_hour_storage_path,
     _extract_ts_ms,
     _select_ts_ms,
 )
@@ -1161,7 +1163,7 @@ def build_active_order_queue_tape(
             / current.strftime("%H")
             / f"{symbol}_orderbook.parquet.zst"
         )
-        if not raw_path.exists():
+        if not raw_hour_available(raw_path):
             missing_target = (
                 missing_warmup_hours if current < day_start else missing_hours
             )
@@ -1174,7 +1176,7 @@ def build_active_order_queue_tape(
             current += timedelta(hours=1)
             continue
 
-        raw_paths.append(raw_path)
+        raw_paths.append(raw_hour_storage_path(raw_path))
         message_count = 0
         for message in iter_cryptohft_logical_messages(raw_path, tick_size):
             if message.exchange_ts_ms >= max_stop_ms:

@@ -126,7 +126,8 @@ def _cryptohft_hour_path(
     raw_root: Path,
     timestamp: datetime,
 ) -> Path:
-    return (
+    from data.download_cryptohft_orderbook import raw_hour_storage_path
+    return raw_hour_storage_path(
         raw_root
         / "binance_futures"
         / timestamp.strftime("%Y-%m-%d")

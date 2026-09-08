@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from data.download_cryptohft_orderbook import raw_hour_available, raw_hour_storage_path
 
 SCHEMA_VERSION = "native_exchange_book_candidate_universe.v2"
 
@@ -95,10 +96,10 @@ def scan_complete_warmup_universe(
             for hour in range(int(warmup_hours))
         ]
         target_present = [
-            path for path in target_paths if path.is_file() and path.stat().st_size > 0
+            path for path in target_paths if raw_hour_available(path, nonempty=True)
         ]
         warmup_present = [
-            path for path in warmup_paths if path.is_file() and path.stat().st_size > 0
+            path for path in warmup_paths if raw_hour_available(path, nonempty=True)
         ]
         target_complete = len(target_present) == len(target_paths)
         warmup_complete = len(warmup_present) == len(warmup_paths)
@@ -166,12 +167,18 @@ def freeze_complete_warmup_universe(
     raw_lines: list[str] = []
     total_bytes = 0
     root = raw_root.expanduser().resolve()
+    observed = set()
     for path in raw_paths:
-        total_bytes += int(path.stat().st_size)
-        identity = _sha256(path) if hash_raw_files else (
-            f"size={path.stat().st_size};mtime_ns={path.stat().st_mtime_ns}"
+        storage = raw_hour_storage_path(path)
+        if storage in observed:
+            continue
+        observed.add(storage)
+        total_bytes += int(storage.stat().st_size)
+        identity = _sha256(storage) if hash_raw_files else (
+            f"size={storage.stat().st_size};mtime_ns={storage.stat().st_mtime_ns}"
         )
-        raw_lines.append(f"{identity}  {path.relative_to(root)}")
+        locator = storage.relative_to(root) if storage.is_relative_to(root) else storage
+        raw_lines.append(f"{identity}  {locator}")
     raw_manifest_path.write_text(
         "\n".join(raw_lines) + ("\n" if raw_lines else ""),
         encoding="utf-8",
@@ -210,7 +217,7 @@ def freeze_complete_warmup_universe(
         "raw_files_manifest_path": str(raw_manifest_path),
         "raw_files_manifest_sha256": _sha256(raw_manifest_path),
         "raw_files_hashed_by_content": bool(hash_raw_files),
-        "raw_unique_file_count": int(len(raw_paths)),
+        "raw_unique_file_count": int(len(observed)),
         "raw_unique_file_bytes": int(total_bytes),
         "next_gate": (
             "per-day target-scoped snapshot/delta sequence audit, followed "
