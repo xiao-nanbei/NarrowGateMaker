@@ -30,6 +30,37 @@ def test_default_warmup_can_reach_a_prior_utc_day_snapshot():
     assert DEFAULT_WARMUP_HOURS >= 24
 
 
+def test_tardis_daily_export_preserves_all_raw_columns_and_reuses(tmp_path):
+    import pyarrow.parquet as pq
+    day = "2026-09-05"
+    for hour in range(24):
+        path = tmp_path / "raw" / "binance_futures" / day / f"{hour:02d}" / "BTCUSDC_orderbook.parquet.zst"
+        path.parent.mkdir(parents=True)
+        pd.DataFrame([dict(received_time=1788566400000111652, event_time=1788566399875,
+                           transaction_time=1788566399872, symbol="BTCUSDC", event_type="update",
+                           first_update_id=10, final_update_id=11, prev_final_update_id=9,
+                           side="ask", price="79648.3000", quantity="0.476000", order_count=None)]).to_parquet(path)
+    args = (tmp_path / "raw", tmp_path / "daily", "binance_futures", "BTCUSDC", day)
+    result = cryptohft_orderbook.export_tardis_day(*args)
+    assert result["rows"] == 24 and result["round_trip_all_original_columns"]
+    output = tmp_path / "daily/binance_futures/BTCUSDC/incremental_book_L2/2026-09-05.parquet"
+    rows = pq.read_table(output).to_pylist()
+    assert rows[0]["timestamp"] == 1788566399872000
+    assert rows[0]["local_timestamp"] == 1788566400000111
+    assert rows[0]["received_time"] == 1788566400000111652
+    assert rows[0]["amount"] == "0.476000"
+    assert [r["source_hour"] for r in rows] == list(range(24))
+    assert all(r["first_update_id"] == 10 for r in rows)
+    assert cryptohft_orderbook.export_tardis_day(*args)["status"] == "reused_verified"
+    assert path.exists() and not result["originals_deleted"]
+
+
+def test_tardis_export_incomplete_day_does_not_publish_or_delete(tmp_path):
+    result = cryptohft_orderbook.export_tardis_day(tmp_path, tmp_path / "out", "binance_futures", "BTCUSDC", "2026-09-05")
+    assert result["status"] == "missing_hours" and len(result["hours"]) == 24
+    assert not (tmp_path / "out").exists()
+
+
 @pytest.mark.parametrize("mode", ["original", "preceding_update_id"])
 def test_normalized_buckets_use_sequence_anchored_snapshot_clock(tmp_path, mode):
     hour = int(pd.Timestamp("2026-08-22T14:00:00Z").timestamp() * 1000)

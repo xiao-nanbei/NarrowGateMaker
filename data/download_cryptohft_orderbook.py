@@ -44,6 +44,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import requests
 import zstandard as zstd
@@ -1938,6 +1939,127 @@ def _decompress_parquet_zst(path: Path) -> Path:
         return Path(tmp.name)
 
 
+def export_tardis_day(raw_root: Path, output_root: Path, exchange: str,
+                      symbol: str, day: str) -> dict:
+    """Lossless daily Tardis-compatible Parquet, retaining every source column.
+
+    Timestamp aliases are microseconds; original received nanoseconds, event
+    and transaction milliseconds, sequence IDs and row order remain unchanged.
+    This is an encoding conversion, not gap repair or source-clock admission.
+    Existing hourly inputs are never deleted here: frozen readers still use them.
+    """
+    paths = [raw_root / exchange / day / f"{hour:02d}" / f"{symbol}_orderbook.parquet.zst"
+             for hour in range(24)]
+    missing = [hour for hour, path in enumerate(paths) if not path.is_file()]
+    if missing:
+        return {"day": day, "symbol": symbol, "status": "missing_hours", "hours": missing}
+    directory = output_root / exchange / symbol / "incremental_book_L2"
+    directory.mkdir(parents=True, exist_ok=True)
+    output = directory / f"{day}.parquet"
+    receipt = output.with_suffix(".json")
+    import hashlib
+
+    def digest(path):
+        value = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024**2), b""):
+                value.update(chunk)
+        return value.hexdigest()
+
+    sources = [{"hour": h, "sha256": digest(p), "bytes": p.stat().st_size}
+               for h, p in enumerate(paths)]
+    if receipt.exists() and output.exists():
+        saved = json.loads(receipt.read_text())
+        if saved["sources"] != sources or saved["output_sha256"] != digest(output):
+            raise ValueError(f"Existing conversion differs: {day}")
+        return {**saved, "status": "reused_verified"}
+    if output.exists() or receipt.exists():
+        raise ValueError(f"Incomplete conversion publication: {day}; retain for recovery")
+    temporary = output.with_suffix(".partial.parquet")
+    writer = None
+    original_schema = None
+    counts = []
+    try:
+        for hour, path in enumerate(paths):
+            decoded = _decompress_parquet_zst(path)
+            count = 0
+            try:
+                source = pq.ParquetFile(decoded)
+                if original_schema is None:
+                    original_schema = source.schema_arrow
+                elif not original_schema.equals(source.schema_arrow):
+                    raise ValueError(f"Source schema changes within {day}")
+                for batch in source.iter_batches(batch_size=65536):
+                    table = pa.Table.from_batches([batch])
+                    if not set(table["event_type"].unique().to_pylist()) <= {"snapshot", "update"}:
+                        raise ValueError("Unsupported raw event kind; original retained")
+                    if not set(table["side"].unique().to_pylist()) <= {"bid", "ask"}:
+                        raise ValueError("Unsupported raw side; original retained")
+                    transaction = table["transaction_time"]
+                    effective = pc.if_else(pc.fill_null(pc.greater(transaction, 0), False),
+                                           transaction, table["event_time"])
+                    aliases = {
+                        "exchange": pa.array(["binance-futures"] * len(table)),
+                        "timestamp": pc.multiply_checked(effective, 1000),
+                        "local_timestamp": pc.divide_checked(table["received_time"], 1000),
+                        "is_snapshot": pc.equal(table["event_type"], "snapshot"),
+                        "amount": table["quantity"],
+                        "source_hour": pa.array([hour] * len(table), type=pa.int8()),
+                        "source_row": pa.array(range(count, count + len(table)), type=pa.int64()),
+                    }
+                    for name, values in aliases.items():
+                        if name in table.column_names:
+                            raise ValueError(f"Raw column conflicts with Tardis extension: {name}")
+                        table = table.append_column(name, values)
+                    if writer is None:
+                        writer = pq.ParquetWriter(temporary, table.schema, compression="zstd")
+                    writer.write_table(table, row_group_size=65536)
+                    count += len(table)
+            finally:
+                decoded.unlink()
+            counts.append(count)
+        if writer is None:
+            raise ValueError("Empty source day")
+        writer.close()
+        writer = None
+        # Compare every original field and row, including source hour boundaries.
+        # No timestamp sorting, deduplication, interpolation or float conversion.
+        converted = pq.ParquetFile(temporary)
+        group = 0
+        for hour, path in enumerate(paths):
+            decoded = _decompress_parquet_zst(path)
+            try:
+                for batch in pq.ParquetFile(decoded).iter_batches(batch_size=65536):
+                    actual = converted.read_row_group(group)
+                    expected = pa.Table.from_batches([batch])
+                    if not actual.select(expected.column_names).equals(expected):
+                        raise ValueError(f"Lossless round-trip failed: {day}/{hour}/{group}")
+                    group += 1
+            finally:
+                decoded.unlink()
+        if group != converted.num_row_groups:
+            raise ValueError("Extra converted rows")
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        result = {"schema": "tardis_compatible_cryptohft_lossless.v1", "day": day,
+                  "symbol": symbol, "status": "verified", "rows": sum(counts),
+                  "rows_per_hour": counts, "sources": sources,
+                  "output_sha256": digest(temporary), "output_bytes": temporary.stat().st_size,
+                  "round_trip_all_original_columns": True, "originals_deleted": False}
+        os.replace(temporary, output)
+        with tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False) as stream:
+            json.dump(result, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+            receipt_tmp = stream.name
+        os.replace(receipt_tmp, receipt)
+        return result
+    finally:
+        if writer is not None:
+            writer.close()
+        temporary.unlink(missing_ok=True)
+
+
 def _replay_hour_with_retry(
     client: Optional[CryptoHFTClient],
     rel_path: Path,
@@ -3023,7 +3145,13 @@ def main() -> None:
     )
     parser.add_argument("--verbose", action="store_true",
                         help="Print one line per raw hourly file")
+    parser.add_argument("--tardis-output-root", type=Path,
+                        help="Export complete UTC days as lossless Tardis-compatible Parquet after download")
+    parser.add_argument("--tardis-export-only", action="store_true",
+                        help="Convert existing hours only; no download or normalized-book rebuild")
     args = parser.parse_args()
+    if args.tardis_export_only and args.tardis_output_root is None:
+        raise SystemExit("--tardis-export-only requires --tardis-output-root")
 
     if args.recorder_snapshot_clock != "original" and args.timestamp_source != "transaction":
         raise SystemExit("--recorder-snapshot-clock requires --timestamp-source transaction")
@@ -3112,6 +3240,21 @@ def main() -> None:
     raw_root = Path(args.raw_root).expanduser().resolve()
     symbols = [normalize_symbol(symbol) for symbol in args.symbols]
     freshness_ms = int(args.coverage_freshness_s * 1000.0)
+
+    def export_days():
+        output_root = args.tardis_output_root or raw_root.parent / "tardis_compatible"
+        day = start_dt.replace(hour=0)
+        while day.date() <= end_dt.date():
+            for symbol in symbols:
+                result = export_tardis_day(raw_root, output_root, args.exchange,
+                                          symbol, day.strftime("%Y-%m-%d"))
+                print(json.dumps({key: result[key] for key in
+                      ("day", "symbol", "status", "rows", "output_bytes", "hours") if key in result}), flush=True)
+            day += timedelta(days=1)
+
+    if args.tardis_export_only:
+        export_days()
+        return
 
     print(f"Raw orderbook root: {raw_root}")
     print("Mirrored normalized roots:")
@@ -3423,6 +3566,7 @@ def main() -> None:
         )
         print(f"Sequence audit JSON: {audit_path}")
 
+    export_days()
     print(
         f"Done. raw_prefetched={prefetch_counts.get('downloaded', 0)} "
         f"raw_downloaded={total_downloaded} raw_reused={total_reused} "
