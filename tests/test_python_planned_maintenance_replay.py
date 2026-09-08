@@ -2304,6 +2304,25 @@ def test_visible_scope_b0_collection_does_not_change_account_or_order_path():
     assert observed["risk_selection_opportunity_counts"]["C"] > 0
 
 
+@pytest.mark.parametrize("kind,side", [("E", "BUY"), ("E", "SELL"), ("C", "BUY"), ("C", "SELL")])
+def test_visible_scope_four_surface_paired_label_round_trip(kind, side):
+    from models.replay.risk_selection import assemble_paired_label
+
+    params = {"planned_quote_stop_ts_ms": 0, "risk_selection_collect_opportunities": True,
+              "risk_selection_scope": "visible_inventory"}
+    baseline = _run(keep_until_stop=True, param_overrides=params)
+    row = next(r for r in baseline["_risk_selection_opportunities"] if r["kind"] == kind and r["side"] == side)
+    intervention = {"opportunity_id": row["opportunity_id"], "action": "WAIT" if kind == "E" else "CANCEL"}
+    alternative = _run(keep_until_stop=True, param_overrides={**params, "risk_selection_intervention": intervention})
+    label = assemble_paired_label(
+        baseline, alternative, intervention=intervention,
+        start_ts_ms=0, end_ts_ms=4_000, baseline_funding_usdc=0., alternative_funding_usdc=0.,
+    )
+    assert label["selection_scope"] == "visible_inventory"
+    assert label["matched_opportunity_prefix_count"] > 0
+    assert label["value_difference_usdc"] == pytest.approx(baseline["pnl"] - alternative["pnl"])
+
+
 def test_visible_scope_wait_allows_reducing_after_visible_opposite_fill():
     policy = {**_risk_policy_payload(), "selection_scope": "visible_inventory"}
     policy["models"]["E:BUY"]["intercept_usdc"] = .01
