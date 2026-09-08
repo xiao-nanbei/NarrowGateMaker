@@ -2151,6 +2151,7 @@ def _load_risk_policy_for_arms(
             random_rates=params.get("risk_selection_random_rates"),
             random_seed=params.get("risk_selection_random_seed"),
             random_scope=params.get("risk_selection_random_scope", ""),
+            selection_scope=params.get("risk_selection_scope", "reachable_inventory"),
         )
     return payload
 
@@ -2805,6 +2806,10 @@ def _run_day_campaign_audit(
                     result["risk_selection_opportunity_counts"]["C"]
                 ),
                 "risk_selection_intervention_count": result["risk_selection_intervention_count"],
+                "risk_selection_scope": result["risk_selection_scope"],
+                **{f"risk_selection_{field}_counts": json.dumps(
+                    result[f"risk_selection_{field}_counts"], sort_keys=True,
+                ) for field in ("route", "score", "execution")},
             })
             if params.get("risk_selection_mode", "B") != "B":
                 for field in ("mode", "policy_id", "policy_decision_count", "policy_change_count"):

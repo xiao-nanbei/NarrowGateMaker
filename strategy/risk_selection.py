@@ -107,8 +107,11 @@ class RiskSelectionObservation:
     pending_orders: tuple[PendingExposure, ...] = ()
     features: Mapping[str, Any] = field(default_factory=dict)
     environment_id: str = ""
+    selection_scope: str = "reachable_inventory"
 
     def __post_init__(self) -> None:
+        if self.selection_scope not in {"reachable_inventory", "visible_inventory"}:
+            raise ValueError("unknown risk selection scope")
         object.__setattr__(self, "inventory_btc", _finite(self.inventory_btc, "inventory_btc"))
         if self.decision_ts_ns < 0 or self.feature_ready_ts_ns < 0:
             raise ValueError("observation clocks cannot be negative")
@@ -164,6 +167,11 @@ def candidate_role(
             ):
                 raise ValueError("C target differs from the order snapshot")
             continue
+        if observation.selection_scope == "visible_inventory":
+            # Economic selection uses the inventory actually visible now.
+            # Pending exposure remains in the observation, not netted away.
+            # Ownership and hard exposure limits remain the executor's job.
+            continue
         if order.side == "BUY":
             high += order.remaining_qty_btc
         else:
@@ -199,8 +207,11 @@ class RiskSelectionPolicy:
     # Each feature maps to (documented unit, training mean, training scale).
     features: Mapping[str, tuple[str, float, float]]
     models: Mapping[str, LinearValueModel]
+    selection_scope: str = "reachable_inventory"
 
     def __post_init__(self) -> None:
+        if self.selection_scope not in {"reachable_inventory", "visible_inventory"}:
+            raise ValueError("unknown risk selection scope")
         if not isinstance(self.policy_id, str) or not self.policy_id:
             raise ValueError("policy_id must be a nonempty string")
         features = {}
@@ -236,7 +247,8 @@ class RiskSelectionPolicy:
                 surface: LinearValueModel(row["intercept_usdc"], row["coefficients"])
                 for surface, row in payload["models"].items()
             }
-            return cls(payload["policy_id"], features, models)
+            return cls(payload["policy_id"], features, models,
+                       payload.get("selection_scope", "reachable_inventory"))
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError("malformed risk selection policy") from exc
 
@@ -278,6 +290,8 @@ def evaluate_risk_selection(
     Missing models/features abstain; invalid account/order inputs raise instead
     of pretending that an unknown trading state is safe.
     """
+    if policy is not None and policy.selection_scope != observation.selection_scope:
+        raise ValueError("policy and observation selection scopes differ")
     if len({candidate.opportunity_id for candidate in candidates}) != len(candidates):
         raise ValueError("candidate opportunity IDs must be unique within one decision")
     decisions = []
@@ -300,6 +314,8 @@ def evaluate_risk_selection(
             try:
                 value = float(model.intercept_usdc)
                 for name, coefficient in model.coefficients.items():
+                    if coefficient == 0.0:
+                        continue
                     _, mean, scale = policy.features[name]
                     value += coefficient * (_finite(values[name], name) - mean) / scale
                 value = _finite(value, "value_delta_usdc")

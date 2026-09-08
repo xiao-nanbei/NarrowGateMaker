@@ -2261,6 +2261,78 @@ def _risk_policy_payload(value=-0.01):
     }
 
 
+def test_visible_scope_wait_cannot_escape_scoring_through_opposite_pending():
+    policy = _risk_policy_payload()
+    policy["selection_scope"] = "visible_inventory"
+    policy["models"]["E:SELL"]["intercept_usdc"] = .01
+    result = _run(keep_until_stop=True, param_overrides={
+        "risk_selection_scope": "visible_inventory", "risk_selection_mode": "E",
+        "risk_selection_policy": policy, "planned_quote_stop_ts_ms": 0,
+    })
+    buy = [row for row in result["_risk_selection_opportunities"] if row["kind"] == "E" and row["side"] == "BUY"]
+    assert len(buy) > 1 and all(row["action"] == "WAIT" for row in buy)
+    assert any(row["pending_orders"] for row in buy[1:])
+    assert not [row for row in result["_quote_trace"] if row["side"] == "BUY"]
+    routes = result["risk_selection_route_counts"]
+    assert sum(v for k, v in routes.items() if "|considered|" in k) == sum(
+        v for k, v in routes.items() if "|excluded|" in k or "|eligible|" in k
+    )
+    assert result["risk_selection_score_counts"]["E:BUY|finite_value"] == len(buy)
+    assert result["risk_selection_execution_counts"].get("BUY|submit|", 0) == 0
+
+
+def test_visible_scope_c_evaluates_bilateral_flat_orders():
+    policy = {**_risk_policy_payload(), "selection_scope": "visible_inventory"}
+    result = _run(keep_until_stop=True, param_overrides={
+        "risk_selection_scope": "visible_inventory", "risk_selection_mode": "C",
+        "risk_selection_policy": policy, "planned_quote_stop_ts_ms": 0,
+    })
+    rows = [row for row in result["_risk_selection_opportunities"] if row["kind"] == "C"]
+    assert {row["side"] for row in rows} == {"BUY", "SELL"}
+    assert all(row["action"] == "CANCEL" for row in rows)
+    assert any("|cancel_request|" in k for k in result["risk_selection_execution_counts"])
+
+
+def test_visible_scope_b0_collection_does_not_change_account_or_order_path():
+    original = _run(keep_until_stop=True, param_overrides={"planned_quote_stop_ts_ms": 0})
+    observed = _run(keep_until_stop=True, param_overrides={
+        "planned_quote_stop_ts_ms": 0, "risk_selection_collect_opportunities": True,
+        "risk_selection_scope": "visible_inventory",
+    })
+    for key in ("_quote_trace", "_fill_trace", "pnl", "final_inventory", "n_requotes"):
+        assert observed[key] == original[key]
+    assert observed["risk_selection_opportunity_counts"]["C"] > 0
+
+
+def test_visible_scope_wait_allows_reducing_after_visible_opposite_fill():
+    policy = {**_risk_policy_payload(), "selection_scope": "visible_inventory"}
+    policy["models"]["E:BUY"]["intercept_usdc"] = .01
+    result = _run(keep_until_stop=True, crossing_fill_ts_ms=1_200, param_overrides={
+        "risk_selection_scope": "visible_inventory", "risk_selection_mode": "E",
+        "risk_selection_policy": policy, "planned_quote_stop_ts_ms": 0,
+    })
+    assert result["fills_bid"] >= 1
+    sell_rows = [r for r in result["_risk_selection_opportunities"] if r["side"] == "SELL"]
+    assert any(r["action"] == "WAIT" and r["decision_ts_ns"] < 1_200_000_000 for r in sell_rows)
+    sell_orders = [r for r in result["_quote_trace"] if r["side"] == "SELL"]
+    assert sell_orders and min(r["submit_ts"] for r in sell_orders) >= 1_200
+
+
+@pytest.mark.parametrize("private_delay_ms", [0., 1_200.])
+def test_visible_scope_cancel_preserves_inflight_fill_and_fifo(private_delay_ms):
+    result = _run(keep_until_stop=True, crossing_fill_ts_ms=1_200, param_overrides={
+        **_async_fifo_params(new=(2., 5., 30.), cancel=(500., 700., 900.)),
+        "risk_selection_scope": "visible_inventory", "risk_selection_mode": "C",
+        "risk_selection_policy": {**_risk_policy_payload(), "selection_scope": "visible_inventory"},
+        "_private_fill_visibility_latency_samples_ms": [private_delay_ms],
+        "replace_terminal_continuation": True,
+    })
+    buy = next(r for r in result["_quote_trace"] if r["side"] == "BUY")
+    assert buy["cancel_request_ts"] == 1_000
+    assert buy["outcome"] == "fill"
+    assert buy["outcome_ts"] == 1_200 + private_delay_ms
+
+
 def test_risk_selection_policy_batches_both_sides_and_parses_once(monkeypatch):
     from models.replay import risk_selection as replay_risk
     from strategy.risk_selection import RiskSelectionPolicy

@@ -39,6 +39,40 @@ def constant_policy(value=-0.02):
     )
 
 
+@pytest.mark.parametrize("side,other", [("BUY", "SELL"), ("SELL", "BUY")])
+def test_visible_scope_rescores_flat_entry_with_opposite_pending(side, other):
+    obs = observation(pending_orders=(PendingExposure("other", other, .001),),
+                      selection_scope="visible_inventory")
+    policy = replace(constant_policy(), selection_scope="visible_inventory")
+    assert evaluate_risk_selection(obs, [candidate(side=side)], policy)[0].action == "WAIT"
+    # A subsequently observed fill changes the role: actual reducing is protected.
+    q = -.001 if side == "BUY" else .001
+    reducing = replace(obs, inventory_btc=q, pending_orders=())
+    result = evaluate_risk_selection(reducing, [candidate(side=side)], policy)[0]
+    assert result.action == "POST" and result.reason == "reducing"
+
+
+def test_visible_scope_bilateral_c_keeps_target_identity_and_reducing_protection():
+    obs = observation(pending_orders=(PendingExposure("working-order", "BUY", .001),
+                                      PendingExposure("other", "SELL", .001)),
+                      selection_scope="visible_inventory")
+    policy = replace(constant_policy(), selection_scope="visible_inventory")
+    target = candidate(kind="C")
+    assert evaluate_risk_selection(obs, [target], policy)[0].action == "CANCEL"
+    assert evaluate_risk_selection(replace(obs, inventory_btc=-.001), [target], policy)[0].action == "KEEP"
+    with pytest.raises(ValueError, match="target differs"):
+        candidate_role(obs, replace(target, quantity_btc=.002))
+    with pytest.raises(ValueError, match="scopes differ"):
+        evaluate_risk_selection(obs, [target], constant_policy())
+
+
+def test_zero_coefficient_is_not_a_runtime_feature_dependency():
+    policy = RiskSelectionPolicy("zero", {"unused": ("unit", 0., 1.)},
+                                 {"E:BUY": LinearValueModel(-.01, {"unused": 0.})})
+    result = evaluate_risk_selection(observation(), [candidate()], policy)[0]
+    assert result.action == "WAIT" and result.value_delta_usdc == -.01
+
+
 @pytest.mark.parametrize("side,q,qty,expected", [
     ("BUY", 0, 0.001, "opener"), ("SELL", 0, 0.001, "opener"),
     ("BUY", 0.002, 0.001, "add"), ("SELL", -0.002, 0.001, "add"),

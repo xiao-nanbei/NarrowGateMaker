@@ -51,6 +51,19 @@ def test_training_only_transforms_and_per_surface_models():
     assert fit(altered)[0] == policy
 
 
+def test_training_carries_scope_and_reports_absent_surface_without_inventing_model():
+    rows = [{**label(i), "selection_scope": "visible_inventory"} for i in range(10)]
+    policy, report = fit(rows)
+    assert RiskSelectionPolicy.from_dict(policy).selection_scope == "visible_inventory"
+    missing = report["surfaces"]["C:BUY"]
+    assert missing["input_rows"] == missing["train_rows"] == missing["excluded_rows"] == 0
+    assert missing["train_first_decision_ts_ns"] is None
+    assert report["surfaces"]["E:BUY"]["train_decision_days"] == 1
+    rows[0]["selection_scope"] = "reachable_inventory"
+    with pytest.raises(ValueError, match="share one defined selection scope"):
+        fit(rows)
+
+
 def test_single_common_terminal_cannot_be_randomly_split_as_independent_validation():
     rows = [label(i) for i in range(10)]
     cutoff = rows[5]["decision_ts_ns"]

@@ -68,6 +68,10 @@ def train_chronological_ridge(
             or validation_start_ns <= 0):
         raise ValueError("declare feature units, a positive alpha and a chronological split")
     features = tuple(feature_units)
+    scopes = {row.get("selection_scope", "reachable_inventory") for row in rows}
+    if len(scopes) > 1 or scopes - {"reachable_inventory", "visible_inventory"}:
+        raise ValueError("training labels must share one defined selection scope")
+    selection_scope = next(iter(scopes), "reachable_inventory")
     seen: set[str] = set()
     groups: dict[str, list[dict[str, Any]]] = {name: [] for name in ("train", "validation")}
     excluded: Counter[str] = Counter()
@@ -115,12 +119,14 @@ def train_chronological_ridge(
     policy: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION, "value_unit": VALUE_UNIT,
         "policy_id": policy_id,
+        "selection_scope": selection_scope,
         "features": {name: {"unit": feature_units[name], "mean": float(means[i]),
                             "scale": float(scales[i])} for i, name in enumerate(features)},
         "models": {},
     }
     report: dict[str, Any] = {
         "scope": "development_model_fit_not_full_path_economic_validation",
+        "selection_scope": selection_scope,
         "validation_start_ns": validation_start_ns, "alpha": alpha,
         "min_train_rows": min_train_rows, "input_labels": len(rows),
         "train_rows": len(groups["train"]), "validation_rows": len(groups["validation"]),
@@ -132,7 +138,15 @@ def train_chronological_ridge(
                             if f"{row['kind']}:{row['side']}" == surface]
                     for group, group_rows in groups.items()}
         train, validation = selected["train"], selected["validation"]
-        details: dict[str, Any] = {"train_rows": len(train), "validation_rows": len(validation)}
+        input_rows = [row for row in rows if f"{row['kind']}:{row['side']}" == surface]
+        details: dict[str, Any] = {
+            "input_rows": len(input_rows), "train_rows": len(train),
+            "validation_rows": len(validation),
+            "excluded_rows": len(input_rows) - len(train) - len(validation),
+            "train_decision_days": len({int(r["decision_ts_ns"]) // 86_400_000_000_000 for r in train}),
+            "train_first_decision_ts_ns": min((int(r["decision_ts_ns"]) for r in train), default=None),
+            "train_last_decision_ts_ns": max((int(r["decision_ts_ns"]) for r in train), default=None),
+        }
         report["surfaces"][surface] = details
         # Descriptive training support only: never select features or adjust the
         # model using these counts, and never borrow validation variation.

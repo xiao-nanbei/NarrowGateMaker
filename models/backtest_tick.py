@@ -3811,6 +3811,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             random_rates=params.get("risk_selection_random_rates"),
             random_seed=params.get("risk_selection_random_seed"),
             random_scope=params.get("risk_selection_random_scope", ""),
+            selection_scope=params.get("risk_selection_scope", "reachable_inventory"),
         )
     elif (params.get("risk_selection_intervention") is not None
           or params.get("_risk_selection_opportunity_sink") is not None):
@@ -5734,6 +5735,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
     def _record_order_lifecycle_submit(order: dict[str, Any], ts_ms: int) -> None:
         _tick_state.local_order_lifecycle.submit(order, int(ts_ms))
+        if _tick_state.risk_selection is not None:
+            _tick_state.risk_selection.record_execution(str(order["side"]), "submit")
         if _tick_state.order_lifecycle_journal_v2_adapter is not None:
             _tick_state.order_lifecycle_journal_v2_adapter.submit(order, int(ts_ms))
 
@@ -5774,6 +5777,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         reason: str,
     ) -> None:
         _tick_state.local_order_lifecycle.request_cancel(order, int(ts_ms), reason=str(reason))
+        if _tick_state.risk_selection is not None:
+            _tick_state.risk_selection.record_execution(str(order["side"]), "cancel_request", str(reason))
         if _tick_state.order_lifecycle_journal_v2_adapter is not None:
             _tick_state.order_lifecycle_journal_v2_adapter.request_cancel(order, int(ts_ms))
 
@@ -30824,6 +30829,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                      _tick_state.quote_context["SELL"]),
                 ):
                     _tick_state.side, _tick_state.action, _tick_state.orders, _tick_state.ref_order, _tick_state.price, _tick_state.quantity, _tick_state.side_ctx = _replay_loop_item_30942
+                    _tick_state.risk_selection.record_route(
+                        _tick_state.side, _tick_state.action, "considered", "all",
+                    )
                     _tick_state.kind = ""
                     _tick_state.target_order_id = ""
                     if _tick_state.action == "place" and not _tick_state.orders and abs(float(_tick_state.q)) <= 1e-10:
@@ -30837,13 +30845,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         _tick_state.price = float(_tick_state.ref_order["price"])
                         _tick_state.quantity = float(_tick_state.ref_order["remaining"])
                     if not _tick_state.kind:
+                        _tick_state.risk_selection.record_route(
+                            _tick_state.side, _tick_state.action, "excluded",
+                            "not_flat" if _tick_state.action == "place" and abs(float(_tick_state.q)) > 1e-10
+                            else "not_due" if not (_tick_state.bid_route_due if _tick_state.side == "BUY" else _tick_state.ask_route_due)
+                            else "ownership_not_eligible" if _tick_state.action in {"place", "keep"}
+                            else "baseline_action_not_covered",
+                        )
                         continue
                     _tick_state.identity = opportunity_id(
                         SYMBOL, int(_tick_state.t), int(_tick_state.nrq), _tick_state.side, _tick_state.kind, _tick_state.target_order_id
                     )
                     _tick_state.role = candidate_role(
                         RiskSelectionObservation(int(_tick_state.t) * 1_000_000, int(_tick_state.t) * 1_000_000,
-                                                 float(_tick_state.q), _tick_state.risk_selection_pending),
+                                                 float(_tick_state.q), _tick_state.risk_selection_pending,
+                                                 selection_scope=_tick_state.risk_selection.selection_scope),
                         RiskSelectionCandidate(_tick_state.identity, _tick_state.kind, _tick_state.side, float(_tick_state.quantity),
                                                "POST" if _tick_state.kind == "E" else "KEEP",
                                                order_id=_tick_state.target_order_id),
@@ -30851,6 +30867,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     if (_tick_state.kind == "E" and _tick_state.role != "opener") or (
                         _tick_state.kind == "C" and _tick_state.role not in {"opener", "add", "opener_or_add"}
                     ):
+                        _tick_state.risk_selection.record_route(
+                            _tick_state.side, _tick_state.action, "excluded", _tick_state.role,
+                        )
                         continue
                     if _tick_state.kind == "E":
                         # Establish baseline admission without reserving budget.
@@ -30860,7 +30879,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             side_ctx=_tick_state.side_ctx, reserve=False,
                         )
                         if not _tick_state.budget_allowed:
+                            _tick_state.risk_selection.record_route(
+                                _tick_state.side, _tick_state.action, "excluded", "budget_blocked",
+                            )
                             continue
+                    _tick_state.risk_selection.record_route(
+                        _tick_state.side, _tick_state.action, "eligible", f"{_tick_state.kind}:{_tick_state.role}",
+                    )
                     # Explicit policy-visible fields only. In particular never
                     # expose exchange_inventory, exchange_remaining, queue_left,
                     # native scheduler cursors, or future markout labels here.
@@ -30868,6 +30893,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         "mid": float(_tick_state.mid), "best_bid": float(_tick_state.cur_best_bid),
                         "best_ask": float(_tick_state.cur_best_ask), "inventory_btc": float(_tick_state.q),
                         "price": float(_tick_state.price), "quantity_btc": float(_tick_state.quantity),
+                        "other_same_side_pending_btc": sum(
+                            order.remaining_qty_btc for order in _tick_state.risk_selection_pending
+                            if order.side == _tick_state.side and order.order_id != _tick_state.target_order_id
+                        ),
+                        "opposite_side_pending_btc": sum(
+                            order.remaining_qty_btc for order in _tick_state.risk_selection_pending
+                            if order.side != _tick_state.side
+                        ),
                         "toxicity": float(_tick_state.cur_tox_bid if _tick_state.side == "BUY" else _tick_state.cur_tox_ask),
                         "markout_ema": float(_tick_state.mo_ema_bid if _tick_state.side == "BUY" else _tick_state.mo_ema_ask),
                         **{name: _tick_state.side_ctx[name] for name in (

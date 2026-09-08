@@ -65,7 +65,10 @@ class ReplayRiskSelection:
                  max_rows: int = 0, mode: str = "B",
                  policy: RiskSelectionPolicy | Mapping[str, Any] | None = None,
                  control: str = "learned", random_rates: Mapping[str, float] | None = None,
-                 random_seed: int | None = None, random_scope: str = "") -> None:
+                 random_seed: int | None = None, random_scope: str = "",
+                 selection_scope: str = "reachable_inventory") -> None:
+        if selection_scope not in {"reachable_inventory", "visible_inventory"}:
+            raise ValueError("unknown risk selection scope")
         if not isinstance(mode, str) or mode not in {"B", "E", "C", "EC"}:
             raise ValueError("risk_selection_mode must be B, E, C, or EC")
         if not isinstance(control, str) or control not in {"learned", "random", "flat"}:
@@ -91,6 +94,8 @@ class ReplayRiskSelection:
             policy = RiskSelectionPolicy.from_dict(policy)
         if policy is not None and not isinstance(policy, RiskSelectionPolicy):
             raise ValueError("risk_selection_policy requires a parsed policy or JSON object")
+        if policy is not None and policy.selection_scope != selection_scope:
+            raise ValueError("policy and replay selection scopes differ; regenerate matching labels")
         self.random_rates: dict[str, float] = {}
         if control == "random":
             if policy is None:
@@ -122,6 +127,10 @@ class ReplayRiskSelection:
         self.intervention_count = 0
         self.mode = mode
         self.policy = policy
+        self.selection_scope = selection_scope
+        self.route_counts: dict[str, int] = {}
+        self.score_counts: dict[str, int] = {}
+        self.execution_counts: dict[str, int] = {}
         self.control = control
         self.random_seed = random_seed
         self.random_scope = random_scope
@@ -132,6 +141,15 @@ class ReplayRiskSelection:
         self.policy_action_counts = {action: 0 for action in ("POST", "WAIT", "KEEP", "CANCEL")}
         self.policy_fallback_counts: dict[str, int] = {}
         self.policy_change_count = 0
+
+    def record_route(self, side: str, baseline_action: str, stage: str, reason: str) -> None:
+        key = f"{side}|{baseline_action}|{stage}|{reason}"
+        self.route_counts[key] = self.route_counts.get(key, 0) + 1
+
+    def record_execution(self, side: str, event: str, reason: str = "") -> None:
+        # All real lifecycle requests, not predicted or selected actions.
+        key = f"{side}|{event}|{reason}"
+        self.execution_counts[key] = self.execution_counts.get(key, 0) + 1
 
     def observe(self, row: dict[str, Any]) -> str:
         return self.observe_batch([row])[0]
@@ -151,6 +169,7 @@ class ReplayRiskSelection:
                 feature_ready_ts_ns=int(first["feature_ready_ts_ns"]),
                 inventory_btc=float(first["inventory_btc"]),
                 pending_orders=tuple(PendingExposure(**order) for order in first["pending_orders"]),
+                selection_scope=self.selection_scope,
             )
             candidates = tuple(
                 RiskSelectionCandidate(
@@ -206,6 +225,10 @@ class ReplayRiskSelection:
             baseline_action = row["baseline_action"]
             action = self._observe(row, decision.action if decision else None)
             if decision is not None:
+                key = f"{row['kind']}:{row['side']}|" + (
+                    "finite_value" if decision.value_delta_usdc is not None else decision.reason
+                )
+                self.score_counts[key] = self.score_counts.get(key, 0) + 1
                 counts = (self.policy_action_counts if self.control == "learned"
                           else self.control_action_counts)
                 fallbacks = (self.policy_fallback_counts if self.control == "learned"
@@ -221,6 +244,7 @@ class ReplayRiskSelection:
         return tuple(actions)
 
     def _observe(self, row: dict[str, Any], policy_action: str | None) -> str:
+        row = {**row, "selection_scope": self.selection_scope}
         if self.max_rows and sum(self.counts.values()) >= self.max_rows:
             raise RuntimeError("complete risk-selection opportunity collector exceeded max_rows")
         action = str(row["baseline_action"]) if policy_action is None else policy_action
@@ -246,6 +270,10 @@ class ReplayRiskSelection:
         if self.target and self.intervention_count != 1:
             raise RuntimeError("risk-selection target opportunity was not reached")
         return {
+            "risk_selection_scope": self.selection_scope,
+            "risk_selection_route_counts": dict(self.route_counts),
+            "risk_selection_score_counts": dict(self.score_counts),
+            "risk_selection_execution_counts": dict(self.execution_counts),
             "_risk_selection_opportunities": self.rows,
             "risk_selection_opportunity_counts": dict(self.counts),
             "risk_selection_intervention_count": self.intervention_count,
@@ -359,6 +387,7 @@ def assemble_paired_label(
     row = prefixes[0][-1]
     return {
         "opportunity_id": target["opportunity_id"], "kind": row["kind"],
+        "selection_scope": row.get("selection_scope", "reachable_inventory"),
         "side": row["side"], "role": row["role"], "order_id": row["order_id"],
         "decision_ts_ns": row["decision_ts_ns"],
         "feature_ready_ts_ns": row["feature_ready_ts_ns"], "features": row["features"],
