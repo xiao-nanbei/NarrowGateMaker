@@ -2,10 +2,14 @@
 
 [简体中文](remote_replay_studio.zh-CN.md)
 
-Last materially modified: 2026-09-07
-Last materially synchronized: 2026-09-07
+Last materially modified: 2026-09-08
+Last materially synchronized: 2026-09-08
 
 ## What is available
+
+The data calendar defaults to current processed products; raw inputs have their own tab. An explicit dataset `lifecycle: historical` moves superseded versions to **Historical versions**, excluding them from current-layer filters, counts and gap lists without deleting files or altering audits. Missing lifecycle metadata defaults to current for existing registrations. History is independent of raw/processed stage and is never inferred from filenames. A historical registry's unobserved dates do not mean the current selected dataset is missing those dates.
+
+For example, `normalized_l2_100ms_v2_minimal141_20260727` is a historical normalized-book registry: `registry_20260727` selects its original 133 days and `minimal_good_day_extension` the additional eight. These are registry subsets, not two extra raw providers or 141 universally qualified days. Retain referenced historical inputs; use the current selected product and its scoped checks for new data preparation. Calendar preparation does not require a full-period economic replay, and snapshot carry-forward must not erase source gaps or imply observed queue events.
 
 Replay Studio now provides a browser workbench, a durable control service and an independent HTTP worker. The first adapter executes the existing [public synthetic replay](../../examples/replay_demo/README.md); it does not implement another matching engine. A submitted experiment survives a browser or SSH disconnect. Control state and published artifacts survive a control-process restart when its state directory is retained.
 

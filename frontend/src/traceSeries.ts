@@ -296,6 +296,18 @@ export function qualityReplica(source: QualitySource) {
   };
 }
 
+export type QualityView = "raw" | "processed" | "registered" | "historical";
+
+export function matchesQualityView(
+  entry: { stage?: string; lifecycle?: string },
+  view: QualityView,
+): boolean {
+  if (view === "historical") return entry.lifecycle === "historical";
+  return (
+    entry.lifecycle !== "historical" && (entry.stage ?? "registered") === view
+  );
+}
+
 export function filterQualityDays(
   days: QualityDay[],
   filters: {
@@ -303,7 +315,7 @@ export function filterQualityDays(
     market: string;
     symbol: string;
     datasetId: string;
-    stage?: "raw" | "processed" | "registered" | "";
+    stage?: QualityView | "";
     task?: QualityTask | "";
     problemOnly: boolean;
     missingReplicaOnly: boolean;
@@ -319,7 +331,7 @@ export function filterQualityDays(
   return days.flatMap((day) => {
     const sources = day.sources.filter(
       (source) =>
-        (!filters.stage || (source.stage ?? "registered") === filters.stage) &&
+        (!filters.stage || matchesQualityView(source, filters.stage)) &&
         (!filters.source || source.source === filters.source) &&
         (!filters.market || source.market === filters.market) &&
         (!filters.symbol || source.symbol === filters.symbol) &&

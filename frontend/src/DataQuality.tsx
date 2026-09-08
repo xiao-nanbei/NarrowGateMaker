@@ -16,6 +16,7 @@ import type {
 } from "./api";
 import {
   filterQualityDays,
+  matchesQualityView,
   qualityAudit,
   qualityReason,
   qualityReplica,
@@ -259,9 +260,9 @@ export function DataQuality({
   const [market, setMarket] = useState("");
   const [symbol, setSymbol] = useState("");
   const [dataset, setDataset] = useState("");
-  const [stage, setStage] = useState<"raw" | "processed" | "registered">(
-    "processed",
-  );
+  const [stage, setStage] = useState<
+    "raw" | "processed" | "registered" | "historical"
+  >("processed");
   const [page, setPage] = useState(0);
   const [task, setTask] = useState<QualityTask | "">("");
   const [problem, setProblem] = useState(false);
@@ -338,8 +339,9 @@ export function DataQuality({
     market: string;
     symbol: string;
     stage?: string;
+    lifecycle?: string;
   }) =>
-    (entry.stage ?? "registered") === stage &&
+    matchesQualityView(entry, stage) &&
     (!source || entry.source === source) &&
     (!market || entry.market === market) &&
     (!symbol || entry.symbol === symbol);
@@ -472,7 +474,7 @@ export function DataQuality({
     [
       ...new Set(
         (catalog?.datasets ?? [])
-          .filter((item) => (item.stage ?? "registered") === stage)
+          .filter((item) => matchesQualityView(item, stage))
           .map((item) => item[key]),
       ),
     ].sort();
@@ -499,6 +501,7 @@ export function DataQuality({
               ["raw", "原始行情"],
               ["processed", "训练 / 回测产物"],
               ["registered", "待分类记录"],
+              ["historical", "历史版本"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -514,8 +517,8 @@ export function DataQuality({
             >
               {label} ·{" "}
               {
-                (catalog?.datasets ?? []).filter(
-                  (d) => (d.stage ?? "registered") === value,
+                (catalog?.datasets ?? []).filter((d) =>
+                  matchesQualityView(d, value),
                 ).length
               }
             </button>
@@ -534,9 +537,11 @@ export function DataQuality({
           </button>
         </div>
         <div className="notice">
-          {stage === "raw"
-            ? "本栏检查购买 / 下载的原始文件是否在。一个供应商某日缺文件，不等于其他供应商也缺；没有产物审计，不会在这里把源文件判为坏数据。"
-            : "本栏只列处理后产物。产物缺失可能只是尚未生成，不等于原始行情缺失；已有文件也不自动代表所有模型的训练特征和标签齐全。"}
+          {stage === "historical"
+            ? "本栏保留旧研究的数据版本与登记子集，不计入当前原始行情 / 处理产物列表。旧版本未覆盖某日，不代表当前数据缺失；归入历史不会删除文件或改变既有研究输入。"
+            : stage === "raw"
+              ? "本栏检查购买 / 下载的原始文件是否在。一个供应商某日缺文件，不等于其他供应商也缺；没有产物审计，不会在这里把源文件判为坏数据。"
+              : "本栏只列处理后产物。产物缺失可能只是尚未生成，不等于原始行情缺失；已有文件也不自动代表所有模型的训练特征和标签齐全。"}
           连续回测可以跨日维护状态，无须按盈利或旧研究名单挑日；需要保留具体输入、用途和补齐区间。
           沿用快照生成的网格应记录原快照年龄；丢失增量期间的盘口未知，不能记成已确认零变化。
         </div>

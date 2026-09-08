@@ -383,6 +383,40 @@ test("raw and prepared calendars never mix absent audits with missing raw files"
   assert.equal(days[0].sources.length, 2);
 });
 
+test("historical dataset versions are excluded from current layers but remain inspectable", () => {
+  const current = qualityFixture({ stage: "processed" });
+  const old = qualityFixture({
+    stage: "processed",
+    lifecycle: "historical",
+    availability: "unknown",
+  });
+  const oldRaw = qualityFixture({ stage: "raw", lifecycle: "historical" });
+  const days = [{ day: "2026-08-01", sources: [current, old, oldRaw] }];
+  assert.deepEqual(
+    filterQualityDays(days, { ...noQualityFilters, stage: "processed" })[0]
+      .sources,
+    [current],
+  );
+  assert.equal(
+    filterQualityDays(days, { ...noQualityFilters, stage: "raw" }).length,
+    0,
+  );
+  assert.deepEqual(
+    filterQualityDays(days, { ...noQualityFilters, stage: "historical" })[0]
+      .sources,
+    [old, oldRaw],
+  );
+  assert.equal(
+    filterQualityDays(days, {
+      ...noQualityFilters,
+      stage: "processed",
+      problemOnly: true,
+    }).length,
+    0,
+  );
+  assert.equal(days[0].sources.length, 3);
+});
+
 test("historical audit success never becomes current task success without its current mapping", () => {
   const historical = qualityFixture({
     audit_applicability: undefined,

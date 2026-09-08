@@ -451,6 +451,9 @@ def _import_quality(root: Path, manifest_path: Path) -> dict:
         metadata["stage"] = spec.get("stage", "registered")
         if metadata["stage"] not in {"raw", "processed", "registered"}:
             raise ValueError("Dataset stage must be raw, processed or registered")
+        metadata["lifecycle"] = spec.get("lifecycle", "current")
+        if metadata["lifecycle"] not in {"current", "historical"}:
+            raise ValueError("Dataset lifecycle must be current or historical")
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+", metadata["id"]) or metadata["id"] in ids:
             raise ValueError("Invalid or duplicate dataset ID")
         ids.add(metadata["id"])

@@ -69,8 +69,25 @@ def setup_catalog(tmp_path: Path, **overrides):
     return root, path
 
 
+@pytest.mark.parametrize("lifecycle", ["current", "historical"])
+def test_dataset_lifecycle_is_display_metadata_not_quality_override(tmp_path, lifecycle):
+    root, _ = setup_catalog(tmp_path, stage="processed", lifecycle=lifecycle)
+    assert quality_catalog(root)["datasets"][0]["lifecycle"] == lifecycle
+    source = quality_days(root, "2026-08-02", "2026-08-02")["items"][0]["sources"][0]
+    assert source["lifecycle"] == lifecycle
+    assert source["stage"] == "processed"
+    assert source["task_usability"]["strict_replay"] == "failed"
+    assert source["max_gap_ms"] == 120_000
+
+
+def test_dataset_lifecycle_rejects_unknown_category(tmp_path):
+    with pytest.raises(ValueError, match="lifecycle"):
+        setup_catalog(tmp_path, lifecycle="deleted")
+
+
 def test_full_calendar_includes_missing_head_tail_and_unknown_audits(tmp_path):
     root, _ = setup_catalog(tmp_path)
+    assert quality_catalog(root)["datasets"][0]["lifecycle"] == "current"
     report = quality_days(root, "2026-08-01", "2026-08-04")
     assert [r["day"] for r in report["items"]] == [f"2026-08-0{i}" for i in range(1, 5)]
     first, second, _, last = [r["sources"][0] for r in report["items"]]

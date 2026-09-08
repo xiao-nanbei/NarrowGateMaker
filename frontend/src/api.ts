@@ -301,6 +301,7 @@ export type QualityDataset = {
   version: string;
   label: string;
   stage?: "raw" | "processed" | "registered";
+  lifecycle?: "current" | "historical";
 };
 export type QualityTask =
   | "candles"

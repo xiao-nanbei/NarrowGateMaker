@@ -2,10 +2,14 @@
 
 [English](remote_replay_studio.md)
 
-Last materially modified: 2026-09-07
-Last materially synchronized: 2026-09-07
+Last materially modified: 2026-09-08
+Last materially synchronized: 2026-09-08
 
 ## 现在能做什么
+
+数据日历默认展示当前处理产物，原始行情独立成栏。显式登记 `lifecycle: historical` 的旧版本进入“历史版本”，不参与当前栏目的筛选、计数和缺口列表；文件与已有检查不删除、不改变。旧登记未声明 lifecycle 时默认 current。历史分类与原始／处理层级独立，不按文件名猜测。历史登记未覆盖某日，不等于当前选用的数据缺失该日。
+
+例如 `normalized_l2_100ms_v2_minimal141_20260727` 是旧的标准化盘口登记：`registry_20260727` 对应原有 133 日，`minimal_good_day_extension` 对应补入的 8 日。这是登记子集，不是两个额外的原始供应商，也不代表 141 日都适用于所有用途。仍被引用的历史输入应保留；新数据整理应查看当前选定产物及分用途检查。整理日历不要求跑完整区间经济回测；快照沿用也不能抹掉来源缺口或伪装成观测到的队列事件。
 
 Replay Studio 已提供浏览器工作台、持久化控制服务和独立 HTTP worker。首个适配器执行已有的[公开合成回放](../../examples/replay_demo/README.zh-CN.md)，没有另写撮合引擎。浏览器或 SSH 断线不会取消已提交的实验；只要状态目录仍在，控制进程重启后可以恢复任务和已发布结果。
 
