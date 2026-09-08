@@ -54,6 +54,26 @@ def test_context_retains_pending_payload_rows_without_mutating_state():
     assert runtime_input_context_start(runtime, 8000, 300) == 0
 
 
+def test_repeated_input_start_keeps_saved_timer_price_instead_of_book_mid():
+    args, kwargs = scenario("async")
+    trades = args[0].copy()
+    trades.loc[trades.transact_time < 700, "price"] = 97.5
+    trades = trades[~trades.transact_time.between(500, 699)].copy()
+    expected = simulate_tick(trades, *args[1:], **kwargs)
+    first = simulate_tick(trades, *args[1:], **kwargs, checkpoint_at_ts_ms=1_005)
+    cropped = trades[trades.transact_time >= 500].copy()
+    params = {**args[3], "replay_event_clock_start_ts_ms": 500}
+    second = simulate_tick(cropped, args[1], args[2], params, **kwargs,
+                           resume_checkpoint=first["_replay_checkpoint"],
+                           resume_input_batch=True, checkpoint_at_ts_ms=2_001)
+    saved = second["_replay_checkpoint"]
+    assert saved["runtime"].trade_ts[0] == 500
+    assert saved["runtime"].trade_price[0] == 97.5
+    actual = simulate_tick(cropped, args[1], args[2], params, **kwargs,
+                           resume_checkpoint=saved, resume_input_batch=True)
+    assert_same(actual, expected)
+
+
 def test_rotated_clock_retains_price_before_first_new_execution():
     from models.backtest_tick import build_replay_event_clock
     args, kwargs = scenario("ordinary")

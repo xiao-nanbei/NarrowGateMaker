@@ -42,6 +42,8 @@ prediction and pending-order cursors. A long pause can require more than the
 configured pre-roll: the next batch widens backward without moving the saved
 event or next checkpoint. It never resets cursors or skips delayed EMA/BER
 catch-up to enforce a memory target. Thus batch duration is not a hard RAM cap.
+If successive batches keep the same starting timestamp, the first timer retains
+its saved execution price rather than substituting a fresh book midpoint.
 Explicit manual input bounds remain the caller's responsibility.
 
 The accounting dates stay unchanged between invocations. To load a bounded

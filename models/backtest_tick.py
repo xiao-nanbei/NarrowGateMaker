@@ -4442,6 +4442,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # Timer/BBO events carry the last execution price, not a new book
             # midpoint merely because their execution prefix was unloaded.
             retained_clock_price = float(saved.trade_price[previous])
+        elif len(saved.trade_ts) and int(saved.trade_ts[0]) == int(input_start):
+            # A dormant consumer can retain the same input prefix for several
+            # batches. Its first timer already carries the prior execution
+            # price; falling back to BBO mid here would rewrite that prefix.
+            retained_clock_price = float(saved.trade_price[0])
     trades_df, _tick_state.n_execution_trades = build_replay_event_clock(
         trades_df,
         mode=_tick_state.replay_event_clock,
