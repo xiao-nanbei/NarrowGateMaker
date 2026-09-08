@@ -8,6 +8,52 @@ from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint,
 from tests.test_tick_runtime_checkpoint import assert_same, scenario
 
 
+def test_automatic_context_retains_dormant_consumers_and_resumes_exactly(tmp_path):
+    from research.families.f01_fixed_parameter_racing.campaign_outcome_replay_audit import _runtime_batch_bounds
+
+    args, kwargs = scenario("ordinary")
+    args[0]["transact_time"] *= 10
+    kwargs["bbo_data"].ts_ms[:] *= 10
+    params = {**args[3], "requote_interval": 15., "rq_min": 15., "rq_max": 15.,
+              "replay_event_clock_end_ts_ms": 40_000}
+    ts = np.arange(0, 40_001, 1_000)
+    variance = np.linspace(1., 2., len(ts))
+    full_args = (args[0], ts, variance, params)
+    expected = simulate_tick(*full_args, **kwargs)
+    partial = simulate_tick(*full_args, **kwargs, checkpoint_at_ts_ms=11_000)
+    path = tmp_path / "paused.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    saved = load_trusted_runtime_checkpoint(path)
+    runtime = saved["runtime"]
+    assert runtime.bbo_ts[runtime.decision_bbo_idx] < 10_000
+    (start, end), cut = _runtime_batch_bounds(0, 40_000, 11_000, 30_000, 1_000,
+                                             runtime=runtime)
+    assert start == 0 and end == 40_000 and cut is None
+    # The loader preserves dormant cursor rows; it does not fast-forward them.
+    cursor = runtime.var_idx
+    actual = simulate_tick(*full_args, **kwargs, resume_checkpoint=saved, resume_input_batch=True)
+    assert runtime.var_idx == cursor
+    assert_same(actual, expected)
+
+
+def test_context_retains_pending_payload_rows_without_mutating_state():
+    from types import SimpleNamespace
+    from models.replay.runtime_input_window import runtime_input_context_start
+
+    order = {"queue_l2_seen_idx": 2}
+    pending = {"trade_idx": 1, "order": order}
+    runtime = SimpleNamespace(
+        trade_ts=np.arange(10) * 1000, l2_ts=np.arange(10) * 1000,
+        main_loop_enabled=False, dynamic_rq=False, bid_orders=[order], ask_orders=[],
+        local_lifecycle_boundary_scheduler=None, serial_rest_decision=pending,
+        pending_quote_compute=None,
+    )
+    assert runtime_input_context_start(runtime, 8000, 300) == 700
+    assert pending["trade_idx"] == 1 and order["queue_l2_seen_idx"] == 2
+    pending["trade_idx"] = 0
+    assert runtime_input_context_start(runtime, 8000, 300) == 0
+
+
 def test_rotated_clock_retains_price_before_first_new_execution():
     from models.backtest_tick import build_replay_event_clock
     args, kwargs = scenario("ordinary")

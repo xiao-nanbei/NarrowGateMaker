@@ -37,6 +37,13 @@ For automatic bounded execution, use `--runtime-batch-seconds 21600 --runtime-ba
 
 An additional real one-hour native-book diagnostic crossed midnight with an automatic save at midnight. All 1,768 decisions, 649 quotes, 32 fills, 12 campaigns, funding records and aggregate accounting matched uninterrupted execution. Only execution time and explicitly labelled loaded-batch metadata differed. These diagnostic artifacts remain in the private evidence store, not distributed with the public repository; this is checkpoint equivalence, not historical live economic exactness.
 
+Automatic batches also retain actual rows referenced by dormant quote, variance,
+prediction and pending-order cursors. A long pause can require more than the
+configured pre-roll: the next batch widens backward without moving the saved
+event or next checkpoint. It never resets cursors or skips delayed EMA/BER
+catch-up to enforce a memory target. Thus batch duration is not a hard RAM cap.
+Explicit manual input bounds remain the caller's responsibility.
+
 The accounting dates stay unchanged between invocations. To load a bounded
 input batch, add `--runtime-input-bounds-ms START END` (inclusive milliseconds).
 Only intersecting daily inputs are loaded; each is sliced before concatenation.

@@ -513,6 +513,12 @@ def test_automatic_runtime_batch_rejects_nonadvancing_bounds(duration, context, 
 @pytest.mark.parametrize("resume_spelling", ["separate", "equals"])
 def test_automatic_runtime_cli_replaces_process_only_after_durable_save(monkeypatch, tmp_path, resume_spelling):
     from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint
+    from types import SimpleNamespace
+
+    runtime = SimpleNamespace(inventory=.001, main_loop_enabled=False, dynamic_rq=False,
+                              trade_ts=np.asarray([int(campaign_audit._day_start_ts("2026-01-01") * 1000)]),
+                              bid_orders=[], ask_orders=[], local_lifecycle_boundary_scheduler=None,
+                              serial_rest_decision=None, pending_quote_compute=None)
 
     class Replaced(Exception):
         pass
@@ -527,12 +533,12 @@ def test_automatic_runtime_cli_replaces_process_only_after_durable_save(monkeypa
             assert kwargs["resume_checkpoint"] is None
             assert kwargs["runtime_input_bounds"] == (start, start + 4000)
         else:
-            assert kwargs["resume_checkpoint"]["runtime"] == {"inventory": .001}
+            assert kwargs["resume_checkpoint"]["runtime"] == runtime
             assert kwargs["runtime_input_bounds"] == (start + 2000, start + 7000)
         cut = start + len(rounds) * 3000
         assert kwargs["checkpoint_at_ts_ms"] == cut
         return {"day": "2026-01-01", "_replay_checkpoint": {
-            "schema": "tick_replay_runtime.v1", "cut_ts_ms": cut, "runtime": {"inventory": .001}}}
+            "schema": "tick_replay_runtime.v1", "cut_ts_ms": cut, "runtime": runtime}}
     monkeypatch.setattr(campaign_audit, "_run_day_campaign_audit", run)
     monkeypatch.setattr(campaign_audit, "_write_partial_day_outputs",
                         lambda *_a, **_kw: pytest.fail("premature accounting"))

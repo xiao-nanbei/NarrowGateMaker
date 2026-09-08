@@ -2885,12 +2885,16 @@ def _arm_chunks(arms: list[smoke.SmokeArm], chunk_size: int) -> list[list[smoke.
 
 
 def _runtime_batch_bounds(start: int, end: int, resume_at: int, duration: int,
-                          context: int) -> tuple[tuple[int, int], int | None]:
+                          context: int, *, runtime=None) -> tuple[tuple[int, int], int | None]:
     """Bound memory-loaded input, not the continuous accounting interval."""
     if duration <= 0 or context <= 0 or not start <= resume_at < end:
         raise ValueError("invalid runtime batch duration, context or resume point")
     cut = resume_at + duration
-    return ((max(start, resume_at - context), min(end, cut + context)),
+    input_start = resume_at - context
+    if runtime is not None:
+        from models.replay.runtime_input_window import runtime_input_context_start
+        input_start = runtime_input_context_start(runtime, input_start, context)
+    return ((max(start, input_start), min(end, cut + context)),
             cut if cut < end else None)
 
 
@@ -4212,6 +4216,7 @@ def main(argv: list[str] | None = None) -> None:
         args.runtime_input_bounds_ms, args.checkpoint_at_ts_ms = _runtime_batch_bounds(
             run_start, run_end, resume_at, args.runtime_batch_seconds * 1000,
             args.runtime_batch_context_seconds * 1000,
+            runtime=loaded_runtime_checkpoint["runtime"] if loaded_runtime_checkpoint else None,
         )
     if workers <= 1:
         for day in (days[:1] if args.continuous else days):

@@ -38,6 +38,66 @@ _DERIVED_INPUTS = (
 )
 
 
+def runtime_input_context_start(runtime, default_start: int, context_ms: int) -> int:
+    """Retain actual rows still needed after a long pause in quote evaluation.
+
+    The configured pre-roll is a minimum, not permission to discard a dormant
+    consumer's cursor. In particular variance/BER catch-up must see every bar
+    since its last evaluation. This only widens the loaded input, never advances
+    a cursor, emits an observation, or changes the next checkpoint time.
+    """
+    start = int(default_start)
+
+    def retain(value, clock):
+        nonlocal start
+        rows = getattr(runtime, _CLOCK_FIELDS[clock][0], None)
+        if rows is None or not len(rows) or value is None:
+            return
+        index = int(value)
+        if index < 0:
+            return
+        if index >= len(rows):
+            raise ValueError(f"{clock} saved cursor lies beyond its input window")
+        start = min(start, int(rows[index]) - context_ms)
+
+    for clock, names in _CURSORS.items():
+        for name in names:
+            if name == "main_loop_rq_var_idx" and not (runtime.main_loop_enabled and runtime.dynamic_rq):
+                continue
+            value = getattr(runtime, name, None)
+            # These incremental consumers have not consumed their first row.
+            if value == -1 and (name == "var_idx" or (
+                name == "ranked_toxicity_guard_last_prediction_idx"
+                and runtime.ranked_toxicity_guard_binding_active
+            )):
+                value = 0
+            retain(value, clock)
+
+    seen = set()
+
+    def visit(value):
+        if value is None or id(value) in seen:
+            return
+        seen.add(id(value))
+        if isinstance(value, dict):
+            retain(value.get("queue_l2_seen_idx"), "l2")
+            retain(value.get("trade_idx"), "trade")
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (tuple, list)):
+            for child in value:
+                visit(child)
+        elif value is runtime.local_lifecycle_boundary_scheduler:
+            visit(vars(value))
+
+    for name in ("bid_orders", "ask_orders", "local_lifecycle_boundary_scheduler",
+                 "serial_rest_decision", "pending_quote_compute"):
+        visit(getattr(runtime, name))
+    # Never reintroduce a prefix discarded by an earlier successful rotation.
+    # Its consumers have already been retained/advanced in the saved state.
+    return max(start, int(runtime.trade_ts[0]))
+
+
 def _overlap_offset(old, new, name, through_ts):
     if old is None or new is None:
         if old is not None or new is not None:
