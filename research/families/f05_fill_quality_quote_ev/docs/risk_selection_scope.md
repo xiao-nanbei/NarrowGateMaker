@@ -52,3 +52,7 @@ months of effective samples. No model should be fabricated for an absent surface
 
 The current repair is offline. It neither deploys E/C to live nor demonstrates
 positive economic value or exact historical exchange queue recovery.
+
+Synthetic persistence tests cover E/C/EC at five saved-runtime cut points. Full
+resumed outputs, including selector counters and pending execution, match the
+uninterrupted replay. This tests replay continuation, not historical live-state recovery.

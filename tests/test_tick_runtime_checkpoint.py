@@ -16,6 +16,7 @@ from tests.test_python_planned_maintenance_replay import (
     _async_fifo_params,
     _inputs,
     _params,
+    _risk_policy_payload,
 )
 
 
@@ -109,6 +110,23 @@ def test_multiple_saved_cuts_do_not_force_cancel_or_flatten(mode, tmp_path):
         save_runtime_checkpoint(path, partial["_replay_checkpoint"])
         checkpoint = load_trusted_runtime_checkpoint(path)
     assert_same(simulate_tick(*args, **kwargs, resume_checkpoint=checkpoint), expected)
+
+
+@pytest.mark.parametrize("mode", ["E", "C", "EC"])
+@pytest.mark.parametrize("cut", [1, 299, 1_005, 1_121, 2_201])
+def test_bilateral_selector_and_diagnostics_survive_saved_runtime(mode, cut, tmp_path):
+    args, kwargs = scenario("async")
+    policy = {**_risk_policy_payload(), "selection_scope": "visible_inventory"}
+    policy["models"]["E:SELL"]["intercept_usdc"] = .01
+    args[3].update(risk_selection_scope="visible_inventory", risk_selection_mode=mode,
+                   risk_selection_policy=policy, planned_quote_stop_ts_ms=0,
+                   requote_threshold_bps=1.)
+    expected = simulate_tick(*args, **kwargs)
+    partial = simulate_tick(*args, **kwargs, checkpoint_at_ts_ms=cut)
+    path = tmp_path / "selector.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    actual = simulate_tick(*args, **kwargs, resume_checkpoint=load_trusted_runtime_checkpoint(path))
+    assert_same(actual, expected)
 
 
 @pytest.mark.parametrize("cut", [0, 100, 250_100, 400_000, 450_050, 451_500])
