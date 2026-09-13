@@ -1,0 +1,252 @@
+# 远程回测工作台
+
+[English](remote_replay_studio.md)
+
+Last materially modified: 2026-09-12
+Last materially synchronized: 2026-09-12
+
+## 现在能做什么
+
+数据日历默认展示当前处理产物，原始行情独立成栏。显式登记 `lifecycle: historical` 的旧版本进入“历史版本”，不参与当前栏目的筛选、计数和缺口列表；文件与已有检查不删除、不改变。旧登记未声明 lifecycle 时默认 current。历史分类与原始／处理层级独立，不按文件名猜测。历史登记未覆盖某日，不等于当前选用的数据缺失该日。
+
+例如 `normalized_l2_100ms_v2_minimal141_20260727` 是旧的标准化盘口登记：`registry_20260727` 对应原有 133 日，`minimal_good_day_extension` 对应补入的 8 日。这是登记子集，不是两个额外的原始供应商，也不代表 141 日都适用于所有用途。仍被引用的历史输入应保留；新数据整理应查看当前选定产物及分用途检查。整理日历不要求跑完整区间经济回测；快照沿用也不能抹掉来源缺口或伪装成观测到的队列事件。
+
+Replay Studio 已提供浏览器工作台、持久化控制服务和独立 HTTP worker。首个适配器执行已有的[公开合成回放](../../examples/replay_demo/README.zh-CN.md)，没有另写撮合引擎。浏览器或 SSH 断线不会取消已提交的实验；只要状态目录仍在，控制进程重启后可以恢复任务和已发布结果。
+
+已完成的 owner 私有 B0 结果可导入并只读查看，与合成任务分开。可选的 owner 登记离线适配器现可将已经准备好的研究、训练或数据处理计划排入注册资源，调用现有 CLI，不另写回放引擎。公共 clone 不预置已启用的真实计划。创建两个演示臂仍是在独立输出目录运行同一 fixture；臂的名字不会自动产生不同经济策略。
+
+服务不提供 maker、云资源创建或策略晋级动作。合成提交只接受内置合成数据集；独立的离线提交只接受已登记计划 ID 和资源 ID。Owner 计划必须是已审查的可信离线程序，不是运行不可信脚本的沙箱；其环境不应包含实盘凭据或 live 启动。不要通过演示适配器上传私有行情、账户或研究工件。B0 结果导入仍是 owner 本地 CLI 操作，不提供 HTTP 上传或任意路径读取接口。
+
+## 跑通完整链路
+
+控制主机和 worker 使用相同、测试过的 checkout 或已安装 wheel，需要 Python 3.11 及以上。wheel 已包含构建后的前端，使用者不必安装 Node.js。
+
+```bash
+python -m pip install ".[studio]"
+python -m narrowgate.studio serve --state-dir ./results/studio-control --port 8080
+```
+
+另一个终端或独立服务启动 worker：
+
+```bash
+python -m narrowgate.studio worker \
+  --url http://127.0.0.1:8080 \
+  --worker-id worker-a \
+  --work-dir ./results/studio-worker-a
+```
+
+打开 `http://127.0.0.1:8080`，创建演示实验，检查订单、事件轨迹、campaign、账本和日志原文。第二个 worker 使用不同 ID 和工作目录。每个 worker 最多持有一个未完成任务；两个 worker 可以并行运行两个独立臂，但不能由此把连续库存路径随意拆成每天 fresh-start 再拼接。
+
+前端开发和可复现构建见 [frontend/README.zh-CN.md](../../frontend/README.zh-CN.md)。公开[一日数据教程](../opensource/one_day_data_pipeline.zh-CN.md)仍是准备真实数据诊断的入口；将已有完整调用接入 Studio 时，使用下文的 owner 登记计划。
+
+## 只导入已完成 B0，不重跑
+
+Owner 提供已有私有 `baseline_summary.json`、同目录 `input_plan.json` 及摘要选定的最终 segment 产物。这些输入保存在私有证据存储中，不随公开仓库分发。使用控制服务同一个 owner-only 状态目录（权限 `0700`）：
+
+```bash
+.venv/bin/python -m narrowgate.studio import-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json"
+```
+
+导入器只按明确选定的 segment stems 读取小型摘要、输入计划、segment 元数据和汇总 CSV，检查覆盖、已完成 baseline/config 元数据及金额一致性。原始 fill、campaign 和 funding 文件只确认存在，不重新读取或计算哈希。缺失、partial、重叠或越出摘要目录的输入会被拒绝。现有私有 SQLite 只保存字段白名单内的精简报告，不复制原始工件或来源路径；一个由摘要生成的 ID 保证重复导入幂等。后续研究阶段、训练或执行许可说明改变，不会阻止查看既有 B0。导入不会创建 job，也不启动 replay、worker、Azure 同步或云资源。
+
+独立的“真实 B0”视图使用只读 `/api/results` 接口，显示覆盖 UTC 日数、连续段、会计金额、选定产物的 local/Azure 执行来源，以及源摘要已记录的跨主机核验说明。来源是历史出处，不是当前云节点存活状态。导入一致性检查不会重做原始 fill/funding 或跨主机资格核验。`daily.csv` 每行仍是 segment 汇总；界面不制造每日收益、Sharpe 或账户权益曲线。交易 PnL 已含手续费和终点 MTM，资金费只加一次。native queue 缺失覆盖和运行时模型限制仍明确显示。合成 demo 任务及其 worker 保持独立。
+
+## 连接市场上下文与历史模拟成交
+
+导入报告后，owner 可按同一批明确选定的最终 fill trace 建立私有展示索引，并连接已有 BTCUSDC 市场 K 线。此操作不重新回放策略，也不修改原摘要、产物或会计金额。可选 `--bars-dir` 指向已有 `BTCUSDC-1s-YYYY-MM-DD.parquet` 文件；省略时仍可查询成交，但 K 线明确保持不可用。
+
+```bash
+.venv/bin/python -m narrowgate.studio connect-b0 \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --result-id "<imported-result-id>" \
+  --summary "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/<tag>/baseline_summary.json" \
+  --bars-dir "${NARROWGATE_DATA_ROOT}/bars_1s"
+```
+
+连接信息和派生成交索引留在 owner-only SQLite 内。只有 CLI 能登记本地路径；浏览器 API 只接受结果 ID、UTC 时间窗和分页游标，不接受任意路径。重新连接仅替换展示索引，不改已导入的不可变报告。不复制、重新哈希或上传原始市场文件。
+
+`GET /api/results/{id}/market` 返回 segment／UTC 日覆盖和源可用性。`GET /api/results/{id}/candles` 必须提供最多 24 小时的 UTC 毫秒半开区间（`start_ms`、`end_ms`），边界对齐 `interval_s`，取值为 `1,5,60,300`，最多返回 5,000 根 K 线。OHLC 和成交量只聚合已有市场 bars；缺行的秒不补造，也不前向填充，其数量不能区分没有成交的秒和数据源缺口。该行情明确标记为历史市场上下文 `context_only_not_exact_replay_binding`；登记本身不证明它与原回放输入字节完全一致。市场文件缺失、不可读或字段非法时返回明确不可用原因，绝不用策略自身成交拼 K 线。
+
+`GET /api/results/{id}/fills` 使用同样有界的 UTC 时间窗，`limit` 最多 1,000，并通过不透明游标续页。同一时间戳的多笔成交分别保留，ID 按 segment 隔离，同时保留原始 fill sequence。执行 `price` 使用原账本价格 `quote_px`；触发行情成交价和订单限价是独立字段。物理成交时刻与私有可见时刻保持分开。成交前后库存是原日志的本地回调账，不编造成按物理成交顺序重建的库存。签名手续费保留正值成本、负值返佣；原交易 PnL 已含该费用。`campaign_id_at_submit` 不改称最终 campaign ID。
+
+`GET /api/results/{id}/orders/{order_id}` 仅返回实际成交时记录的订单快照，最多 1,000 笔成交，超过时明确标记截断。目标报价建议不会变成有效订单。未成交订单生命周期、后续撤单结果和订单 PnL 未被原记录保存时保持不可用；缺失字段返回 null，生命周期完整性始终为 false。成交和订单统一标记 `simulated_historical_fills`，不是实盘成交。已有汇总报告仍为会计金额视图；图表查询不制造 PnL 曲线。
+
+## 查看已有数据质量证据
+
+Owner 可以把已有分源／版本审计 CSV 和只读文件元数据清单适配到日历，不下载数据、不重跑审计，也不改变冻结的回放输入：
+
+```bash
+.venv/bin/python -m narrowgate.studio_quality \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/operator-selected.json"
+```
+
+私有 manifest 指定数据源身份、已有审计列及可选文件清单模式；简明字段映射见 [`import_quality`](../../narrowgate/studio_quality.py)。它不施加新的质量阈值。`GET /api/data-quality/catalog` 列出已登记的数据集和节点。`GET /api/data-quality?start_day=YYYY-MM-DD&end_day=YYYY-MM-DD` 返回最多 366 个 UTC 日的完整含首尾日历，可选 `dataset_id` 和 `node` 过滤。`/api/data-quality/export` 使用相同参数，仅导出修复／同步建议清单，不执行这些操作。
+
+日历区分四件事：登记了什么原始数据或处理产物、哪份已有检查适用于当前 canonical 文件、这份检查实际覆盖哪些用途、所选机器是否持有同版本副本。来源 `stage` 显式登记为 `raw`、`processed` 或未声明，界面不从路径猜测。远端副本未观察不会抹掉 canonical 文件已有的特征输入检查；机器在线也不代表其副本已经核验。
+
+当前用途卡片覆盖 K 线、特征输入、模型回放、严格队列回放和资金费核算，每项都有原因和适用范围。特征输入通过不代表标签质量或模型训练准入。缺少 native sequence 可能限制严格队列重建，不自动否定 K 线或特征工作；后两者仍需相应已有检查。不适用表示此源不承担该用途，不是下载失败。ffill 后连续也不是源消息未丢失的证明。
+
+历史 `check_status` 和 `task_usability` 仍按原报告与时间保留，当前卡片使用 `current_task_usability`。尚无检查、历史报告未关联当前文件、文件变化、挂载目录不可访问、远端副本未观察分别说明。Owner 可把已有内容检查与登记产物版本、预期文件大小关联；元数据刷新匹配时明确显示**已有检查已关联，当前仅大小匹配**，不称为重新验证内容。界面不沿用未关联的历史通过结论，也不因缺少区间明细就画成全天绿色。
+
+**刷新本机登记清单**以且仅以 `start_day`、`end_day`、`dataset_id`、`node` 调用 `POST /api/data-quality/refresh`，只观察登记日期内所选本机文件模式或明确文件清单。未选数据集表示全部已登记数据集，不受浏览器仅用于展示的来源筛选影响。它不读取原始内容、不计算 SHA、不遍历未登记目录、不启动下载、质量计算或 baseline，也不刷新远端副本的核验时间。响应明确是否刷新、范围和观察时间；未登记可刷新来源不是“审计成功”。**重新读取页面**仍是独立只读操作。完整分源标准化和质量检查继续使用已有离线工具，或单独登记的执行计划。
+
+## 先一台远程主机，再扩展 worker
+
+### 真实计算资源与合成 worker 分开
+
+可在同一个控制服务中指定 owner 私有资源清单：
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --port 8080
+```
+
+清单包含 `visibility: local_only_do_not_publish` 和 `resources` 列表。每项指定稳定 `id`、易识别的 `label`、`kind`（`local`、`lan` 或 `azure`）、预期 `roles`（`training`、`replay`、`data_processing`）和固定探测类型。本机探测读取控制主机状态；SSH 探测使用已有主机别名与解释器；Azure Batch 探测使用指定的现有 CLI 上下文、账户与池。地址、账户标识、本地路径和凭据不得写入公开配置或前端源码。删除 Azure 条目或切换已授权账户只需修改配置，不必改写界面。
+
+`GET /api/compute-resources` 读取缓存的资源快照。控制服务在后台进行有超时限制的探测，页面请求不等待 SSH 或 Azure。界面显示友好别名、实测硬件与容量、检查时间、陈旧／不可达状态，以及选定的外部作业状态。Azure 零节点池表示已登记资源，不是在线主机。未配置资源时列表为空，不会虚构三台在线机器。历史 B0 的执行来源不能代替健康探测。
+
+已有作业通过选定的小型状态文件和进程检查接入观察；它们是外部作业，不属于 Studio 队列。观察器不启动这些作业，也不读取未完成的经济结果。合成 worker 记录单独保留用于演示诊断，同一台 Mac 上的两个演示进程不能被计为两台物理资源。角色标签只是任务分配偏好，不证明性能、副本已就绪或真实行情执行器已接通。
+
+分配任务应考虑当前负载、可用内存、数据位置、已验证的运行环境兼容性和实测吞吐。优先用 Mac M4 训练，同时允许它已登记的空闲容量与合适的 LAN／云资源一起承担回放和数据准备。M4 不代表每个模型库都使用 Metal。不得靠重启迁移正在运行的任务，或为填满空闲资源重复运行 baseline。有连续状态依赖的分片保持顺序，只能通过兼容的完整运行时检查点换主机。下文的登记适配器支持明确提交计划，不接受任意 shell 或自动创建云资源；现有外部作业保持只读，不由该队列接管。
+
+工作集采用滚动两 UTC 日分片，不要求每个 worker 保存完整数据集。容量估算计入真实预热、前瞻、检查点仍引用的输入、暂存／解压和输出余量；结果与续接状态持久回传且核验后，才能删除可再生且无引用的分片缓存，领取下一就绪片。独立实验臂或无状态依赖的数据处理可并行；同一连续实验臂的相邻片不能虚构独立库存／订单初态。[现有回测检查点](../replay_runtime_checkpoint.zh-CN.md)已支持有限输入轮转，但 Studio 尚未自动完成数据拉取、核验后缓存回收和检查点依赖调度。不能把当前固定计划适配器说成完整的滚动分片调度器。
+
+```text
+浏览器 ── HTTP / SSH 隧道 ── 控制 API + 本地 SQLite + 已发布结果
+                                 ▲
+                                 │ HTTP 领取 / 心跳 / 发布
+                             独立 worker
+                                 │
+                           现有 canonical replay CLI
+```
+
+浏览器调用 HTTP API，不执行 SSH 命令。在本机转发控制主机的 loopback 端口：
+
+```bash
+ssh -NT -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -L 127.0.0.1:18080:127.0.0.1:8080 research@control-host
+```
+
+然后访问 `http://127.0.0.1:18080`。`control-host` 是操作者配置的 SSH 别名，不是项目附带服务器。服务故意只监听 loopback，不要为了访问它开放云防火墙或改为监听所有网卡。
+
+另一台主机上的 worker 也先建立到控制主机的隧道，再把 `--url` 指向该主机自己的转发端口。worker 通过 API 通信，不能共享挂载并写入控制服务的 SQLite 文件。合成数据随包分发；登记离线计划的精确本地输入和运行环境由 owner 预先准备。Studio 不下载数据、替换 feed，也不把文件存在当作数据质量通过。
+
+可选环境变量 `NARROWGATE_STUDIO_TOKEN` 开启 Bearer 验证。控制服务和 worker 使用同一份操作者生成的 token；浏览器“访问凭据”对话框只将它留在页面内存，不写 URL 或 Git。启用凭据后界面使用带认证的轮询，不把 token 放进 SSE URL。这是单 owner、SSH 隧道内的服务，不是公开多用户服务。
+
+## 排队执行 owner 登记的离线计划
+
+在控制端与各执行主机准备审查过的 owner-only 执行清单（`0600`、`visibility: local_only_do_not_publish`）。[`Catalog`](../../narrowgate/studio_execution.py) 格式定义资源分工及带稳定 `id`、`revision`、`role`、`targets`、`preferred_resources` 顺序的计划。每个 target 固定 Python 参数列表、工作目录、必需输入、输出目录、必需输出文件、小型 JSON 摘要、可用内存要求、超时及可选冲突进程检查。命令、环境值和路径不由浏览器填写。这是运维调用约定，不新增研究审批或 SHA 链。
+
+```bash
+python -m narrowgate.studio serve \
+  --state-dir "${NARROWGATE_RESULTS_DIR}/studio-control" \
+  --resources-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/compute-resources.json" \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/execution-plans.json" \
+  --port 8080
+
+python -m narrowgate.studio worker \
+  --url http://127.0.0.1:8080 \
+  --worker-id research-worker-a \
+  --resource-id research-host-a \
+  --execution-manifest "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/worker-execution-plans.json" \
+  --work-dir "${NARROWGATE_RESULTS_DIR}/studio-research-worker"
+```
+
+以上 ID 是示例；控制端和 worker 使用同一逻辑资源与计划版本，各自主机路径按实际准备。不加新增参数的旧 worker 命令仍是合成 demo worker。资源探测、离线执行 worker 心跳及外部任务观察是三个独立信号。
+
+在**计算资源**页选择启用的计划，以及一个获准资源或计划已登记的优先顺序。`GET /api/execution-plans` 返回选择项、就绪状态和已有 `attempt`；`POST /api/executions` 只接收 `plan_id`、`resource_id`，并沿用 `Idempotency-Key` 请求头。页面没有 shell、路径、策略参数、日期或凭据输入框。一份完整计划对应一个任务，连续日期不跨主机拆分。原幂等键重试同一请求会返回原任务；换一个键再次提交同一计划／版本返回 HTTP 409，包括原任务失败、取消或 worker 失联的情况。界面禁用重复提交并提供已有任务链接，不静默另跑一轮经济研究。
+
+提交和执行不同。获准资源没有已连接 worker、可用内存不足、缺少必需输入或执行器忙时，任务留在持久队列并说明原因。自动选择保留所有明确登记且合格的目标，包括 Mac，不会凭空创建未登记的本机回退目标。明确指定的资源或 `preferred_resources` 列表保持其范围和顺序；未指定该列表时，训练按已配置的训练角色偏好排序，仍禁止派往 LAN，回放／数据处理按登记目标顺序。Azure 节点数为零时保持未就绪，适配器不会扩容。冲突的外部进程或已存在输出目录会阻止新调用，不接管、不覆盖、不自动续跑。
+
+Worker 执行固定 Python 调用前重新检查 target，实施登记超时，完成后确认必需输出再发布。完整 stdout/stderr 和大型产物保留在 worker 持久盘；控制端保存有界终态日志尾部（各最多 256 KB）、登记 JSON 摘要（每份最多 256 KB）、输出文件元数据和执行环境，受现有发布大小上限约束。上传失败不能标记 `completed`；同一 worker 保留 outbox 以恢复上传，不重跑计算。这不等于大型输出的完整备份，释放云节点前仍须通过现有 owner 流程归档。
+
+**任务队列**将 `operator_registered_offline` 与 `synthetic_non_economic` 分开标注。离线计划完成后打开独立的 `registered_execution_report.v1`，只显示登记摘要、产物清单、终态日志和环境，不进入 demo 订单／trace 图表或合成比较表。空摘要表示没有登记摘要，不是零 PnL。执行完成不等于经济验证通过、策略晋级、live 精确一致或任意主机崩溃可恢复。新 B0 或 E/C 回测仍需准备对应 canonical 计划；登记主机本身不会创建研究。
+
+## 进程与存储
+
+无人值守时，由操作系统分别管理控制服务和 worker，不让 SSH shell 决定任务生命期。Linux 用户服务的最小 worker 模板：
+
+```ini
+[Unit]
+Description=NarrowGate synthetic replay worker
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/narrowgate
+ExecStart=%h/narrowgate/.venv/bin/python -m narrowgate.studio worker --url http://127.0.0.1:8080 --worker-id worker-a --work-dir %h/narrowgate/results/studio-worker-a
+Restart=no
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
+```
+
+安装路径确定后统一修改一次。控制服务使用独立 unit 执行 `serve`；如需隧道，也单独管理。`KillMode=control-group` 很重要：强制杀死裸 worker 时，独立会话中的 replay 子进程可能仍然活着。正常退出会先 TERM、等待，必要时 kill 并回收子进程。主机重启或强杀不是可恢复的经济 checkpoint；应保留旧任务，检查进程和日志后再决定下一步。
+
+控制状态目录和 worker 工作目录必须放在持久私有存储上。SQLite 只由控制主机使用，已发布结果与数据库一起保存。任务运行、执行状态未知或待上传时，不要清除 worker scratch/outbox。云临时盘消失会连同未上传结果一起丢失，浏览器重连无法找回。本版没有自动云资源创建、Blob 生命周期或删除动作。
+
+## 故障语义
+
+| 情况 | 行为 |
+| --- | --- |
+| 重复点击或提交响应丢失 | 同一个 `Idempotency-Key` 加同一输入返回原实验；同 key 不同输入拒绝。 |
+| worker 领取响应丢失 | 复用持久 session 时返回原来的未完成任务，不会再领取第二项。 |
+| 浏览器／SSH 断线 | 控制队列和 worker 进程不依赖浏览器继续存在。 |
+| 控制服务短暂断线 | 网络／5xx 重试有上限；不会仅因 API 短暂不可用立即杀掉正在运行的子进程。 |
+| 心跳超时 | 标为 `lost`，不自动判失败或重新排队；仅原 worker/session 可以重连和发布。 |
+| 取消排队任务 | 不执行 runner，直接取消。 |
+| 取消运行任务 | 保持 `cancel_requested`，直到 worker 终止／回收子进程并发布终态日志。 |
+| 取消与计算成功交叉 | 结果发布前取消优先，保留日志但不成为已完成报告。 |
+| 上传失败 | 不标完成；精确发布 payload 和日志留在 worker 目录；重启同一个 worker 续传，不重跑计算。 |
+| 重启后已有执行目录但没有 outbox | 明确报执行状态未知；不能猜旧子进程已死，也不能重复运行。 |
+| 重复发布 | 同一任务相同内容幂等；不同内容或其他 attempt 不能覆盖终态结果。 |
+
+合成任务只有在 summary、trace、receipt、stdout、stderr、环境信息全部落盘并同步，且数据库事务提交后才标记完成。登记离线任务使用上文自己的输出约定和有界发布，不套用合成参考字节。合成结果进入结果库时检查一次参考字节，不在每次查看图表时重读和哈希。没有新增研究 SHA 或许可层级。
+
+演示 worker 实施 600 秒执行上限，上传大小有界。运行中日志仍在 worker 上；浏览器显示的是终态归档日志，不是实时 stdout。进度仅展示真实生命周期状态，不编造完成百分比。
+
+## 结果与会计口径
+
+仅用于显示的 `backtest_report.v1` 包含原 `summary.json` 和顺序不变的 `trace.jsonl`，不是研究授权。界面读取已有现金、库存、费用、campaign、终值 PnL，不重新计算；缺失字段仍为未知。三个演示订单全部显示，包括没有成交的撤单。
+
+真实行情适配器启用前必须保留以下边界：
+
+- `replay_pnl` 已包含交易手续费，不能再扣一次；资金费单独报告，并仅一次进入主净值。
+- 连续 segment 汇总不是每个 UTC 日一条样本，应复用连续账本的日切片，不能将整段金额标成第一天的收益。
+- 从零开始的 PnL 账本不是账户权益，不能编造收益率、年化表现或资本尺度 Sharpe。
+- 队列位置和反事实成交是模型估计。两台主机一致证明实现可复现，不证明真实撮合队列或实盘经济路径完全一致。
+- 仅比较完整、环境兼容的结果。各臂分别维护订单、库存、资金费、内生网关排队和随机状态；同一个 seed 不自动证明外生延迟抽样相同。
+- 真实事件查询必须按时间、订单、campaign 有界分页；图表抽样不能改变事件顺序、会计或统计计算。
+
+## 后续交付顺序
+
+| 工作 | 当前状态／下一步验收 |
+| --- | --- |
+| 公开入门文档 | 已将无账户 demo 前置，补一笔订单的完整例子、数据状态表，并区分研究状态与工具可用性。 |
+| 远程执行基础 | 持久队列、独立 worker、取消／失联和结果发布支持 demo 与可选 owner 登记离线计划；不自动创建云资源。 |
+| 当前 B0 接入 | 已完成私有 B0 摘要保持只读；新 B0 需单独登记 canonical 计划，不接管或重复现有外部 baseline。 |
+| E/C 研究 | 独立研究分支已有完整机会采集及单干预配对标签组装；不等于已有训练或通过经济验证的选择策略。 |
+| 真实数据登记 | 通用数据浏览／替换不是执行就绪。Owner 使用现有 canonical 工具准备精确 Development 输入、切分和运行环境；必需文件检查不替代质量或因果检查。 |
+| 有界真实执行 | 已实现固定 Python 计划、资源角色、输入／内存／输出检查、超时和有界终态发布；不提供大产物完整复制或任意实验编辑器。 |
+| 完整分析 | 复用 campaign、资金费、scorecard、时序统计；补真实轨迹分页、分源延迟视图和不兼容原因说明。 |
+| 多主机验证 | 在目标主机验证 wheel 服务、SSH 隧道、节点丢失、原 finalizer 接收后，才能宣称远程真实行情就绪。 |
+
+研究工作与 UI 独立推进。不能为了填充页面而读取未完整的 baseline 经济结果、启动重复 Azure B0、重启 live 或打开封存结果。
+
+## 验证命令
+
+```bash
+python -m pip install ".[studio,dev]"
+python -m pytest tests/test_replay_studio.py tests/test_public_replay_demo.py tests/test_public_onboarding.py
+python -m ruff check narrowgate examples --select E,F,I,UP,B
+```
+
+Studio 测试覆盖并发领取、幂等、重开控制数据库、失联／取消 worker、工件失败、原 demo CLI 执行以及 loopback/API 边界。登记计划测试还需覆盖禁派资源、资源不可用保持 queued、输出冲突、进程所有权及非 demo 报告分类。这不等于 native queue 资格、经济回测或任意主机崩溃恢复证明。浏览器使用无害登记离线检查验收 ID 提交与分类，再检查原有合成订单／campaign；未知计划与 live 启动仍不由页面提供。

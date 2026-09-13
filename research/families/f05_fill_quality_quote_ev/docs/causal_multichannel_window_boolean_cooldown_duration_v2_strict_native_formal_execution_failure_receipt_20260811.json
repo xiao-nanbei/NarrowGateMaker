@@ -1,0 +1,87 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_formal_execution_failure_receipt.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "receipt_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_strict_native_formal_execution_failure_20260811",
+  "recorded_date": "2026-08-11",
+  "status": "strict_native_formal_execution_failed",
+  "execution_binding": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v9_20260811.json",
+    "sha256": "04c7833677bea6d14d125a91ba5196b3e7cb989c22d1e88dd80951dddd87b34c",
+    "formal_execution_identity": "v9",
+    "formal_run_directory": "formal_full_support_41d_v9"
+  },
+  "observed_progress_evidence": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/strict_native_one_shot_labels/panel_runner/formal_full_support_41d_v9/progress.json",
+    "sha256": "57d9984994e9fc6e640f0bdf3261d13e15895685174c0970184fba6b516e1201",
+    "progress_state_is_stale": true
+  },
+  "formal_panel": {
+    "requested_day_count": 41,
+    "admitted_day_count": 0,
+    "admitted_panel_count": 0,
+    "formal_economic_result_available": false
+  },
+  "first_failed_day": {
+    "day": "2026-04-17",
+    "replay_event_count": 5058417,
+    "elapsed_seconds": 654.410,
+    "first_opportunity": {
+      "shared_prefix_exact_before_assignment": true,
+      "treatment_arm_count": 8,
+      "supported_treatment_arm_count": 0,
+      "unsupported_treatment_arm_count": 8,
+      "economic_point_labels_redacted": true,
+      "unsupported_reason": "same_millisecond_treatment_suffix_trade_book_ordering_ambiguity"
+    },
+    "subsequent_assignment": {
+      "result": "fail_fast",
+      "error_type": "SharedPrefixExecutionError",
+      "error": "shared-prefix queue evidence is not exact before assignment: ['exchange_book_queue_invalidated_order_count', 'exchange_book_queue_ambiguous_event_count']",
+      "cause": "the baseline continuation after the first opportunity accumulated queue invalidation and ambiguity, so the next assignment no longer had an exact shared prefix"
+    }
+  },
+  "stale_second_day": {
+    "day": "2026-04-18",
+    "persisted_progress_status": "running",
+    "matching_process_alive_at_receipt_time": false,
+    "classification": "stale_running_not_admitted"
+  },
+  "identifiability_finding": {
+    "public_trade_timestamp_resolution": "millisecond",
+    "book_event_timestamp_resolution": "sub_millisecond",
+    "same_millisecond_trade_book_relative_order_identifiable": false,
+    "historical_exact_strict_path_status": "blocked",
+    "prohibited_repairs": [
+      "clear_or_reset_accumulated_queue_failure_counters",
+      "invent_a_trade_book_order_within_the_same_millisecond",
+      "promote_unsupported_arms_to_exact_point_labels"
+    ]
+  },
+  "scope": {
+    "closed_identity": "historical_41_day_v9_strict_native_one_shot_label_execution",
+    "does_not_close": [
+      "causal_multichannel_window_boolean_cooldown_duration_v2_research_question",
+      "multichannel_ema_boolean_feature_value",
+      "separate_owner_modeled_queue_successor"
+    ]
+  },
+  "outcome_access": {
+    "formal_development_economics_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "successor_boundary": {
+    "owner_modeled_queue_successor_must_use_separate_identity": true,
+    "may_inherit_strict_queue_authority": false,
+    "may_describe_labels_as_exact_historical_queue_evidence": false,
+    "required_evidence_label": "owner_risk_accepted_modeled_queue_exploration"
+  },
+  "permissions": {
+    "strict_label_execution_eligible": false,
+    "exact_queue_policy_eligible": false,
+    "nested_oof_under_v9_eligible": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

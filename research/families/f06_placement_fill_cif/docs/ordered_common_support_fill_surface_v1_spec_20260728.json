@@ -1,0 +1,204 @@
+{
+  "schema_version": "ordered_common_support_fill_surface_spec.v1",
+  "family_id": "ordered_common_support_fill_surface_v1",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "frozen_before_development_fit",
+  "source_identity": {
+    "request_state_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/manifest.json",
+      "sha256": "d52ad98d425246cd869e6d3abdeb0711ce95cc3cf4518faa55b8f4fadf510d30"
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1"
+    },
+    "unconstrained_oof_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/oof_v2/report.json",
+      "sha256": "1f9ea35aafd0429c60a2262ba01afb84447e1c2646b01cf49e8e265a1ec762af"
+    },
+    "empirical_pending_v3_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_empirical_pending_nuisance_v3_development_20260728_v3/report.json",
+      "sha256": "02edfa4cac4121a0378d006ad9fa347152cc054b92e60685f40b9e767162b313"
+    }
+  },
+  "implementation": {
+    "path": "research_06_placement_fill_cif/audit/ordered_common_support_fill_surface.py",
+    "sha256": "a2ce825c0f8ea70ca03a817cf3e81194a6621c511ecb353437ca900b80a5adbd",
+    "native_risk_expansion": true,
+    "hash_compatible_request_state_cache_reused": true
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13",
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "outer_folds": "reuse the six hash-frozen expanding chronological folds from unconstrained_oof_report",
+    "development_access": true,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "estimand": {
+    "conditional_surface": "P(fill before deterministic cancel request | all three actions activated, common market path, identical lifecycle, x, action)",
+    "operational_cif": "integrate activation latency separately, then combine pre-request fill with a pending fill-before-ACK CIF",
+    "activation_latency": "L_act is measured submit-to-activation and is not cancel request-to-ACK latency",
+    "pending_clock_choice": "pending nuisance is already fill-before-ACK; do not integrate L_ACK a second time",
+    "all_three_activated_is_replay_only": true,
+    "keep_replace_out_of_scope": true,
+    "campaign_repair_out_of_scope": true
+  },
+  "model": {
+    "kind": "side-specific shared-action Poisson hazard with a training-time monotone distance constraint",
+    "actions": [
+      "closer_1tick",
+      "current",
+      "farther_1tick"
+    ],
+    "action_dummy_forbidden": true,
+    "only_action_varying_model_feature": "distance_ticks",
+    "distance_monotone_constraint": -1,
+    "cohort_total_weight": 1.0,
+    "maximum_bins": 6,
+    "minimum_fill_events": 100,
+    "n_estimators": 120,
+    "learning_rate": 0.04,
+    "num_leaves": 7,
+    "max_depth": 3,
+    "min_child_samples": 100,
+    "reg_lambda": 2.0,
+    "random_seed": 20260728
+  },
+  "calibration": {
+    "method": "shared positive hazard scale within side x role across all three actions",
+    "independent_action_calibrators_forbidden": true,
+    "minimum_events_per_role": 10,
+    "absolute_log_scale_bound": 2.0
+  },
+  "report_horizons_ms": [
+    4997,
+    5894,
+    8382
+  ],
+  "curve_gate": {
+    "unit": "side x role x action x complete pre-request curve",
+    "required_oof_days": 29,
+    "pre_request_minimum_events": 30,
+    "ack_minimum_events": 100,
+    "proper_score": "day-clustered Brier-improvement 95% lower bound above zero versus side-role-action exposure-only baseline",
+    "absolute_calibration": "day-clustered prediction-minus-observed 95% interval contains zero",
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260728
+  },
+  "monotonicity_contract": {
+    "scope": "all-three-activated common-support conditional pre-request fill",
+    "order": "closer >= current >= farther",
+    "zero_violations_required": true,
+    "classification": "implementation invariant, not prediction evidence",
+    "check_after_calibration": true
+  },
+  "activation_transport_gate": {
+    "model": "past-only Jeffreys Beta-Binomial side x role x action activation and side x role all-three support score",
+    "submit_time_features_only": [
+      "side",
+      "inventory_role",
+      "action"
+    ],
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260728,
+    "transport_interval_probability": 0.99,
+    "maximum_transport_probability_bound": 0.001,
+    "maximum_transport_probability_bound_provenance": "judgmental 0.1 percentage-point probability distortion budget; economic authorization remains locked until the value identity",
+    "activation_and_support_calibration_intervals_must_contain_zero": true,
+    "low_support_live_action_forbidden": true
+  },
+  "pending_nuisance": {
+    "model": "past-only hierarchical Beta-Binomial side x action x fresh-book state",
+    "fresh_book_quantile": 0.2,
+    "fresh_book_quantile_provenance": "outcome-informed new identity after v3 isolated fresh-book SELL underprediction",
+    "side_action_parent_equivalent_trials": 10000,
+    "freshness_child_equivalent_trials": 5000,
+    "report_horizons_ms": [
+      6,
+      7,
+      9
+    ],
+    "posterior_probability": 0.99,
+    "posterior_predictive_samples": 20000,
+    "posterior_predictive_seed": 20260728,
+    "stress_fill_value_bps": 100,
+    "maximum_ev_uncertainty_usdc": 0.0001,
+    "maximum_ev_uncertainty_provenance": "one 0.1 USDC/BTC execution tick times the standard 0.001 BTC order",
+    "complex_pending_head_forbidden": true,
+    "point_monotonicity_is_not_claimed": true
+  },
+  "diagnostic": {
+    "unconstrained_source": "hash-frozen v2 OOF predictions",
+    "gate": "ordered model is rejected only when the day-clustered 95% lower bound of ordered-minus-unconstrained Brier loss is above zero",
+    "never_authorizes_output": true,
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260729
+  },
+  "resolution": {
+    "nonzero_probability_mass_is_diagnostic_only": true,
+    "economic_identifiable_set_belongs_to": "placement_action_value_surface_v1",
+    "point_estimate_threshold_forbidden": true,
+    "outer_test_selection_forbidden": true
+  },
+  "permissions": {
+    "prediction_evidence_only": true,
+    "economic_resolution_supported": false,
+    "action_uplift_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "validation_access": false,
+    "sealed_holdout_access": false
+  }
+}

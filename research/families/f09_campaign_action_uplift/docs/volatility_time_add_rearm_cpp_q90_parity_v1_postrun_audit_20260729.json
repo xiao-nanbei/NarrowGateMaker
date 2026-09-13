@@ -1,0 +1,106 @@
+{
+  "schema_version": "volatility_time_add_rearm_cpp_q90_parity_postrun_audit.v1",
+  "family_id": "volatility_time_add_rearm_cpp_q90_parity_v1",
+  "created_at_utc": "2026-07-29T06:40:34Z",
+  "scope": "Independent Development-only native-book and BUY-q90 kernel parity audit inside Python-authoritative full-path replay",
+  "source_evidence": {
+    "spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_cpp_q90_parity_v1_spec_20260729.json",
+      "sha256": "96e671850b3a9d6e1c26a7f28569fdc2c3b0c5d771c71c580ad1cf3cf449bdc0"
+    },
+    "report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/development/report.json",
+      "sha256": "e3e792f5fdb5b534615fa11cbe1ed8ccb986eb5948c7c9c698637897d872fc15"
+    },
+    "daily_arm_parity": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/development/daily_arm_parity.csv",
+      "sha256": "0c4a820a10671b089216dabba92b37e212ebc1f0225f48971640e115f1112a64"
+    },
+    "manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/development/manifest.json",
+      "sha256": "2aaa1c52098689a307ef50148be48175818e9354493428869015b4c2006fe8ea"
+    },
+    "market_source_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/development/market_source_manifest.json",
+      "sha256": "9a6b61fd0cafea2077141565d63d15e4dc399b8523038fa1dc0543a5a70e4c64",
+      "canonical_sha256": "d0f25c9b0f51668d8f5d80417a0f7e1b10b2b887fbd864a8c648e8bac9586a70",
+      "rows": 104,
+      "bytes": 841092709,
+      "source_type_counts": {
+        "native_snapshot_delta": 96,
+        "normalized_bbo": 4,
+        "normalized_l2": 4
+      }
+    },
+    "all_manifest_artifact_hashes_verified": true,
+    "all_implementation_and_artifact_hashes_verified": true
+  },
+  "parity_result": {
+    "development_days_in_identity": 40,
+    "mechanism_stratified_parity_days": [
+      "2026-04-17",
+      "2026-06-21"
+    ],
+    "arms": [
+      "control_wall_time",
+      "candidate_variance_time"
+    ],
+    "book_event_count": 15091226,
+    "evaluation_call_count": 7154847,
+    "activation_count": 28733,
+    "lifecycle_call_count": 57030,
+    "cancel_request_count": 14,
+    "cancel_ack_count": 14,
+    "recovery_count": 8,
+    "reentry_count": 14,
+    "pre_ack_fill_count": 0,
+    "mismatch_count": 0,
+    "all_four_day_arm_rows_passed": true
+  },
+  "mechanism_coverage": {
+    "real_market_paths": [
+      "native_snapshot_delta_sequence",
+      "exact_level_activation_and_queue_reset",
+      "cancel_request",
+      "cancel_ack",
+      "recovery",
+      "reentry"
+    ],
+    "historical_development_pre_ack_fill_count": 0,
+    "pre_ack_fill_covered_by_synthetic_contract_test": true,
+    "synthetic_test_name": "test_q90_cancel_pending_fill_recovery_ack_and_queue_reset"
+  },
+  "test_evidence": {
+    "frozen_contract_suite": {
+      "tests": 41,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "f22d9f74dd530e5e7061cf8b676d73a34ad3781ed77e766ab752681cdc9d8a3b"
+    },
+    "postrun_complete_python_suite": {
+      "tests": 1006,
+      "passed": 1002,
+      "skipped": 4,
+      "failures": 0
+    }
+  },
+  "authority_boundary": {
+    "python_authoritative_full_path": true,
+    "native_book_and_buy_q90_parity_kernel_only": true,
+    "full_cpp_tick_replay_authority": false,
+    "randomized_action_identity_created": false
+  },
+  "permissions": {
+    "reward_or_pnl_read": false,
+    "markout_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "randomized_action_identity_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "aws_receive_time_transport_supported": false
+  },
+  "decision": "cpp_q90_native_parity_pass_register_randomized_replay_identity",
+  "next_requirement": "Register a new same-side cooldown-lineage randomized Development replay identity with known propensity; keep its economic evidence and permissions separate from this mechanics identity."
+}

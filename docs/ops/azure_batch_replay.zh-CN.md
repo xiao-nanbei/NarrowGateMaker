@@ -1,0 +1,306 @@
+# Azure Batch 私有 Replay 运维手册
+
+<p><a href="azure_batch_replay.md">English</a> | <a href="azure_batch_replay.zh-CN.md">简体中文</a></p>
+
+Last materially synchronized: 2026-09-06
+
+Last materially modified: 2026-09-06
+
+本文定义离线 NarrowGate replay 的可复用私有 Azure Batch executor，不包含 subscription、
+account、region、resource ID、storage locator、private path、策略参数、dataset identity
+或结果。
+
+Azure 只是计算资源，不是新的 source of truth。Canonical 行情数据、冻结日期集合、queue
+与 latency contract、seed、research authority 和 final admission 仍位于本地私有边界。
+
+## 公共/私有边界
+
+公共仓库可以描述运维合同与通用 Batch 命令。私有 submission layer 负责：
+
+- Azure tenant/subscription/resource identity 与 credential；
+- container registry 与 storage location；
+- input data、manifest、model/policy material 与 runtime image identity；
+- 注册的 replay 日期与 task command；
+- output、failure log、receipt 与 economic aggregation。
+
+不得提交生成的 Azure 配置或输出。可用时使用 Microsoft Entra/RBAC 与 managed identity，
+不要使用长期 account key。
+
+## 持久环境、临时计算节点
+
+只创建一个有边界的 resource group，其中包含私有 executor 必需的资源：
+
+- 一个 storage account，分别存放 input、output、manifest 与 failure log；
+- 一个 container registry 或等价 immutable runtime source；
+- 一个 Batch account；
+- 一个只具有最小 Blob 与 registry 权限的 managed identity；
+- 一个 persistent pool definition。
+
+Pool definition 可以在研究期间保留，但常态 idle 配置是 dedicated 与 low-priority node
+都为零。不能为了保持 executor 可用而保留 control VM、database、NAT gateway、大型
+logging workspace 或 persistent per-node disk。
+
+Linux image 与 VM architecture 必须兼容冻结 Python/native runtime。除非通过内存和
+copy-on-write 实测证明其他配置安全，否则每个 node 使用一个 task slot。Pool start task
+只有在受限 host preparation 时可以 elevated；replay task 本身以 non-admin user 运行。
+
+一次性 pool bootstrap 必须：
+
+1. materialize 精确 runtime 与完整 manifest closure；
+2. 创建冻结合同要求的真实 canonical directory；
+3. immutable contract 需要特定 absolute directory 时，只使用 bind mount，不使用
+   symlink；
+4. extraction 后规范 ownership 与 mode；
+5. 拒绝 group/world-writable private material；
+6. 运行 closure/import/native smoke probe；
+7. 最后写 pool-ready marker。
+
+Batch 自己的 node-shared 与 task-working directory 必须和 compatibility mount 分离。
+Closure 缺失属于 bootstrap failure，不能因此允许 formal task 联网下载依赖。
+
+## 固定 SSH 入口，不依赖本机 IP 放行存储
+
+在 owner 明确要求时，为研究周期保留一个 Standard 静态公网 IPv4，并通过池的 `publicIPAddressConfiguration`、`provision=UserManaged` 绑定。地址须与 Batch 池位于同一区域及订阅。既有池不能修改公网 IP 列表：先保存配置和任务元数据，确认零节点、没有待执行或运行中的任务，再重建池定义。不要为调整网络删除 Blob 数据或历史 job。遵循 [Batch 公网 IP 要求](https://learn.microsoft.com/en-us/azure/batch/create-pool-public-ip)。
+
+显式配置 SSH 的 TCP inbound NAT pool；当前 Batch 池不再自动开放 SSH。前端端口范围至少包含 40 个端口，避开保留端口 50000–55000；安全规则优先级须在 150–3500 之间。仅允许 owner 所需的远程访问。禁用密码、keyboard-interactive 和 root 登录；使用 SSH 公钥建立操作账号，将其有效期限制在获准研究周期内。不得上传私钥。首次 SSH 连接前，通过已认证的 Batch 控制面核对节点 host-key fingerprint。
+
+保留的公网 IP 不变，但节点重建后 node ID、映射端口、用户账号和 host key 可能变化。每个新节点都应查询 `az batch node remote-login-settings show` 并配置公钥账号；不要固定引用已释放节点的端口，也不要关闭 host-key 检查。零节点意味着没有 SSH 服务。公网 IP 会一直保留并计费，直到最终清理；不要为 SSH 额外常驻一台跳板 VM。
+
+SSH 验证的是节点登录，不是 Blob 存储访问。节点通过池的 managed identity 和已经获准的 subnet/service endpoint 访问 Blob。存储默认网络策略保持 `Deny`；不断变化的本机或代理出口 IP 不是稳定的存储访问方案。需要时通过已获授权的节点传入输入文件。无论操作人员是否在线，任务日志和结果都使用下文的 `outputFiles` 持久化机制。
+
+将 owner 确认的信用到期日和清理日写入资源组标签与私有运维记录，在到期前两天安排最终清理，包括保留的公网 IP。桌面跟进任务要求桌面届时可运行，不是云端硬性费用上限；pool autoscale 和有时限的任务仍须独立限制空闲计算费用。删除存储前先归档唯一结果。
+
+## 受控 native wheel builder
+
+一个独立、有边界的 build task 可以复用至少 16 GiB RAM 的 Linux x86_64 node，产出 EC2
+native artifact。它是 build task，不是 replay day，也不能与 replay task 共用一个并发
+slot。构建必须进入 Amazon Linux 2023 或 manylinux_2_34-compatible 的 glibc 2.34
+container/rootfs；通用 Ubuntu 24.04/glibc 2.39 产物不能部署到 EC2。Materialize 精确
+source commit、CPython 3.12 build environment 与 GNU C++ 11.5.0 toolchain。关闭 task
+网络前，先从受控本地 wheelhouse 将 `cpp/pyproject.toml` 声明的 requirements 及其传递
+依赖安装进该专用 build environment，然后运行：
+
+```bash
+make native-live-wheel
+```
+
+该入口默认把 `CMAKE_BUILD_PARALLEL_LEVEL` 设为 `1`，检查 available memory，选择
+live-only surface，并固定 `NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`。它在
+`PIP_NO_INDEX=1` 下使用 `--no-build-isolation --check-build-dependencies`，因此缺少 build
+dependency 时会在本地失败，不会访问 package index。在 Amazon Linux 2023 qualification
+冻结它们之前，build-tool 版本仍只是实测 builder input。释放 node 前，将生成的
+`dist/native/live/<full-git-commit>/*.whl` 作为 immutable build output 上传。不能改用
+`-march=native`、portable
+wheel 或不同 compiler 产出的 wheel。目标 EC2 release 仍必须通过 native build receipt
+与 Python/C++ parity smoke 验证 installed wheel；Azure 不能替代 target-host performance
+qualification。
+
+## 从零扩容一个研究批次
+
+通过 operator 批准的 Azure CLI context 登录目标 Batch account，然后扩容 persistent
+pool：
+
+```bash
+az batch account login \
+  --resource-group <resource-group> \
+  --name <batch-account>
+
+az batch pool resize \
+  --pool-id <pool-id> \
+  --target-dedicated-nodes <bounded-node-count> \
+  --target-low-priority-nodes 0
+```
+
+等待 pool 报告请求数量的 usable node，并确认每个 node 都存在 start-task ready marker。
+Resize 是 asynchronous；request accepted 不代表 node ready。
+
+大规模提交前，先在一个 representative UTC day 上比较云端与本地的 input、action
+count、terminal accounting、wall time、peak memory 和 output contract。只有兼容性验证
+通过后才 fan-out；它不授予任何策略权限。
+
+## 每个 task 运行一个独立 replay 区段
+
+Daily fresh-start 研究中，每个 task 对应一个注册 UTC day。连续账户研究中，一个 task
+应在同一次 simulator 调用中运行完整连续区段，让订单、cooldown、campaign 与风险状态
+在内存中跨越零点。不能把相互依赖的日期分散到不同 node，也不能拼接不连续日期并称为
+连续 replay。只并行具有各自独立执行状态的区段或 arm。
+
+- task ID 是一个 job 内确定的日期 identity；
+- 一个 task 使用一个 task slot；
+- task 内不再次启动按日 multiprocessing；
+- start/end、warmup、initial state、queue/latency contract 与 seed 均冻结；
+- input read-only；
+- output 使用唯一 attempt-specific directory；
+- task 有明确 wall-clock 与 retry 上限。
+
+Job 只创建一次，每个 day task 也只创建一次。提交前列出已有 task ID，拒绝 duplicate。
+Retry 使用 Batch retry mechanism，或在同一个 logical day 下使用新的 opaque attempt
+namespace；不能创建第二个并发 day task。
+
+通用命令形态：
+
+```bash
+az batch job create \
+  --id <job-id> \
+  --pool-id <pool-id>
+
+az batch task create \
+  --job-id <job-id> \
+  --task-id <utc-day-task-id> \
+  --max-task-retry-count <bounded-retry-count> \
+  --max-wall-clock-time <bounded-duration> \
+  --json-file <private-task-json>
+```
+
+Private runner 必须在进入 event loop 前验证 runtime root、input-manifest root、registered
+plan、frozen date、warmup 与所有引用 closure。公共代码不解析私有 command 或 artifact。
+
+## 释放节点前持久保存任务文件
+
+**每个** task 都必须配置 Batch `outputFiles`，包括开发验证。节点删除后，task 的
+`retentionTime` 不会保留文件。不能依靠监控恰好赶在 autoscale 删除节点之前下载日志。
+
+任务在 `artifacts/` 下写入测试 XML、非敏感环境摘要（源码版本、Python、安装包版本和
+CPU）及命令退出码。不要完整打印环境变量，其中可能包含凭据。退出零之前，命令必须
+检查必需报告存在且非空；glob 没有匹配任何文件，本身不会让 Batch 上传失败。
+
+在私有 task JSON 中使用以下字段，占位符由本地解析：
+
+```json
+{
+  "outputFiles": [
+    {
+      "filePattern": "artifacts/*",
+      "destination": {"container": {
+        "containerUrl": "<existing-output-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    },
+    {
+      "filePattern": "../std*.txt",
+      "destination": {"container": {
+        "containerUrl": "<existing-failure-log-container-url>",
+        "path": "<job-id>/<task-id>/<attempt-id>",
+        "identityReference": {"resourceId": "<pool-managed-identity-resource-id>"}
+      }},
+      "uploadOptions": {"uploadCondition": "taskCompletion"}
+    }
+  ],
+  "exitConditions": {
+    "fileUploadError": {"jobAction": "terminate"},
+    "default": {"jobAction": "terminate"}
+  }
+}
+```
+
+Job 使用 `onTaskFailure=performExitOptionsJobAction`。现有 pool 必须绑定引用的 managed
+identity，拥有容器范围 Blob 写权限，并通过存储防火墙允许的网络路径访问。不要将 SAS
+或存储密钥放入 Git。Batch 在命令结束后上传，包括失败的命令，上传处理结束后 task 才
+进入 completed 状态。上传失败写入 `executionInfo.failureInfo`；仅 `exitCode=0` **不算
+成功**。必须同时满足 `executionInfo.result=success`、无 `failureInfo`、命令退出零，以及
+必需 Blob 文件可访问。报告测试数量前解析已经上传的 XML。缺少报告是证据不完整，不是
+测试通过。
+
+Batch 不保证各 `outputFiles` 的上传顺序。不能借此无序上传列表提前发布 replay 的
+`_SUCCESS`；现有 replay publisher 仍必须最后写该标记。
+
+先用小任务验证：pool **归零之后**仍能读取 XML 和日志。另行测试一次上传失败，确认
+它不能被报告为验证成功。参考 Microsoft 的
+[任务输出持久化说明](https://learn.microsoft.com/en-us/azure/batch/batch-task-output-files)。
+
+## Output publication 与 `_SUCCESS`
+
+进程完成不等于 replay day 已准入。按以下顺序发布 output：
+
+1. 向 attempt-specific temporary namespace 写结果；
+2. 验证 schema、day boundary、terminal accounting 与 required diagnostic；
+3. 写覆盖已准入 result file 的 output manifest；
+4. 原子 publish/promote attempt output；
+5. **最后**写 `_SUCCESS`。
+
+只有 success marker 与 expected logical day/input identity 的 output manifest 同时匹配时，
+marker 才有效。Exit code 为零但没有 marker 属于 incomplete。从另一 attempt 复制的 marker
+无效。
+
+Resume 只能跳过 marker 与 manifest 都匹配的日期。注册 multi-day run 尚未完成时，monitor
+只读取 task state、failure、elapsed time、node health 与 success-marker count，不能读取或
+报告 partial economics。
+
+## 避免重复工作的故障处理
+
+发生 infrastructure 或 closure failure 时：
+
+1. disable job，阻止新 task 启动；
+2. 明确选择 active task 等待、终止或 requeue；
+3. 只检查 task state、stderr/stdout、node state 与 missing closure；
+4. 经济合理时，在短且有界的 repair window 内保留已初始化 node；
+5. 仅当 base runtime 与 input bundle 未改变时，直接补充小型 immutable missing
+   resource；
+6. shared base materialization 改变时，更新 pool start task 并 reimage node；
+7. 证明不存在 duplicate logical day task 后才能 resume。
+
+例如，disable job 但允许 active work 完成，可以使用 Azure Batch 支持的 operator-selected
+task policy：
+
+```bash
+az batch job disable \
+  --job-id <job-id> \
+  --disable-tasks wait
+```
+
+不得因为缺少一个小 receipt 就重建或上传大型 base bundle，也不能原位修改已经准入的
+input。
+
+## 一批结束后缩容到零
+
+配置有上限的 autoscale，使用 `taskcompletion` 回收方式。Queue 排空后，Batch 完成输出
+上传才让节点归零；本机下载不应成为释放计算节点的前提。上传失败保留在 task metadata
+中明确可见，不应因此无限期保留付费节点。
+
+1. 确认 completed task 结果、上传状态和必需 Blob 对象；
+2. 确认 current 与 target node count 自动归零；
+3. 从 Blob 下载 output、manifest 与 failure log，不依赖节点本地文件；
+4. 运行同一个本地 finalizer 与 aggregation boundary；
+5. 在失败与输出核对完成之前保留 completed task metadata；
+6. 验证没有意外保留 compute、disk、public IP、load balancer 或 logging resource。
+
+```bash
+# 仅当空闲 pool 未自动归零时使用的手动兜底：
+az batch pool resize \
+  --pool-id <pool-id> \
+  --target-dedicated-nodes 0 \
+  --target-low-priority-nodes 0
+
+az batch pool show --pool-id <pool-id>
+```
+
+只有批准期间内即将运行下一注册批次时，才保留 pool definition、Batch account、registry
+与 storage。Zero nodes 避免 VM compute charge，但不表示 storage、registry、network 或
+retained job data 免费。
+
+## 最终清理
+
+Budget 或 subscription window 结束前：
+
+1. 停止新 submission；
+2. 等待 active task 完成或显式终止；
+3. 下载并在本地验证全部 retained output；
+4. pool resize 为零并确认完成；
+5. 删除 completed job 与 pool；
+6. 删除 Batch account、registry、storage account，最后删除 resource group；
+7. 验证 subscription 中没有 executor 遗留的 VM、managed disk、public IP、load
+   balancer、network interface 或 logging workspace。
+
+Resource-group deletion 必须是最后一步。Output 下载和本地验证完成前不得执行清理命令。
+
+## 相关文档
+
+- [运维目录](README.zh-CN.md)
+- [AWS EC2 live 运维手册](aws_ec2_live.zh-CN.md)
+- [公开/私有文档合同](../public_private_documentation_contract.zh-CN.md)
+- [Azure Batch CLI quickstart](https://learn.microsoft.com/en-us/azure/batch/quick-create-cli)
+- [Azure Batch pool commands](https://learn.microsoft.com/en-us/cli/azure/batch/pool?view=azure-cli-latest)
+- [Azure Batch job commands](https://learn.microsoft.com/en-us/cli/azure/batch/job?view=azure-cli-latest)
+- [Azure Batch task commands](https://learn.microsoft.com/en-us/cli/azure/batch/task?view=azure-cli-latest)

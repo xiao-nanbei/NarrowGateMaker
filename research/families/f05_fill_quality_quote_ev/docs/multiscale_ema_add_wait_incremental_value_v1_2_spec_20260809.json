@@ -1,0 +1,106 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1_2.spec",
+  "identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
+  "last_materially_modified": "2026-08-09",
+  "family_id": "F05_fill_quality_quote_ev",
+  "research_class": "source_aware_prediction_only_incremental_action_value",
+  "status_at_freeze": "successor_preregistered_after_v1_1_informative_right_censoring",
+  "question": "Does a 2025-provider-pretrained multiscale EMA representation add chronological native out-of-fold information about side-specific ADD NOW versus WAIT ONE EXTERNAL EPOCH terminal value beyond campaign state and existing local/trend features?",
+  "permission_boundary": {
+    "prediction_only": true,
+    "f09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "owner_route_required_for_any_successor_action": true
+  },
+  "predecessor": {
+    "identity": "multiscale_ema_add_wait_incremental_value_v1_1",
+    "spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
+      "sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908"
+    },
+    "execution_amendment": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_execution_amendment_20260809.json",
+      "sha256": "4c2dd8a19640e058856bc2eb27e408fa431935349a3a2fab0e474643f389269f"
+    },
+    "selected_panel": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_v1_1_20260809/selected_opportunities.parquet",
+      "sha256": "7e8096bbf656653788c772b73d43c4448b7d874314adfdd5cc4c95fce2ac190d",
+      "rows": 320
+    },
+    "paired_labels": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_v1_1_20260809/paired_labels.parquet",
+      "sha256": "858ed338938679cafb2b98111a012e8298dfeed7b3ebfbb1c264f72188b8334f",
+      "observed_rows": 310,
+      "right_censored_rows": 10
+    },
+    "censoring_failure": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_v1_1_20260809/informative_censoring_failure.json",
+      "sha256": "fba2b5bd696b7f7040554c3a618d87c7c7d29676bb85b1632dc77ee3bc1d4135"
+    },
+    "development_outcomes_already_read": true,
+    "sample_membership_folds_features_actions_and_thresholds_must_not_change": true
+  },
+  "native_label_continuation": {
+    "change": "append the natural next UTC day to the same engine call only for the 10 right-censored predecessor opportunities",
+    "utc_midnight_resets_state": false,
+    "cash_inventory_campaign_cooldown_orders_queue_hazard_and_rng_continue": true,
+    "first_day_array_prefix_and_all_frozen_locators_must_be_identical": true,
+    "raw_bbo_l2_overlap_values_must_match": true,
+    "derived_rolling_overlap_is_ignored_and_only_strictly_later_values_are_appended": true,
+    "planned_restart_or_gap_during_assignment": "right_censored_fail_closed",
+    "arbitrary_maximum_wait_or_forced_terminal": "forbidden",
+    "continuation_source_ceiling": "available natural D+1 native tape; remaining censoring still forbids model evaluation",
+    "complete_case_training_if_any_row_remains_censored": "forbidden"
+  },
+  "source_aware_training": {
+    "provider_training_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_expanded_source_aware_semantics_v6_train_spec_20260802.json",
+      "sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328",
+      "day_field": "refit_days",
+      "expected_2025_days": 66
+    },
+    "provider_cache_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json",
+      "sha256": "ba606ca6da354dacc97f7c01dbc40afe10e8008a90ffcc7f08f83fa741ca4f5c"
+    },
+    "provider_source_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_research_union_v1/manifest.json",
+      "sha256": "fe851cf4c8aeafd7bcc5312e41fbcaef4f81a9fc1faaa12cc309315ff62623f5"
+    },
+    "provider_feature_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802/causal_feature_manifest.json",
+      "sha256": "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+    },
+    "provider_role": "unsupervised full-rank linear EMA state encoder pretraining only",
+    "provider_economic_outcomes_read": false,
+    "provider_add_wait_labels_generated": false,
+    "provider_queue_or_lifecycle_authority_claimed": false,
+    "encoder_inputs": "side-specific continuous-time EMA surface from provider-normalized causal BBO with natural D-1 warmup",
+    "encoder_sampling": "canonical 10-second target-day grid for representation training only; never an action clock",
+    "encoder_model": "full-rank standardized correlation eigensurface with no component selection",
+    "native_role": "fit the direct ADD-minus-WAIT value head and provide all chronological OOF scoring and gates",
+    "native_oof_only_for_incremental_evidence": true
+  },
+  "model_and_gate": {
+    "m0_features": "exactly predecessor M0",
+    "m1_features": "predecessor M0 plus the full-rank 2025-pretrained EMA encoder scores",
+    "ridge_alpha": 10.0,
+    "ridge_solver": "svd",
+    "sides": [
+      "SELL",
+      "BUY"
+    ],
+    "side_pooling_forbidden": true,
+    "chronological_folds": "exactly predecessor v1_1 folds and purge",
+    "campaign_total_weight": 1.0,
+    "primary_incremental_gates": [
+      "day/campaign-clustered squared-error-reduction LCB95 greater than zero",
+      "day/campaign-clustered absolute-error-reduction LCB95 greater than zero",
+      "all four frozen outer folds represented"
+    ],
+    "f09_successor_registration": "allowed only for the side whose native OOF M1 gate passes, and still requires a separately frozen action identity"
+  }
+}

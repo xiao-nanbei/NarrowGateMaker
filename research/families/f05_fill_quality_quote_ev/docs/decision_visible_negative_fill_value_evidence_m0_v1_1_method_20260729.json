@@ -1,0 +1,93 @@
+{
+  "schema_version": "decision_visible_negative_fill_value_evidence.method.v1_1",
+  "identity": "decision_visible_negative_fill_value_evidence_m0_v1_1",
+  "status": "frozen_structural_queue_missingness_amendment_before_f05_model_fit",
+  "canonical_method_contract_sha256": "646ffef22940e5770f37aec46df04441d62ea865fd265d4da6a8702ec1ffc1ce",
+  "structural_amendment": {
+    "parent_identity": "decision_visible_negative_fill_value_evidence_m0_v1",
+    "trigger": "native F10 pre-model feature audit found one unavailable exact-level queue value in 2071 rows, confined to Grade-B sensitivity on 2026-05-29",
+    "outcome_or_gate_used_to_choose_amendment": false,
+    "unchanged": [
+      "Development panels",
+      "direct USDC target",
+      "Ridge alpha",
+      "chronological folds and embargo",
+      "high-risk quantile",
+      "bootstrap and support gates",
+      "all authority fields"
+    ],
+    "queue_contract": "Preserve raw queue_ahead_btc missingness; use zero only as the model matrix placeholder jointly with queue_ahead_available=0. Known exact/known-zero sources must remain finite."
+  },
+  "f10_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/first_add_decision_to_terminal_loss_diagnostic_v1_spec_20260729.json",
+    "sha256": "4b2fd6e704b6f81935f4632f7dee7dc1eec3ed0ced63123f9424c7ec0de049d4",
+    "canonical_spec_sha256": "889054b4563f52675fb1c2931dc97c368d1a27b06bee6a4783d60d3a456f6df7"
+  },
+  "authoritative_target": {
+    "column": "decision_to_campaign_terminal_value_usdc",
+    "unit": "USDC_per_first_add_decision",
+    "direct_usdc_prediction": true,
+    "alternative_authoritative_targets": false
+  },
+  "panels": {
+    "source": "exact_24A_16B_panels_from_frozen_f10_spec",
+    "pooling": "forbidden",
+    "grade_b_role": "sensitivity_only"
+  },
+  "model": {
+    "estimator": "standardized_ridge_direct_usdc",
+    "ridge_alpha": 1.0,
+    "campaign_state_features": [
+      "inventory_btc",
+      "campaign_age_ms",
+      "campaign_pnl_so_far_usdc",
+      "campaign_mae_so_far_usdc",
+      "exposure_increasing_fill_count_so_far",
+      "reducing_fill_count_so_far"
+    ],
+    "local_microstructure_features": [
+      "quote_distance_ticks",
+      "queue_ahead_btc",
+      "microprice_shift_bps",
+      "l2_book_refresh_ratio",
+      "l2_book_cancel_ratio",
+      "local_toxicity",
+      "parent_aggtrade_flow_imbalance",
+      "queue_ahead_available"
+    ],
+    "buy_sell_separate": true,
+    "hyperparameter_search": false
+  },
+  "chronology": {
+    "outer_folds": "expanding_calendar_past_only",
+    "minimum_train_days": 10,
+    "embargo_calendar_days": 1,
+    "test_block_days": 1
+  },
+  "high_risk": {
+    "outer_train_prediction_quantile": 0.25,
+    "threshold_source": "outer_train_predictions_only"
+  },
+  "inference": {
+    "bootstrap": "day_then_campaign_cluster",
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 811731,
+    "familywise_confidence": 0.95,
+    "simultaneous_metric_family_size": 8,
+    "minimum_high_risk_rows": 40,
+    "minimum_high_risk_days": 5,
+    "minimum_valid_bootstrap_fraction": 0.99,
+    "daily_negative_direction_threshold": 0.55
+  },
+  "outcome_access": {
+    "scope": "development_only",
+    "fit_identity_frozen_before_read": true
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_registration": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

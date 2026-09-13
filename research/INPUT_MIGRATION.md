@@ -1,0 +1,83 @@
+# Research input migration
+
+Current F03 execution is complete: [858 strategy-shards and full Final results](families/f03_causal_13_head/README.md). Its new labels, frozen models and daily accounting are no longer pending. Other family rows below remain implementation/support checks, not blanket completion. Live execution_v1 is implemented but not activated; use the separate unit review and deployment gates.
+
+[English](INPUT_MIGRATION.md) | [简体中文](INPUT_MIGRATION.zh-CN.md)
+
+Last materially modified: 2026-09-22
+
+Last materially synchronized: 2026-09-22
+
+This page separates reusable implementations, historical conclusions and new-source acceptance. It does not start experiments. The current calendar/source contract remains [dataset_scope.json](../data/dataset_scope.json). Purchased data, private models and results are not distributed. Passing controlled tests does not accept a real-data economic result.
+
+## Current 407-day recomputation
+
+The [unified plan](RECOMPUTE_407.md) and [12-package work list](recompute_407.json) are the current entry. Historical closure does not block new questions, but does not restart old identities or reset previous-use. Current F03 and the approved ML-OFF remain frozen. The APIs below describe actual support, not completed studies.
+
+F01 adds `replay_economic_candidates`: common independent accounts and execution parameters, complete fill tracing and shared `settle_public_replay` settlement. Live-account restoration is rejected, missing funding remains unknown and incomplete traces fail economic acceptance. The diagnostic API remains compatible; full candidate budgets and 407-day racing have not been executed.
+
+## Family boundaries
+
+| Family | Reusable interface and current boundary | What must be regenerated or demonstrated |
+| --- | --- | --- |
+| F01 | `campaign_outcome_replay_audit` remains a historical execution wrapper; shared account arithmetic is reusable | Explicit common-input runner and frozen assumptions; old parameter rankings do not transfer |
+| F02 | New `public_input_calibration` verifies train-only source and delivery bindings | New fitted curve; touch is not queue-conditioned fill probability |
+| F03 | New panel, model bundle and execution-only replay interfaces exist | Completed for current F03; historical test leakage remains invalid and separate |
+| F04 | `HistoricalReferenceScheduler` schedules by ready time; public execution-only replay rejects reference requests | Market-specific manifests, currency units and multi-market consumer adapter; no missing venue filled with zero |
+| F05 | `QuoteEVModel.load(..., input_identity=...)` requires source/training/label identities, explicit ordered columns and a declared reject/native-NaN policy | New opportunity panel and trained models; old zero-imputation preprocessing is not the new feature adapter |
+| F06 | Frozen `placement_fill_panel` now requires explicit `--legacy-input` before touching historical paths | New placement/exposure/censoring adapter; native queue identity is unavailable from L2 alone |
+| F07 | Active-order trajectory comparison remains reusable with explicit market identity | New event tapes including pending cancellation and snapshot uncertainty; old lockstep is not new-source acceptance |
+| F08 | Historical aggregate parity explicitly accepts its native-parent contract, not arbitrary individual executions | New individual-count/derived-group statistics; no fabricated aggregate packets or ordinary-volume qualification |
+| F09 | OPE support/propensity checks apply only to OPE; paired simulation does not need invented propensity | New action and assignment-to-terminal reward panels; pre-assignment profit is not intervention reward |
+| F10 | Shared boundary-equity accounting and clock diagnostics are reusable | New epoch and input-specific attribution; simulated equality is not native/live parity |
+| SYS | Source-bound consumer bundles and explicit independent-account boundaries exist | Producer-semantic versions and restart/parallel equivalence beyond current fixtures |
+
+These are entrypoint-level findings, not a claim that every executable script in each directory has been migrated. The new adapters below now exist and have controlled behavior tests. Complete family-wide training/replay integration remains pending where stated; a new panel API is not a migrated historical trainer. Retain behavior tests and frozen historical records; do not rewrite their hashes or silently point old defaults at new data.
+
+## Executable new-input adapters
+
+The shared [FeatureCursor](../data/feature_cursor.py) verifies consumer/source identities, selects only an already-ready frame, enforces an explicit maximum frame age and applies the shared validity mask. Missing context raises instead of using future data. `ConsumerBundle.stream()` reconstructs its bound observation scenario without introducing a second parser. The following APIs are exercised by [controlled synthetic tests](../tests/test_research_public_inputs.py); they do not launch jobs on import.
+
+| Family / current API | Implemented behavior | Remaining limitation |
+| --- | --- | --- |
+| [F01 `replay_parameter_candidates`](families/f01_fixed_parameter_racing/public_input.py) | Runs the maintained shared-input executor with common assumptions and independent candidate calls; only gamma, kappa and maximum spread may vary | Diagnostic API keeps funding unknown; use replay_economic_candidates for shared settlement, not a completed racing campaign |
+| [F04 `build_reference_panel`, `replay_reference_strategy`](families/f04_external_market_alpha/public_input.py) | Market-bound, ready-time as-of features; explicit predictor and shared economic execution | Does not adapt old weights or restore missing venues; separate funding and complete trace required |
+| [F05 `build_opportunity_panel`, `train_opportunity_models`](families/f05_fill_quality_quote_ev/public_input.py) | Joins source-bound opportunity/outcome identities; preserves conditional missingness and censoring; purges actual outcome ends; fits and atomically publishes all five quote-EV heads for the selected side | Requires explicit newly generated fill/markout outcomes, buckets, thresholds and fitting parameters; no historical trace cleaner or weights reused |
+| F05 `QuoteEVModel.predict_frame` | Enforces the shared frame contract, causal cutoff and validity mask before loaded-model inference | Requires newly trained compatible models; no real model was trained in this change |
+| [F06 `build_placement_panel`, `placement_risk_targets`, `replay_placement_strategy`](families/f06_placement_fill_cif/public_input.py) | Causal placement features, competing outcomes and configurable distance-rule execution | Requires explicit new rules; not an automatically retrained CIF model |
+| [F07 `continuation_report`, `replay_continuation_strategy`](families/f07_active_order_continuation/public_input.py) | Lifecycle diagnostics and configurable keep/cancel execution through existing delays | Not a calibrated hazard model or proof of native queue closure |
+| [F08 `load_visible_side_flow`](families/f08_side_taker_lifecycle/public_input.py) | Consumes shared closed visible Bars with volume/turnover conservation and individual execution counts | Does not reconstruct native aggregate packet streaks or individual live interarrival features |
+| [F09 `build_action_panel`, `evaluate_action_panel`](families/f09_campaign_action_uplift/public_input.py) | Uses assignment-to-terminal equity reward; requires logged probabilities; dispatches to maintained OPE with per-fold actual-end purge | Needs an explicitly timed feature registry, supported logged actions and sufficient sample support; no online causal claim |
+| [F10 `attribute_interval`](families/f10_live_replay_attribution/public_input.py) | Binds account boundaries to an input/observation/epoch identity; retains unknown funding and stale valuation limits | Not historical live/native parity; execution contract identity is supplied by the run, not inferred from L2 |
+
+Opportunity, placement, order-event and account records carry the originating consumer manifest identity. They must come from the matching experiment; market data cannot create these records or assignment probabilities. Order events use integer effective nanoseconds in original order. Observation intervals are left-closed/right-open; cancellation requests are not cancellation effects, snapshot rebases do not close orders, and fills before activation or after a terminal event fail. Nullable first-fill clocks retain integer precision. These APIs deliberately do not read historical default directories, fit on real data or restart closed research.
+
+New adapters are discoverable through `public_input_module` in [the family registry](registry.json). F05's controlled smoke test builds an opportunity panel, fits a tiny synthetic bundle, loads it through the strict model loader and predicts from a masked FeatureFrame. This is a software test, not a fitted research result. The trainer refuses missing class support, inconsistent feature contracts and existing output directories. It does not select hyperparameters or open held-out data. Multi-bundle experiment orchestration and adaptation of all historical family-specific mechanisms are not completed by these APIs.
+
+## Continuous packages and reference execution work
+
+`data.consumer_sequence.derive_consumer_sequence` now validates ordered adjacent consumer intervals, matching market/delivery/feature contracts and source manifest identities. It derives one create-only continuous bundle through the shared scheduler instead of concatenating independently cold-started feature files. Repeated warmup source bundles are read once; source-order conflicts fail. Book, pending observations and rolling windows continue across package boundaries. This is input preparation, not account reset or a resumable distributed executor. Equivalent whole-interval and split-package fixtures produce identical features, Bars and depth.
+
+F04 now exposes `ReferenceSignalAdapter` and `replay_reference_strategy`: an explicitly supplied new predictor receives execution features and market-namespaced reference features selected by ready-time as-of lookup, then returns the existing five quote-channel outputs to the maintained executor. Input manifests, ordered columns, missing policy, maximum age and model/output identities are explicit. Missing/stale reference context fails; invalid output probabilities, volatility or nonfinite outputs fail rather than becoming zero. No implicit currency conversion or historical external model loading occurs.
+
+F04's new wrapper also invokes `models.replay.public_accounting.settle_public_replay`. It requires a complete, physically ordered fill trace, reconciles cash and terminal inventory with the executor, preserves signed fees, and marks remaining inventory using an explicitly age-limited delivered BBO. Funding is a separate source-bound input with a complete declared settlement schedule; settlement precedes equal-time fills and the endpoint settlement precedes MTM. Missing funding or stale nonzero-inventory valuation leaves all-in PnL unknown. Funding is post-execution accounting, not feedback into sizing/margin policy. Controlled tests exercise the actual executor and separately test losing roundtrips, fees, funding, missing marks and truncated traces. This is not real-data economic acceptance or a demonstrated improvement in actions/profitability.
+
+F06/F07 now expose `replay_placement_strategy` and `replay_continuation_strategy` over the shared [new action interface](../models/replay/public_strategy.py). This first configurable version is a rule strategy, not a trained CIF or hazard model: F06 supports default or outward quote-distance multiplication; F07 supports default, keep or cancel. Rules evaluate only declared ready-time features, with first-match precedence independently per side. Missing values either fail or explicitly skip the whole decision; stale/absent context and undeclared columns always fail. There is no legacy model loading or zero imputation. KEEP cannot enable a blocked side, create an order, or defeat mandatory P3/notional updates; CANCEL submits through the existing delayed cancellation path, never deletes exchange orders immediately. Ordinary downstream rounding, risk constraints, route timing and pending-request coalescing remain in place.
+
+The policy contract has schema `research.action_policy.v1`, a nonempty `policy_id`, `family` (`F06` or `F07`), exact `input_manifest_id`, ordered `feature_cols`, `missing_policy` (`reject` or `skip_decision`), integer `max_age_ns`, bounded `trace_limit`, and `rules` containing both `BUY` and `SELL` lists. Each rule declares `feature`, `op` (`ge` or `le`), numeric `threshold`, `action` and `spread_mult`. Non-widening actions require multiplier 1; widening requires at least 1. Empty lists select default behavior. Explicit rules and parameters are supplied by the experiment, not inferred from old studies. Consumer identity binds source, observation and feature contracts; construct a fresh policy for each independent replay. Checkpoint/resume of policy state is rejected until implemented.
+
+Both wrappers require an empty initial account and complete bounded fill tracing, call the maintained quote/order/fill engine, and settle through the same separate accounting helper used by F04. Missing funding remains unknown. Policy receipts distinguish requested actions from final resolved intents and are explicitly not ACK/fill evidence; actual submissions and fills stay in the executor traces. Receipt truncation is counted. Controlled tests check unchanged default-policy quotes/cash/inventory, changed actual submission prices, keep/cancel effects, missing data, causal cutoffs and safety precedence. This is software behavior evidence, not new economic performance or native queue parity. Existing multi-package preparation can supply one continuous bundle; it does not provide distributed policy checkpoint migration. No closed study is reopened, no real-data economic run is launched, and no F03 job is changed.
+
+The live interface cleanup also removes per-row writer protocol selection: MakerEngine calls `enqueue_csv_values`, and its queue-full double implements that same interface. WebSocket legacy startup arguments are normalized once into snapshot/listen-key roles; runtime methods no longer fall back to a fixture-only generic client. Supported legacy startup, explicit role assembly and failure-path tests remain. These source changes do not deploy live software.
+
+## F05 model interface
+
+The default loader does not infer compatibility from filenames. The caller supplies `input_contract_id`, `observation_contract_id`, `feature_contract_id`, `source_manifest_sha256`, `training_contract_id` and `label_contract_id`; each model's metadata must match. Every booster must have exactly the declared ordered feature names. Bucket values/classes must be explicit. Missing values are rejected or retained as NaN according to metadata, never converted to neutral zero by this loader's prediction path. Construct new features directly from their declared inputs; passing already zero-filled legacy feature dictionaries cannot recover lost observability and is not an accepted adapter.
+
+`load_legacy()` is the explicit historical default-column/zero-imputation ABI. The old shadow evaluator requires `--legacy-input`; this is offline historical analysis, not permission to operate a live shadow. No new F05 training or economic run has occurred. The output remains maker-signed bps per quote opportunity, not complete USDC net PnL.
+
+## Historical conclusions
+
+Keep old positive and negative results within their original data, model, action, execution and sample identities. Rankings, P3 values, model weights and returns require new estimates. A closed candidate does not invalidate its entire mechanism family. Known leakage or reward attribution defects invalidate the affected interpretation, not unrelated branches: preserve the F03 recorded causal-v4 leakage distinction and F09's distinction between campaign-terminal profit and post-assignment incremental reward. Unverified new-source performance stays pending. Changing suppliers or retraining never resets previous-use.
+
+See [audit follow-up](../docs/tardis_migration_audit_followup.md) for completed fixes and remaining limitations. This index supersedes reading old family-specific words such as “current” as a claim about this new dataset; it does not alter frozen historical reports or authorize old experiments to restart.

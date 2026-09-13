@@ -1,0 +1,849 @@
+{
+  "bars_root": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s",
+  "days": [
+    {
+      "day": "2026-04-17",
+      "payloads": [
+        {
+          "bytes": 1720305,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-16.parquet",
+          "sha256": "e574b7f47dad94f269bdece16ceb6e1ac065a8ff51675416d7a1952d4b556e16",
+          "source_day": "2026-04-16",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-17:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1914625,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-17.parquet",
+          "sha256": "aa145d10e99dc22ea804f85b7958dc829aec00d8650ca5ff0915a579b0f240bd",
+          "source_day": "2026-04-17",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-17:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-04-18",
+      "payloads": [
+        {
+          "bytes": 1914625,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-17.parquet",
+          "sha256": "aa145d10e99dc22ea804f85b7958dc829aec00d8650ca5ff0915a579b0f240bd",
+          "source_day": "2026-04-17",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-18:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1183955,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-18.parquet",
+          "sha256": "f820e36924c9e03fb7a01143187f6c7b143744e3d9c2dd803ba7da0dcc401742",
+          "source_day": "2026-04-18",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-18:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-04-19",
+      "payloads": [
+        {
+          "bytes": 1183955,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-18.parquet",
+          "sha256": "f820e36924c9e03fb7a01143187f6c7b143744e3d9c2dd803ba7da0dcc401742",
+          "source_day": "2026-04-18",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-19:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1482334,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-19.parquet",
+          "sha256": "cc6ac4b5d077e6d816f6bb3cbf939700464163320eb88b30d7a14de399b36ac0",
+          "source_day": "2026-04-19",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-19:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-04-20",
+      "payloads": [
+        {
+          "bytes": 1482334,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-19.parquet",
+          "sha256": "cc6ac4b5d077e6d816f6bb3cbf939700464163320eb88b30d7a14de399b36ac0",
+          "source_day": "2026-04-19",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-20:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1838392,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-20.parquet",
+          "sha256": "dc0279502d0578e73b47fa3523bf8be626e5cc3861ba34225b78b895692a965e",
+          "source_day": "2026-04-20",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-20:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-04-22",
+      "payloads": [
+        {
+          "bytes": 1975343,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-21.parquet",
+          "sha256": "5d1ffb13f29773c5b189d388429f0ecdea144cc23d46ea11e2d725df20e9f536",
+          "source_day": "2026-04-21",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-22:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1985263,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-22.parquet",
+          "sha256": "e18adf8e03e1116058bcc58a2bb3b61c745a9db643a1e62517b53d5974ee6f1d",
+          "source_day": "2026-04-22",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-22:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-04-23",
+      "payloads": [
+        {
+          "bytes": 1985263,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-22.parquet",
+          "sha256": "e18adf8e03e1116058bcc58a2bb3b61c745a9db643a1e62517b53d5974ee6f1d",
+          "source_day": "2026-04-22",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-23:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1793152,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-23.parquet",
+          "sha256": "4f09112c2b666d41633865fb8302acb97e6bc8dc02cab99dfa763416dfd06991",
+          "source_day": "2026-04-23",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-04-23:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-01",
+      "payloads": [
+        {
+          "bytes": 1430446,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-04-30.parquet",
+          "sha256": "105ee50ebbe8b94fd3f0b9f51c94a91aa52111c1bcb7d3f0bbf3d5f5bca1e37f",
+          "source_day": "2026-04-30",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-01:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1456361,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-01.parquet",
+          "sha256": "80e1602905dcba472c610bb2d750894973139fcf16d6d82b285b18353194ceb5",
+          "source_day": "2026-05-01",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-01:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-02",
+      "payloads": [
+        {
+          "bytes": 1456361,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-01.parquet",
+          "sha256": "80e1602905dcba472c610bb2d750894973139fcf16d6d82b285b18353194ceb5",
+          "source_day": "2026-05-01",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-02:warmup_d_minus_1"
+        },
+        {
+          "bytes": 679869,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-02.parquet",
+          "sha256": "6bf47ba4a3ecab904654324bd187839af3569d62daacaef5ec97d62e03ac57f5",
+          "source_day": "2026-05-02",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-02:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-03",
+      "payloads": [
+        {
+          "bytes": 679869,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-02.parquet",
+          "sha256": "6bf47ba4a3ecab904654324bd187839af3569d62daacaef5ec97d62e03ac57f5",
+          "source_day": "2026-05-02",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-03:warmup_d_minus_1"
+        },
+        {
+          "bytes": 889055,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-03.parquet",
+          "sha256": "642158938a07260cf818557b52ff79bcdb8e34e086927f6fd3b7bfce54dc2207",
+          "source_day": "2026-05-03",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-03:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-04",
+      "payloads": [
+        {
+          "bytes": 889055,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-03.parquet",
+          "sha256": "642158938a07260cf818557b52ff79bcdb8e34e086927f6fd3b7bfce54dc2207",
+          "source_day": "2026-05-03",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-04:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1962321,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-04.parquet",
+          "sha256": "1308dde592eff97670ce5c9b65cc2e5ae916f165971c59f2a856ec3ba0c28e4a",
+          "source_day": "2026-05-04",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-04:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-05",
+      "payloads": [
+        {
+          "bytes": 1962321,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-04.parquet",
+          "sha256": "1308dde592eff97670ce5c9b65cc2e5ae916f165971c59f2a856ec3ba0c28e4a",
+          "source_day": "2026-05-04",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-05:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1662387,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-05.parquet",
+          "sha256": "078722d67389d2ce36ceb3f9e751a1eec669744fe55e2341d45ac1971b9a86a4",
+          "source_day": "2026-05-05",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-05:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-06",
+      "payloads": [
+        {
+          "bytes": 1662387,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-05.parquet",
+          "sha256": "078722d67389d2ce36ceb3f9e751a1eec669744fe55e2341d45ac1971b9a86a4",
+          "source_day": "2026-05-05",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-06:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1671239,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-06.parquet",
+          "sha256": "8a9dfe1116878d1c92c261f099ab41b122a76f4be077c3f7e18027cbd0e78326",
+          "source_day": "2026-05-06",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-06:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-13",
+      "payloads": [
+        {
+          "bytes": 1470671,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-12.parquet",
+          "sha256": "a0145619c46e1818a9b2a3d3796b07f261f277a5fab1c690e92d154958829f61",
+          "source_day": "2026-05-12",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-13:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1590011,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-13.parquet",
+          "sha256": "d916e3dc5e6128d78be36847245610baf471841e976c6bdddf9c10aba54c645c",
+          "source_day": "2026-05-13",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-13:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-29",
+      "payloads": [
+        {
+          "bytes": 1747412,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-28.parquet",
+          "sha256": "08ccb2d42f5fc5f7886f4cb901242fc87fd02af4660770d6dd7c3a0c04886250",
+          "source_day": "2026-05-28",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-29:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1582659,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-29.parquet",
+          "sha256": "7c170265ea4683b9aaaed0bfe21691c9df8ffea274d40a7a18713b01aafd7a93",
+          "source_day": "2026-05-29",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-29:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-30",
+      "payloads": [
+        {
+          "bytes": 1582659,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-29.parquet",
+          "sha256": "7c170265ea4683b9aaaed0bfe21691c9df8ffea274d40a7a18713b01aafd7a93",
+          "source_day": "2026-05-29",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-30:warmup_d_minus_1"
+        },
+        {
+          "bytes": 790088,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-30.parquet",
+          "sha256": "92d4da3337ada34d1466dd4e9beeab8023a53ce0f11eef20a3c728ed2f7949a9",
+          "source_day": "2026-05-30",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-30:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-05-31",
+      "payloads": [
+        {
+          "bytes": 790088,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-30.parquet",
+          "sha256": "92d4da3337ada34d1466dd4e9beeab8023a53ce0f11eef20a3c728ed2f7949a9",
+          "source_day": "2026-05-30",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-31:warmup_d_minus_1"
+        },
+        {
+          "bytes": 907878,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-05-31.parquet",
+          "sha256": "84da5f52c97de3ba9ab5f172adce846ba90d2b0e13584896d1b5615c547a0c0f",
+          "source_day": "2026-05-31",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-05-31:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-02",
+      "payloads": [
+        {
+          "bytes": 1984284,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-01.parquet",
+          "sha256": "8b0a0263106075dbddac2b796554474e687639f8532bb74af160fbbbe42f3b90",
+          "source_day": "2026-06-01",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-02:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2587937,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-02.parquet",
+          "sha256": "057e38a61496fbd266d93cd26348ed41e5bd02695fc114b979d5d153789c3507",
+          "source_day": "2026-06-02",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-02:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-03",
+      "payloads": [
+        {
+          "bytes": 2587937,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-02.parquet",
+          "sha256": "057e38a61496fbd266d93cd26348ed41e5bd02695fc114b979d5d153789c3507",
+          "source_day": "2026-06-02",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-03:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2516805,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-03.parquet",
+          "sha256": "c37f054f68ffe9d2ccaa0cc58585f8f578079669e9d454ce7991c120c9d37c6f",
+          "source_day": "2026-06-03",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-03:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-05",
+      "payloads": [
+        {
+          "bytes": 2907107,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-04.parquet",
+          "sha256": "bcdf9b48508e86bfca16020d9e36f763c912385325b5eb0ea505bfb0151076bc",
+          "source_day": "2026-06-04",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-05:warmup_d_minus_1"
+        },
+        {
+          "bytes": 3255860,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-05.parquet",
+          "sha256": "6510df6de0bd496943c9d2498d138ada28521fa3c02c62bc2a2fada493e73f3d",
+          "source_day": "2026-06-05",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-05:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-06",
+      "payloads": [
+        {
+          "bytes": 3255860,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-05.parquet",
+          "sha256": "6510df6de0bd496943c9d2498d138ada28521fa3c02c62bc2a2fada493e73f3d",
+          "source_day": "2026-06-05",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-06:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2125791,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-06.parquet",
+          "sha256": "09d51ef163cdc3228d8ad3cf6cbad9dd1286cc203ded21ff7e86f5145c5a4648",
+          "source_day": "2026-06-06",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-06:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-07",
+      "payloads": [
+        {
+          "bytes": 2125791,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-06.parquet",
+          "sha256": "09d51ef163cdc3228d8ad3cf6cbad9dd1286cc203ded21ff7e86f5145c5a4648",
+          "source_day": "2026-06-06",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-07:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2171736,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-07.parquet",
+          "sha256": "813e712213bdedc37250a32a027ef852dfc677f71cf2dd6ac4ac753306786582",
+          "source_day": "2026-06-07",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-07:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-08",
+      "payloads": [
+        {
+          "bytes": 2171736,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-07.parquet",
+          "sha256": "813e712213bdedc37250a32a027ef852dfc677f71cf2dd6ac4ac753306786582",
+          "source_day": "2026-06-07",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-08:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2317332,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-08.parquet",
+          "sha256": "51b141f7512f44a34f3fc5fc2ff6be08384e40b9f8814ac3f6fc692bbf9e5208",
+          "source_day": "2026-06-08",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-08:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-09",
+      "payloads": [
+        {
+          "bytes": 2317332,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-08.parquet",
+          "sha256": "51b141f7512f44a34f3fc5fc2ff6be08384e40b9f8814ac3f6fc692bbf9e5208",
+          "source_day": "2026-06-08",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-09:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2333665,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-09.parquet",
+          "sha256": "c5d5be0f254da9584c3e1cd1a23df5a5a493a5fcf07dad1db8f58dbfda12f290",
+          "source_day": "2026-06-09",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-09:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-10",
+      "payloads": [
+        {
+          "bytes": 2333665,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-09.parquet",
+          "sha256": "c5d5be0f254da9584c3e1cd1a23df5a5a493a5fcf07dad1db8f58dbfda12f290",
+          "source_day": "2026-06-09",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-10:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2409898,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-10.parquet",
+          "sha256": "a9551606a51c4b2c031396726207ee1eb32ffafc1deb81beb6dc9925974e61c2",
+          "source_day": "2026-06-10",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-10:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-11",
+      "payloads": [
+        {
+          "bytes": 2409898,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-10.parquet",
+          "sha256": "a9551606a51c4b2c031396726207ee1eb32ffafc1deb81beb6dc9925974e61c2",
+          "source_day": "2026-06-10",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-11:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2040855,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-11.parquet",
+          "sha256": "456a88fccb1fcad56aac337cbd1a63b353051f06020e77405687bcf6bddfff6e",
+          "source_day": "2026-06-11",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-11:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-12",
+      "payloads": [
+        {
+          "bytes": 2040855,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-11.parquet",
+          "sha256": "456a88fccb1fcad56aac337cbd1a63b353051f06020e77405687bcf6bddfff6e",
+          "source_day": "2026-06-11",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-12:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1775811,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-12.parquet",
+          "sha256": "53678586c9a2adf55b8c8176ca59814a3e91f13ea78265895d337f60c2c9ffae",
+          "source_day": "2026-06-12",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-12:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-13",
+      "payloads": [
+        {
+          "bytes": 1775811,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-12.parquet",
+          "sha256": "53678586c9a2adf55b8c8176ca59814a3e91f13ea78265895d337f60c2c9ffae",
+          "source_day": "2026-06-12",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-13:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1019378,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-13.parquet",
+          "sha256": "087c4309c684bf196fcad779a4f01704412498a94f24fba4e26c0a3bcb82e354",
+          "source_day": "2026-06-13",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-13:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-14",
+      "payloads": [
+        {
+          "bytes": 1019378,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-13.parquet",
+          "sha256": "087c4309c684bf196fcad779a4f01704412498a94f24fba4e26c0a3bcb82e354",
+          "source_day": "2026-06-13",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-14:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1244613,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-14.parquet",
+          "sha256": "9dfb0e2a2122fabc37f158521852d54c0f529f6995c25492b2b848ef0cfc07b8",
+          "source_day": "2026-06-14",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-14:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-15",
+      "payloads": [
+        {
+          "bytes": 1244613,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-14.parquet",
+          "sha256": "9dfb0e2a2122fabc37f158521852d54c0f529f6995c25492b2b848ef0cfc07b8",
+          "source_day": "2026-06-14",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-15:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1757171,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-15.parquet",
+          "sha256": "04a78511b3e9c3b64b619a3b3ba7cd32f5bd5c13759dc2109493a8970b430ff9",
+          "source_day": "2026-06-15",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-15:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-16",
+      "payloads": [
+        {
+          "bytes": 1757171,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-15.parquet",
+          "sha256": "04a78511b3e9c3b64b619a3b3ba7cd32f5bd5c13759dc2109493a8970b430ff9",
+          "source_day": "2026-06-15",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-16:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1622534,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-16.parquet",
+          "sha256": "bd14ac3779cc66b6e642be920c05bc757da36c544aa70799e4086e3a7c412951",
+          "source_day": "2026-06-16",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-16:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-17",
+      "payloads": [
+        {
+          "bytes": 1622534,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-16.parquet",
+          "sha256": "bd14ac3779cc66b6e642be920c05bc757da36c544aa70799e4086e3a7c412951",
+          "source_day": "2026-06-16",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-17:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1872093,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-17.parquet",
+          "sha256": "77dc7a32a27d299be8ead043cb545fa0ec5243bac3a460bc31d3c55a060fe33c",
+          "source_day": "2026-06-17",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-17:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-18",
+      "payloads": [
+        {
+          "bytes": 1872093,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-17.parquet",
+          "sha256": "77dc7a32a27d299be8ead043cb545fa0ec5243bac3a460bc31d3c55a060fe33c",
+          "source_day": "2026-06-17",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-18:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1924894,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-18.parquet",
+          "sha256": "85f53f4863b55b3117bf10be0e44ce65ca43e14b0b7f7f8783faf1830ebe03f3",
+          "source_day": "2026-06-18",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-18:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-19",
+      "payloads": [
+        {
+          "bytes": 1924894,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-18.parquet",
+          "sha256": "85f53f4863b55b3117bf10be0e44ce65ca43e14b0b7f7f8783faf1830ebe03f3",
+          "source_day": "2026-06-18",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-19:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1414944,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-19.parquet",
+          "sha256": "87be2d2f5f0b055f4a570d1da4cec6d3ef8c8788eeea0c28896565f41ac3d9b3",
+          "source_day": "2026-06-19",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-19:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-20",
+      "payloads": [
+        {
+          "bytes": 1414944,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-19.parquet",
+          "sha256": "87be2d2f5f0b055f4a570d1da4cec6d3ef8c8788eeea0c28896565f41ac3d9b3",
+          "source_day": "2026-06-19",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-20:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1170730,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-20.parquet",
+          "sha256": "fad27745e69cb17868f7be904ae885d60f4e59a4d020afef2d39bb580452cb78",
+          "source_day": "2026-06-20",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-20:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-21",
+      "payloads": [
+        {
+          "bytes": 1170730,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-20.parquet",
+          "sha256": "fad27745e69cb17868f7be904ae885d60f4e59a4d020afef2d39bb580452cb78",
+          "source_day": "2026-06-20",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-21:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1019874,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-21.parquet",
+          "sha256": "20f77118308a5801d9277c5b90fc7b2a305065519a563a472aa3ed900836e49a",
+          "source_day": "2026-06-21",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-21:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-22",
+      "payloads": [
+        {
+          "bytes": 1019874,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-21.parquet",
+          "sha256": "20f77118308a5801d9277c5b90fc7b2a305065519a563a472aa3ed900836e49a",
+          "source_day": "2026-06-21",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-22:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1805374,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-22.parquet",
+          "sha256": "93c68f7a555b70efb89088a2cab88d50e0f32b5df767065dd8f4bb0f7cd20dd9",
+          "source_day": "2026-06-22",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-22:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-23",
+      "payloads": [
+        {
+          "bytes": 1805374,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-22.parquet",
+          "sha256": "93c68f7a555b70efb89088a2cab88d50e0f32b5df767065dd8f4bb0f7cd20dd9",
+          "source_day": "2026-06-22",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-23:warmup_d_minus_1"
+        },
+        {
+          "bytes": 1831395,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-23.parquet",
+          "sha256": "ad9a7f06acdf286c4fd100bfe34895e340c600d7e29e19a2bf7c4b414cff8a03",
+          "source_day": "2026-06-23",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-23:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-24",
+      "payloads": [
+        {
+          "bytes": 1831395,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-23.parquet",
+          "sha256": "ad9a7f06acdf286c4fd100bfe34895e340c600d7e29e19a2bf7c4b414cff8a03",
+          "source_day": "2026-06-23",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-24:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2227843,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-24.parquet",
+          "sha256": "eda6ef8448bd7d181272cbc33bc4bd7053cfd86aff3e3a532b183a8ba02ddf92",
+          "source_day": "2026-06-24",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-24:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-25",
+      "payloads": [
+        {
+          "bytes": 2227843,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-24.parquet",
+          "sha256": "eda6ef8448bd7d181272cbc33bc4bd7053cfd86aff3e3a532b183a8ba02ddf92",
+          "source_day": "2026-06-24",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-25:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2224180,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-25.parquet",
+          "sha256": "88f4556b35b10aedddd4d60b79b3178e6693f0be4749a8be39cec6529b872853",
+          "source_day": "2026-06-25",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-25:target"
+        }
+      ]
+    },
+    {
+      "day": "2026-06-26",
+      "payloads": [
+        {
+          "bytes": 2224180,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-25.parquet",
+          "sha256": "88f4556b35b10aedddd4d60b79b3178e6693f0be4749a8be39cec6529b872853",
+          "source_day": "2026-06-25",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-26:warmup_d_minus_1"
+        },
+        {
+          "bytes": 2481822,
+          "path": "${NARROWGATE_RETIRED_DATA_ROOT}/bars_1s/BTCUSDC-1s-2026-06-26.parquet",
+          "sha256": "5ee5b48c5ae6b2fed8fd243644435db9ca175025fa91461e229b9e886dfa25ce",
+          "source_day": "2026-06-26",
+          "source_type": "causal_1s_variance_bar",
+          "used_by": "2026-06-26:target"
+        }
+      ]
+    }
+  ],
+  "identity": "first_opener_replay_bar_payload_manifest_v2",
+  "schema_version": "first_opener_replay_bar_payload_manifest.v1",
+  "symbol": "BTCUSDC",
+  "target_day_count": 40
+}

@@ -1,0 +1,84 @@
+{
+  "artifacts": {
+    "summary": {
+      "canonical_sha256": "d7cf9397ed43c47c1e7b861d13b146a9bba35a7c27acb105b4fb7b6183f07a2e",
+      "logical_path": "summary.json",
+      "sha256": "dfe157516350036403c9649f02350188560f5ee02cc49deb3503f6b8be754432"
+    },
+    "trace": {
+      "logical_path": "trace.jsonl",
+      "schema_version": "narrowgate_replay_demo_trace.v1",
+      "sha256": "f126c1c614674065bde1c2cbefaa7fe0cc16c5a50bee0bc1c0ab2905b8db985c"
+    }
+  },
+  "campaign_terminal_value_usdc": "0.00200000",
+  "canonical_receipt_sha256": "73935fda738e2fa7c80c34dccaf932bc8631ddfb89139e2d4940722bdba1944d",
+  "denominators": {
+    "campaigns": {
+      "closed": 1,
+      "open_at_terminal": 0,
+      "opened": 1
+    },
+    "events": {
+      "book": 3,
+      "mark": 1,
+      "market": 9,
+      "order_lifecycle": 4,
+      "tape_records": 14,
+      "trade": 5
+    },
+    "fill_opportunities": {
+      "eligible": 4,
+      "fill_events": 3,
+      "filled_quantity_btc": "0.02000000",
+      "with_fill": 3,
+      "without_fill": 1
+    },
+    "orders": {
+      "active_at_terminal": 0,
+      "canceled": 1,
+      "canceled_unfilled": 1,
+      "fill_eligible": 3,
+      "filled": 2,
+      "submitted": 3,
+      "terminal": 3,
+      "with_trade_opportunity": 2
+    }
+  },
+  "frozen_generated_at_utc": "2026-08-23T00:00:00Z",
+  "gate": {
+    "economic_evidence_eligible": false,
+    "live_action_eligible": false,
+    "passed": true,
+    "promotion_eligible": false,
+    "status": "passed_demo_mechanics_only"
+  },
+  "identity": {
+    "accounting_contract_version": "continuous_accounting_contract.v2",
+    "code": {
+      "exact_bytes": "external_wheel_digest_or_git_commit_tree",
+      "identity_kind": "package_distribution",
+      "package_version": "0.1.2.dev0",
+      "version": "narrowgate_replay_demo_engine.v1"
+    },
+    "contract": {
+      "artifact_id": "public_replay_demo_contract",
+      "sha256": "d60491ce0fe921441472f1e728cdfe73eeeaaa763587f94bef3999d00a06b3b2",
+      "version": "narrowgate_replay_demo_contract.v1"
+    },
+    "state_contract_version": "continuous_replay_state.v2",
+    "tape": {
+      "artifact_id": "public_synthetic_queue_campaign_v1",
+      "schema_version": "narrowgate.synthetic_replay_tape.v1",
+      "sha256": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125"
+    }
+  },
+  "permissions": {
+    "external_order_submission": false,
+    "live_runtime_import": false,
+    "network_access": false,
+    "private_evidence_read": false,
+    "runtime_clock_read": false
+  },
+  "schema_version": "narrowgate_replay_demo_receipt.v1"
+}

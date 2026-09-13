@@ -1,0 +1,60 @@
+{
+  "schema_version": "causal_v12_1s_metrics_source_ready_amendment.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "status": "physical_materialization_amendment_only",
+  "audit_date": "2026-08-05",
+  "source_transport_contract": {
+    "nominal_interval_ms": 300000,
+    "maximum_source_ready_delay_ms": 2000,
+    "delayed_feature_ready_rule": "preserve_observed_timestamp_never_snap_earlier",
+    "early_timestamp_allowed": false,
+    "delay_above_bound_allowed": false,
+    "row_count_must_remain_288": true,
+    "duplicate_timestamp_allowed": false,
+    "post_sort_reversed_clock_allowed": false,
+    "physical_row_order_is_clock_authority": false,
+    "unique_timestamp_sort_before_grid_validation": true
+  },
+  "retained_corpus_audit": {
+    "root": "${NARROWGATE_DATA_ROOT}/raw_metrics",
+    "file_glob": "BTCUSDC-metrics-*.csv",
+    "file_count": 312,
+    "row_count": 89853,
+    "non_grid_file_count": 9,
+    "physically_shuffled_complete_file_count": 1,
+    "physically_shuffled_complete_files": [
+      "BTCUSDC-metrics-2026-07-19.csv"
+    ],
+    "delay_seconds_histogram": {
+      "0": 89844,
+      "1": 2,
+      "2": 7
+    },
+    "affected_frozen_refit_days": [
+      "2025-08-15",
+      "2025-08-25"
+    ],
+    "prediction_outcomes_read": false,
+    "economic_outcomes_read": false
+  },
+  "implementation": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_daily_sources.py",
+    "sha256": "57f912ad7073dde1bec8b516199cd7feeae038fb9bc6bb1f26adf85c1055c29a"
+  },
+  "tests": {
+    "path": "tests/test_causal_v12_1s_panel_materializer.py",
+    "sha256": "5bbd72507fe723d63a71da5d7479778d62dfd30db43ea511c1d25c4f71dbc7b2",
+    "result": "19_passed"
+  },
+  "report": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_metrics_source_ready_amendment_v1_20260805.md",
+    "sha256": "667a2bfe493cdab718120171505c314bcd8558f3e0000984b6bd3cbb7168e0f3"
+  },
+  "permissions": {
+    "physical_materialization_eligible": true,
+    "training_authorized": false,
+    "prediction_promotion_authorized": false,
+    "economic_replay_authorized": false,
+    "live_authorized": false
+  }
+}

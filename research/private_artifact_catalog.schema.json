@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:narrowgate:private-artifact-catalog:v1",
+  "title": "NarrowGate private artifact catalog",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "visibility",
+    "unit_id",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "narrowgate_private_artifact_catalog_v1"
+    },
+    "visibility": {
+      "const": "local_only_do_not_publish"
+    },
+    "documentation_scope": {
+      "const": "local_only_do_not_publish"
+    },
+    "unit_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at_utc": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_migration": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact_id",
+          "role",
+          "local_path",
+          "availability",
+          "panel_role",
+          "read_gate"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "local_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_document": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_line_before_migration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "availability": {
+            "const": "private_not_distributed"
+          },
+          "panel_role": {
+            "enum": [
+              "development",
+              "validation",
+              "sealed_holdout",
+              "operational",
+              "historical",
+              "historical_or_operational_unspecified"
+            ]
+          },
+          "read_gate": {
+            "type": "string",
+            "minLength": 1
+          },
+          "last_verified_utc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "related_public_docs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public_projection": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_interval_utc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

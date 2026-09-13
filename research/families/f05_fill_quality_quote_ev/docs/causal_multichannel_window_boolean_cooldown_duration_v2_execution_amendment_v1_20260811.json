@@ -1,0 +1,77 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v1",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "feature_semantics_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_feature_semantics_amendment_v1_20260811.json",
+    "sha256": "5d24db38bd0511db441ded022b7e402ea15dd26ea5f5df22e988cf50ec0de685"
+  },
+  "implementation_binding_replacements": {
+    "nested_chronological_oof": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "52ee8de64a90ff0dff03c002363b39fe4b63f579eb5d6b18bea05d1dad312d10",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "test_sha256": "2c2c949021248d5f3d6321660e83be62bd74a713b15e6f68ce3847bcc2ff8328"
+    },
+    "study_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "4b1370e28f3332548f17b663bb7e80fad439197dad279c370e0c8214e8a5b994",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "d1b5ce689167e581c4e716051321cb81fd4a3d84ed3a1a4b47d2c7dade4ec192"
+    }
+  },
+  "reporting_contract": {
+    "nominal_mechanics_denominator": {
+      "prefix": 40,
+      "added": 10,
+      "pooled": 50,
+      "economic_statistics_allowed": false
+    },
+    "exact_label_economic_denominator": {
+      "prefix": 33,
+      "added": 8,
+      "pooled": 41,
+      "economic_statistics_allowed": true
+    },
+    "reduced_support_diagnostic_denominator": {
+      "prefix": 7,
+      "added": 2,
+      "pooled": 9,
+      "economic_statistics_allowed": false,
+      "may_be_silently_pooled": false,
+      "may_be_described_as_validation_or_holdout": false
+    }
+  },
+  "role_audit_contract": {
+    "side_specific_training": true,
+    "one_shared_policy_per_side": true,
+    "reported_roles": ["opener", "add"],
+    "role_specific_support_required": true,
+    "role_specific_day_clustered_interval_required": true,
+    "role_specific_campaign_tail_required": true,
+    "role_specific_severe_harm_may_be_hidden_by_pooled_side": false,
+    "pre_outer_lcb_abstention_allowed": false
+  },
+  "benchmark_compatibility": {
+    "benchmark_base_spec_sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f",
+    "snapshot_schema_changed": false,
+    "queue_or_fill_semantics_changed": false,
+    "duration_vocabulary_changed": false,
+    "one_shot_label_estimand_changed": false,
+    "benchmark_reexecution_required": false
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "development_labels_generated": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

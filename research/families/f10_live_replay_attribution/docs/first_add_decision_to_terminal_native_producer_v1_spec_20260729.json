@@ -1,0 +1,81 @@
+{
+  "schema_version": "first_add_decision_to_terminal_native_producer.v1",
+  "identity": "first_add_decision_to_terminal_native_producer_v1",
+  "status": "refrozen_after_producer_smoke_before_formal_development_evaluation",
+  "canonical_spec_sha256": "c4c01803630d1f0d37b47fd7a8d160940f1648c5ab240e529fe49f4fe53ca284",
+  "scope": "Produce exact native first-add decision-to-campaign-terminal traces for the frozen 24A/16B Development panels; no model fitting, action selection, Validation, holdout, or live authority.",
+  "f10_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/first_add_decision_to_terminal_loss_diagnostic_v1_spec_20260729.json",
+    "sha256": "4b2fd6e704b6f81935f4632f7dee7dc1eec3ed0ced63123f9424c7ec0de049d4"
+  },
+  "baseline_contract_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+    "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
+    "reuse_scope": "data, corrected wall-time baseline, queue, P3, latency, BUY-q90 and replay semantics only; old implementation hashes and variance-time action identity are not inherited"
+  },
+  "market_source_manifest_identity": {
+    "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/market_source_manifest.json",
+    "sha256": "4c984dd6757c4c00c7359df0cb98662c2e45f7d6688b8ade428a38f1d7266003"
+  },
+  "native_module_identity": {
+    "path": "${NARROWGATE_EPHEMERAL_ROOT}/narrowgate_btcusdc_cpp_q90_build/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "65c5007e66978b2e36bb80ed89c3bb61edfdd051ffcfb3c8832a6630479aca5e",
+    "authority": "BUY-q90 native kernel lockstep only; full C++ tick replay authority remains false"
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "initial_state": "daily_fresh_start",
+    "event_clock": "merged_100ms",
+    "execution_trade_source": "Binance USD-M individual trades",
+    "native_orderbook": "CryptoHFT snapshot_delta_strict_exact_level",
+    "fill_cooldown_clock": "wall_time_85n",
+    "buy_q90": "enabled_cpp_kernel_lockstep",
+    "sync_degrade": "disabled_condition_on_no_historical_system_event_tape",
+    "sync_degrade_limitation": "historical AWS sync events are not recoverable; synthetic stress is excluded from market-mechanism primary evidence",
+    "trace_schema_version": "first_add_decision_to_terminal_trace.v1",
+    "trace_rows_max_per_day": 200000,
+    "q90_mismatch_trace_max": 1000,
+    "ml_enabled": false,
+    "promotion_eligible": false
+  },
+  "storage_gate": {
+    "minimum_free_gib": 61.25,
+    "checkpoint_granularity": "one_UTC_day",
+    "atomic_daily_parquet_and_audit": true
+  },
+  "producer_smoke_audit": {
+    "day": "2026-04-20",
+    "scope": "producer_and_feature_lineage_validation_only",
+    "model_fit_or_gate_evaluation": false,
+    "issues_found": [
+      "diagnostic campaign fill counts inherited legacy cross-campaign counters",
+      "native consumed-event audit read a stale result key",
+      "causal 5s taker-flow feature silently defaulted to zero when ML data was absent"
+    ],
+    "disposition": "stale smoke excluded; producer refrozen before the 40-day formal artifact"
+  },
+  "implementation_identity": {
+    "research/families/f10_live_replay_attribution/audit/first_add_decision_to_terminal_runner.py": "ffa841d1bbaedcccfa887fdf586daa7bbdac327a717c5d8c1055d8de7f8d4978",
+    "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_full_path_preflight.py": "80400ff27bff0c796f354b81d7eedb9f38accf9128aad9efea128517582e1fe7",
+    "models/backtest_tick.py": "2984eff0d79e82a9431524c04b7a758c64fff10fcc67fafbd4e2bb736520389c",
+    "models/backtest_config.py": "bd3214ea40a53266c2f16128c2b18a0881feeca4dd2fc93e52e34029f1fca12a",
+    "models/data_windows.py": "6edc935d7505699ddff4bebeb80b5d48b31c5f1e09f3c4811f131cd06f330139",
+    "models/exchange_book_replay.py": "30592c41eb1ab526c4b110c78c3943fd1e155013a833beb5d4e15f6953ed2a4b",
+    "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+    "strategy/fill_cooldown.py": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+    "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+    "strategy/dynamic_fill_hazard_model.py": "71734cd82a7728814aea2707cec5bb3fc35b177ad652e0fd163fa6394932719a",
+    "strategy/quote_core.py": "ceeb0a3a9b198300984fe0ebb336d1e2f5ff91564588b8fce263bca3f3d56605",
+    "strategy/policy_guards.py": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+    "strategy/signal.py": "da0c39ca4be956a7f01438080871eee8f00a350ea1b00c31e1b265e4a736d280",
+    "live/config.py": "8d1354ca9761d6364c949fff977906022a149e36070accc370b2034f074060a7",
+    "tests/test_first_add_decision_to_terminal_runner.py": "f8c06f807eccbb5891933ad354d620706ab33c0cc97479c247d922c6b1c70292",
+    "tests/test_first_add_decision_to_terminal_native_trace.py": "c40124f58da4eec3323a167d468d4f0f78c6b19eebd4fe921a6696be9c76df06"
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

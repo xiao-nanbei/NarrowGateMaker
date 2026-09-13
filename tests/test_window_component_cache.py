@@ -1,0 +1,628 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from models import backtest_tick as bt
+from models import data_windows as dw
+from models.data_windows import load_tick_window
+from models.native_exchange_book_cache import native_book_parser_identity
+from strategy.model_contract import (
+    REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+    REQUIRED_FEATURE_DAG_ID,
+    REQUIRED_FEATURE_DAG_SHA256,
+    REQUIRED_FEATURE_SEMANTICS_VERSION,
+)
+
+
+def test_execution_default_is_individual_but_native_parent_mode_stays_explicit(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bt, "load_individual_trades", lambda **kwargs: calls.append("trades"))
+    monkeypatch.setattr(bt, "load_aggtrades", lambda **kwargs: calls.append("aggTrades"))
+    bt.load_execution_trades(days=["2026-01-01"])
+    bt.load_execution_trades(days=["2026-01-01"], source="aggTrades")
+    assert calls == ["trades", "aggTrades"]
+    assert dw._normalize_execution_trade_source(None) == "trades"
+    monkeypatch.setattr(bt, "RAW_DIR", tmp_path)
+    # A self-aggregate is not a substitute for missing historical parent IDs.
+    derived = tmp_path / "2026-01-01/trade_aggregates_100ms.parquet"
+    derived.parent.mkdir()
+    pd.DataFrame({"group_id": [1], "feature_ready_ts_ms": [1767225600100]}).to_parquet(derived)
+    with pytest.raises(ValueError, match="one retained aggTrade source"):
+        dw.load_replay_aggregate_parents("2026-01-01", {"market_context_warmup_days": 0})
+
+
+def test_canonical_raw_source_is_in_cache_identity_and_replacement_changes_hash(tmp_path, monkeypatch):
+    monkeypatch.delenv("MM_RAW_TRADES_DIR", raising=False)
+    monkeypatch.setenv("NARROWGATE_RAW_DATA_ROOT", str(tmp_path / "raw"))
+    monkeypatch.setattr(bt, "DATA_ROOT", tmp_path / "derived")
+    monkeypatch.setattr(bt, "RAW_TRADES_DIR", bt.DATA_ROOT / "raw_trades")
+    monkeypatch.setattr(bt, "RAW_DIR", bt.DATA_ROOT / "raw")
+    monkeypatch.setattr(bt, "BARS_DIR", tmp_path / "bars")
+    monkeypatch.setattr(bt, "BBO_DIR", tmp_path / "bbo")
+    monkeypatch.setattr(bt, "L2_DIR", tmp_path / "l2")
+    monkeypatch.setattr(bt, "FEATURES_DIR", tmp_path / "features")
+    monkeypatch.setattr(bt, "SYMBOL", "BTCUSDC")
+    monkeypatch.setattr(dw, "_quality_policy_signatures", lambda: [])
+    day = "2026-01-01"
+    source = bt.daily_market_path(day, "BTCUSDC", "trades")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"first immutable source")
+    legacy = bt.RAW_TRADES_DIR / "BTCUSDC" / f"BTCUSDC-trades-{day}.csv"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("do not sign an unselected duplicate")
+    assert dw._execution_source_paths(day, "trades") == [source]
+    signature = dw._window_source_signature(day, load_ml=False, run_ml_inference=False,
+        feature_dir=tmp_path, execution_trade_source="trades", market_context_warmup_days=0)
+    assert [row[0] for row in signature] == [str(source)]
+    before_content = dw._execution_source_content_identity(day, "trades")
+    before_key = dw._window_market_context_cache_path(tmp_path, day, {})
+    before_reference = dw._signature_references(signature)
+    stat = source.stat()
+    replacement = source.with_suffix(".tmp")
+    replacement.write_bytes(b"other immutable source")
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    os.replace(replacement, source)
+    assert source.stat().st_size == stat.st_size
+    assert dw._execution_source_content_identity(day, "trades") != before_content
+    assert dw._window_market_context_cache_path(tmp_path, day, {}) != before_key
+    assert dw._signature_references(signature) != before_reference
+    assert dw._reference_role(str(source)) == "execution_trades"
+
+
+def _trades() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "transact_time": [1_700_000_000_000 + 1_000 * i for i in range(20)],
+            "price": [90_000.0 + 0.1 * i for i in range(20)],
+            "qty": [0.001] * 20,
+        }
+    )
+
+
+def test_runtime_bounds_are_pushed_to_readers_and_all_market_cache_identities(tmp_path, monkeypatch):
+    calls = {name: [] for name in ("trades", "bbo", "l2")}
+    for name, function in (("trades", "load_execution_trades"), ("bbo", "load_bbo_data"), ("l2", "load_l2_data")):
+        def reader(*args, _name=name, **kwargs):
+            calls[_name].append(kwargs.get("time_bounds_ms"))
+            return _trades() if _name == "trades" else None
+        monkeypatch.setattr(bt, function, reader)
+    monkeypatch.setattr(bt, "load_1s_bars", lambda **kwargs: pd.DataFrame(
+        {"close": np.full(80, 100.), "trade_count": np.ones(80)},
+        index=pd.date_range("2023-11-14T22:13:00Z", periods=80, freq="s")))
+    params = {"ml_enabled": False, "market_context_warmup_days": 1,
+              "trade_visibility_model": "causal_100ms_batches",
+              "exec_message_delivery_profile_path": "explicit-model",
+              "_runtime_input_bounds_ms": (1_700_000_000_123, 1_700_000_000_451)}
+    kwargs = dict(load_ml=False, require_ml=False, require_historical_bbo=False, cache_dir=tmp_path)
+    load_tick_window("2099-01-02", params, **kwargs)
+    assert calls == {"trades": [(1_700_000_000_100, 1_700_000_000_500)],
+                     "bbo": [params["_runtime_input_bounds_ms"]], "l2": [params["_runtime_input_bounds_ms"]]}
+    load_tick_window("2099-01-02", params, **kwargs)
+    assert len(calls["trades"]) == 1  # same bounded v2 component reused
+    other = {**params, "_runtime_input_bounds_ms": (1_700_000_000_456, 1_700_000_000_900)}
+    load_tick_window("2099-01-02", other, **kwargs)
+    full = {key: value for key, value in params.items() if key != "_runtime_input_bounds_ms"}
+    load_tick_window("2099-01-02", full, **kwargs)
+    assert calls["trades"][-2:] == [(1_700_000_000_400, 1_700_000_000_900), None]
+    assert len({dw._window_market_context_cache_path(tmp_path, "2099-01-02", value)
+                for value in (params, other, full)}) == 3
+    assert len({dw.canonical_sha256(dw._window_market_context_v2_identity("2099-01-02", value)[0])
+                for value in (params, other, full)}) == 3
+    assert len({dw._window_cache_path(tmp_path, "2099-01-02", value, load_ml=False, require_ml=False,
+                                    run_ml_inference=False, feature_dir=tmp_path,
+                                    require_target_feature_files=False, cross_market_enabled=False,
+                                    with_ml_cache=False, require_historical_bbo=False)
+                for value in (params, other, full)}) == 3
+
+
+@pytest.mark.parametrize("bounds", [(3, 2), (True, 3), [1], "1,2"])
+def test_runtime_loader_bounds_reject_malformed_contract(bounds):
+    with pytest.raises(ValueError, match="runtime loader bounds"):
+        dw._runtime_loader_bounds({"_runtime_input_bounds_ms": bounds})
+
+
+@pytest.mark.parametrize("prefix_rows", [1, 2, 3])
+@pytest.mark.parametrize("callback_ms", [20., 20_000.])
+def test_initial_bounded_book_prefix_preserves_delay_draws_and_callback_watermark(prefix_rows, callback_ms):
+    from dataclasses import replace
+    from models.tick_data_types import book_observation_fields
+    from tests.test_exec_book_visibility_delay import _profile_execution_message_fixture
+
+    _, parents, profile, window = _profile_execution_message_fixture()
+    for group in profile["groups"]:
+        group["rows"] = 2
+        group["simulation_clock_pair_samples_ms"] = [[20., callback_ms], [30., callback_ms * 1.1]]
+    # Crop inside a carried observation to cover its original message owner.
+    for name in ("bbo_data", "l2_data"):
+        book = window[name]
+        observed = book.ts_ms * 1000
+        observed[:3] = observed[0]
+        window[name] = replace(book, observation_ts_us=observed,
+                               source_observed=np.r_[True, False, False, np.ones(len(observed) - 3, dtype=bool)])
+    common = dict(symbol="BTCUSDC", profile=profile, seed=7, parent_trades=parents,
+                  parent_source_identity=[{"sha256": "synthetic"}])
+    full = dw.execution_message_delivery_params(window, **common)
+    bounded = dict(window, _book_delivery_prefix={})
+    for name, feed in (("bbo_data", "bbo"), ("l2_data", "depth")):
+        book = window[name]
+        fields = ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty") if feed == "bbo" else (
+            "ts_ms", "bid_px", "bid_qty", "ask_px", "ask_qty")
+        bounded[name] = replace(book, **{field: getattr(book, field)[prefix_rows:] for field in fields},
+                                **book_observation_fields(book, slice(prefix_rows, None)))
+        bounded["_book_delivery_prefix"][feed] = {
+            "ts_ms": book.ts_ms[:prefix_rows], "observation_ts_us": book.observation_ts_us[:prefix_rows]}
+    actual = dw.execution_message_delivery_params(bounded, **common)
+    for feed in ("bbo", "depth"):
+        assert actual["_exec_message_source_row_offsets"][feed] == prefix_rows
+        assert actual["_exec_message_initial_ready_ns"][feed] == full["_exec_message_delivery"][feed][
+            "source_feature_ready_ts_ns"][prefix_rows - 1]
+        for name, values in actual["_exec_message_delivery"][feed].items():
+            np.testing.assert_array_equal(values, full["_exec_message_delivery"][feed][name][prefix_rows:])
+    with pytest.raises(ValueError, match="only valid at the initial"):
+        dw.execution_message_delivery_params(bounded, prior_delivery=actual, **common)
+    resumed_window = {key: value for key, value in bounded.items() if key != "_book_delivery_prefix"}
+    for name, feed in (("bbo_data", "bbo"), ("l2_data", "depth")):
+        book = bounded[name]
+        fields = ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty") if feed == "bbo" else (
+            "ts_ms", "bid_px", "bid_qty", "ask_px", "ask_qty")
+        resumed_window[name] = replace(book, **{field: getattr(book, field)[1:] for field in fields},
+                                       **book_observation_fields(book, slice(1, None)))
+    resumed = dw.execution_message_delivery_params(resumed_window, prior_delivery=actual, **common)
+    for feed in ("bbo", "depth"):
+        assert resumed["_exec_message_source_row_offsets"][feed] == prefix_rows + 1
+        for name, values in resumed["_exec_message_delivery"][feed].items():
+            np.testing.assert_array_equal(values, full["_exec_message_delivery"][feed][name][prefix_rows + 1:])
+
+
+@pytest.mark.parametrize("usable", [None, [True, False]])
+def test_bbo_usability_survives_window_and_component_pickle(tmp_path, usable):
+    from models.tick_data_types import HistoricalBBOData
+    axis = np.array([100, 200])
+    book = HistoricalBBOData(axis, *(np.ones(2) for _ in range(4)),
+                             usable=None if usable is None else np.array(usable, dtype=bool))
+    common = dict(trades=_trades(), var_ts_ms=axis, var_ssq=np.ones(2),
+                  var_ti=None, var_retsq=None, bbo_data=book, l2_data=None)
+    window = dw.WindowData(**common)
+    component = dw.WindowMarketContext(
+        **common, execution_trade_source="trades", book_source_authority="synthetic",
+        book_dataset_version="test", formal_lifecycle_replay_eligible=False,
+        provider_sensitivity_replay_eligible=False, exact_queue_policy_eligible=False)
+    window_path, component_path = tmp_path / "window.pkl", tmp_path / "component.pkl"
+    dw._write_cached_window(window_path, window)
+    dw._write_component(component_path, component)
+    for loaded in (dw._load_cached_window(window_path),
+                   dw._load_component(component_path, dw.WindowMarketContext)):
+        assert loaded is not None
+        np.testing.assert_array_equal(loaded.bbo_data.ts_ms, axis)
+        if usable is None:
+            assert loaded.bbo_data.usable is None
+        else:
+            np.testing.assert_array_equal(loaded.bbo_data.usable, usable)
+            assert loaded.bbo_data.usable.dtype == bool
+
+
+def test_bbo_invalidation_changes_legacy_book_cache_namespace(tmp_path, monkeypatch):
+    monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
+
+    def paths():
+        return (
+            dw._window_cache_path(
+                tmp_path, "2099-01-02", {}, load_ml=False, require_ml=False,
+                run_ml_inference=False, feature_dir=tmp_path, require_target_feature_files=False,
+                cross_market_enabled=False, with_ml_cache=False, require_historical_bbo=True),
+            dw._window_market_context_cache_path(tmp_path, "2099-01-02", {}),
+        )
+
+    current = paths()
+    monkeypatch.setattr(dw, "WINDOW_CACHE_VERSION", 14)
+    monkeypatch.setattr(dw, "WINDOW_COMPONENT_CACHE_VERSION", 2)
+    assert all(new != old for new, old in zip(current, paths(), strict=True))
+
+
+def test_parent_identity_reloads_after_cached_values_and_binds_retained_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(bt, "RAW_DIR", tmp_path)
+    header = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker\n"
+    first = tmp_path / "BTCUSDC-aggTrades-2026-01-01.csv"
+    target = tmp_path / "BTCUSDC-aggTrades-2026-01-02.csv"
+    first.write_text(header + "1,100,0.001,10,10,1767225600000,true\n")
+    target.write_text(header + "2,100,0.002,11,12,1767312000000,true\n")
+    params = {"symbol": "BTCUSDC", "market_context_warmup_days": 1}
+    parents, identity = dw.load_replay_aggregate_parents("2026-01-02", params)
+    assert parents["first_trade_id"].tolist() == [10, 11]
+    assert parents["last_trade_id"].tolist() == [10, 12]
+    assert all(parents[name].dtype == np.dtype("int64") for name in (
+        "agg_trade_id", "first_trade_id", "last_trade_id",
+    ))
+    # Neither a whole-window value-cache hit nor an earlier parent load owns
+    # the next run's packet mapping. A changed source is read and rebound.
+    target.write_text(header + "2,100,0.003,11,13,1767312000000,true\n")
+    changed, changed_identity = dw.load_replay_aggregate_parents("2026-01-02", params)
+    assert changed["last_trade_id"].tolist() == [10, 13]
+    assert identity[1]["sha256"] != changed_identity[1]["sha256"]
+    first.unlink()
+    with pytest.raises(ValueError, match="one retained aggTrade source"):
+        dw.load_replay_aggregate_parents("2026-01-02", params)
+
+
+def test_compute_preroll_changes_prediction_cache_not_market_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
+    monkeypatch.setattr(dw, "_model_artifact_signatures", lambda *args: [])
+    day = "2099-01-02"
+    base = {"market_context_warmup_days": 1}
+    timed = {**base, "runtime_compute_clock": "source_time_assumption"}
+
+    def identities(params):
+        return (
+            dw._window_model_overlay_cache_path(
+                tmp_path, day, params, feature_dir=tmp_path,
+                run_ml_inference=False, cross_market_enabled=False,
+                market_context_path=tmp_path / "shared.pkl",
+            ),
+            dw._window_model_overlay_v2_identity(
+                day, params, feature_dir=tmp_path, run_ml_inference=False,
+                cross_market_enabled=False, market_context_identity_sha256="a" * 64,
+            ),
+        )
+
+    old, new = identities(base), identities(timed)
+    assert old[0] != new[0]
+    assert "prediction_context_start_ms" not in old[1]
+    start = int(pd.Timestamp(day, tz="UTC").value // 1_000_000)
+    assert new[1]["prediction_context_start_ms"] == start
+    assert new[1]["prediction_context_end_ms"] == start + 86_400_000 - 1
+    assert (
+        dw._window_market_context_v2_identity(day, base)
+        == dw._window_market_context_v2_identity(day, timed)
+    )
+    assert identities({**timed, "replay_event_clock_start_ts_ms": start + 1000}) != new
+    assert identities({**timed, "replay_event_clock_end_ts_ms": start + 2000}) != new
+
+
+def test_prediction_cache_tracks_separate_feature_warmup_directory(tmp_path, monkeypatch):
+    panel, warmup = tmp_path / "panel", tmp_path / "warmup"
+    panel.mkdir()
+    warmup.mkdir()
+    monkeypatch.delenv("MM_FEATURE_WARMUP_DIR", raising=False)
+    days = ["2099-01-01", "2099-01-02"]
+    before = dw._feature_source_signatures(panel, days)
+    source = warmup / "features_2099-01-01.parquet"
+    source.write_bytes(b"synthetic feature bytes")
+    monkeypatch.setenv("MM_FEATURE_WARMUP_DIR", str(warmup))
+    bound = dw._feature_source_signatures(panel, days)
+    assert bound != before
+    assert any(row[0] == str(source) for row in bound)
+    source.write_bytes(b"changed synthetic feature bytes")
+    assert dw._feature_source_signatures(panel, days) != bound
+
+
+@pytest.mark.parametrize(
+    "changed_input", ["dtype", "_read_aggtrade_csv", "_read_individual_trade_csv"]
+)
+def test_trade_reader_change_invalidates_all_market_caches_not_native(
+    tmp_path: Path, monkeypatch, changed_input: str,
+) -> None:
+    monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
+    params = {"execution_trade_source": "trades", "market_context_warmup_days": 0}
+
+    def identities():
+        return (
+            dw._window_cache_path(
+                tmp_path, "2099-01-02", params,
+                load_ml=False, require_ml=False, run_ml_inference=False,
+                feature_dir=tmp_path, require_target_feature_files=False,
+                cross_market_enabled=False, with_ml_cache=False,
+                require_historical_bbo=False,
+            ),
+            dw._window_market_context_cache_path(tmp_path, "2099-01-02", params),
+            dw._window_market_context_v2_identity("2099-01-02", params)[0],
+        )
+
+    before = identities()
+    native_before = native_book_parser_identity()
+    if changed_input == "dtype":
+        current = np.dtype(bt.AGGTRADE_DTYPES["quantity"])
+        monkeypatch.setitem(
+            bt.AGGTRADE_DTYPES, "quantity",
+            np.float32 if current == np.dtype("float64") else np.float64,
+        )
+    else:
+        def changed_reader(path):
+            raise AssertionError("identity checks must not read market data")
+
+        monkeypatch.setattr(bt, changed_input, changed_reader)
+
+    assert all(old != new for old, new in zip(before, identities(), strict=True))
+    assert native_book_parser_identity() == native_before
+    assert not list(tmp_path.iterdir())
+
+
+def test_new_window_miss_persists_reusable_component_not_monolith(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls = {"trades": 0, "bars": 0, "bbo": 0, "l2": 0}
+
+    def load_trades(*args, **kwargs):
+        calls["trades"] += 1
+        return _trades()
+
+    def load_bars(*args, **kwargs):
+        calls["bars"] += 1
+        return None
+
+    def load_bbo(*args, **kwargs):
+        calls["bbo"] += 1
+        return None
+
+    def load_l2(*args, **kwargs):
+        calls["l2"] += 1
+        return None
+
+    monkeypatch.setattr(bt, "load_execution_trades", load_trades)
+    monkeypatch.setattr(bt, "load_1s_bars", load_bars)
+    monkeypatch.setattr(bt, "load_bbo_data", load_bbo)
+    monkeypatch.setattr(bt, "load_l2_data", load_l2)
+    params = {
+        "execution_trade_source": "trades",
+        "market_context_warmup_days": 0,
+        "window_cache_write_enabled": True,
+        "ml_enabled": False,
+    }
+
+    first = load_tick_window(
+        "2099-01-02",
+        params,
+        load_ml=False,
+        require_ml=False,
+        require_historical_bbo=False,
+        cache_dir=tmp_path,
+    )
+    assert calls == {"trades": 1, "bars": 1, "bbo": 1, "l2": 1}
+    assert len(first.trades) == 20
+    assert not list(tmp_path.glob("*_tick_window_v13_*.pkl"))
+    components = list(
+        (tmp_path / "components_v2" / "market_context_day_v2" / "btcusdc" / "2099-01-02").glob(
+            "*/manifest.json"
+        )
+    )
+    assert len(components) == 1
+    artifact_dir = components[0].parent
+    assert (artifact_dir / "trades.parquet").is_file()
+    assert (artifact_dir / "rolling_arrays.npz").is_file()
+    assert (artifact_dir / "source_references.json").is_file()
+    assert not list(artifact_dir.glob("*.pkl"))
+
+    gate_only_change = {
+        **params,
+        "execution_trade_source": "individual",
+        "require_ml": True,
+        "require_target_feature_files": True,
+        "_formal_quality_day_manifest_sha256": "different-gate-only-identity",
+    }
+    second = load_tick_window(
+        "2099-01-02",
+        gate_only_change,
+        load_ml=False,
+        require_ml=False,
+        require_historical_bbo=False,
+        cache_dir=tmp_path,
+    )
+
+    pd.testing.assert_frame_equal(second.trades, first.trades)
+    assert second.var_ts_ms.tolist() == first.var_ts_ms.tolist()
+    assert calls == {"trades": 1, "bars": 1, "bbo": 1, "l2": 1}
+
+
+def test_model_overlay_reuses_predictions_without_copying_market_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls = {"trades": 0, "bars": 0, "bbo": 0, "l2": 0, "ml": 0}
+
+    def count(name, value):
+        def loader(*args, **kwargs):
+            calls[name] += 1
+            return value
+
+        return loader
+
+    monkeypatch.setattr(bt, "load_execution_trades", count("trades", _trades()))
+    monkeypatch.setattr(bt, "load_1s_bars", count("bars", None))
+    monkeypatch.setattr(bt, "load_bbo_data", count("bbo", None))
+    monkeypatch.setattr(bt, "load_l2_data", count("l2", None))
+
+    def load_ml(*args, **kwargs):
+        calls["ml"] += 1
+        return (
+            pd.Series([1, 2], dtype="int64").to_numpy(),
+            pd.Series([0.4, 0.6], dtype="float64").to_numpy(),
+            {"feature_a": pd.Series([3.0, 4.0]).to_numpy()},
+        )
+
+    monkeypatch.setattr(bt, "load_ml_predictions", load_ml)
+    feature_dir = tmp_path / "features"
+    feature_dir.mkdir()
+    (feature_dir / "causal_feature_manifest.json").write_text("{}\n")
+    params = {
+        "execution_trade_source": "trades",
+        "market_context_warmup_days": 0,
+        "window_cache_write_enabled": True,
+        "ml_enabled": False,
+        "toxicity_horizon_s": 10,
+    }
+    first = load_tick_window(
+        "2099-01-02",
+        params,
+        load_ml=True,
+        require_ml=True,
+        run_ml_inference=False,
+        feature_dir=feature_dir,
+        require_historical_bbo=False,
+        cache_dir=tmp_path / "cache",
+    )
+    second = load_tick_window(
+        "2099-01-02",
+        params,
+        load_ml=True,
+        require_ml=True,
+        run_ml_inference=False,
+        feature_dir=feature_dir,
+        require_historical_bbo=False,
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert calls == {"trades": 1, "bars": 1, "bbo": 1, "l2": 1, "ml": 1}
+    assert first.ml_data[1].tolist() == second.ml_data[1].tolist()
+    overlays = list(
+        (
+            tmp_path / "cache" / "components_v2" / "model_overlay_day" / "btcusdc" / "2099-01-02"
+        ).glob("*/manifest.json")
+    )
+    assert len(overlays) == 1
+    assert not list((tmp_path / "cache").glob("*_tick_window_v13_*.pkl"))
+
+
+@pytest.mark.parametrize("changed_input", ["manifest", "parquet", "directory"])
+def test_actual_inference_panel_changes_only_model_overlay_cache(
+    tmp_path, monkeypatch, changed_input,
+):
+    calls = {"trades": 0, "ml": 0}
+
+    def load_trades(*_args, **_kwargs):
+        calls["trades"] += 1
+        return _trades()
+
+    def load_ml(*_args, **kwargs):
+        calls["ml"] += 1
+        panel = Path(kwargs["feature_dir"])
+        values = pd.read_parquet(panel / "features_2099-01-02.parquet")["feature_a"]
+        return (np.array([1, 2]), values.to_numpy(), {"feature_a": values.to_numpy()})
+
+    monkeypatch.setattr(bt, "load_execution_trades", load_trades)
+    monkeypatch.setattr(bt, "load_1s_bars", lambda *_a, **_k: None)
+    monkeypatch.setattr(bt, "load_bbo_data", lambda *_a, **_k: None)
+    monkeypatch.setattr(bt, "load_l2_data", lambda *_a, **_k: None)
+    monkeypatch.setattr(bt, "load_ml_predictions", load_ml)
+    panel = tmp_path / "inference-panel"
+    panel.mkdir()
+    manifest = panel / "causal_feature_manifest.json"
+    manifest.write_text('{"panel": "original"}')
+    pd.DataFrame({"feature_a": [0.4, 0.6]}).to_parquet(panel / "features_2099-01-02.parquet")
+    params = {
+        "execution_trade_source": "trades", "market_context_warmup_days": 0,
+        "window_cache_write_enabled": True, "ml_enabled": False,
+    }
+
+    def load(selected):
+        return load_tick_window(
+            "2099-01-02", params, load_ml=True, require_ml=True, run_ml_inference=False,
+            feature_dir=selected, require_historical_bbo=False, cache_dir=tmp_path / "cache",
+        )
+
+    first = load(panel)
+    load(panel)
+    assert calls == {"trades": 1, "ml": 1}
+    if changed_input == "manifest":
+        manifest.write_text('{"panel": "new-inference-dates"}')
+    else:
+        if changed_input == "directory":
+            panel = tmp_path / "another-inference-panel"
+            panel.mkdir()
+            (panel / "causal_feature_manifest.json").write_text(manifest.read_text())
+        pd.DataFrame({"feature_a": [0.2, 0.8]}).to_parquet(
+            panel / "features_2099-01-02.parquet"
+        )
+    second = load(panel)
+    load(panel)
+    assert calls == {"trades": 1, "ml": 2}
+    if changed_input == "manifest":
+        np.testing.assert_array_equal(first.ml_data[1], second.ml_data[1])
+    else:
+        np.testing.assert_array_equal(second.ml_data[1], [0.2, 0.8])
+        assert not np.array_equal(first.ml_data[1], second.ml_data[1])
+
+
+@pytest.mark.parametrize("cache_layer", ["whole_window", "overlay_v1", "overlay_v2"])
+@pytest.mark.parametrize("compatible", [True, False])
+def test_reusing_cached_inference_checks_current_input_abi_once(
+    tmp_path, monkeypatch, cache_layer, compatible,
+):
+    panel = tmp_path / "features"
+    panel.mkdir()
+    model = tmp_path / "models"
+    model.mkdir()
+    interface = {
+        "schema_version": 3, "symbol": "BTCUSDC",
+        "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
+        "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
+        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+        "feature_bucket_ms": 10000, "feature_ready_offset_ms": 10000,
+        "feature_timestamp_semantics": "left_label_bucket_end",
+        "feature_cutoff_semantics": "strict_exclusive_completed_bucket_end",
+        "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+        "microstructure_5s_semantics": (
+            "trailing_five_seconds_from_causal_left_labelled_1s_bars"
+        ),
+        "market_stage": "minimal", "reference_symbol": "BTCUSDT",
+    }
+    (model / "dir_10s_meta.json").write_text(json.dumps({**interface, "feature_cols": ["a"]}))
+    # The cache already contains predictions; the model file is a locator,
+    # not something this cache-hit interface check loads for inference.
+    (model / "dir_10s.txt").write_text("synthetic previously-cached model\n")
+    if not compatible:
+        interface["feature_cutoff_semantics"] = "inclusive"
+    (panel / "causal_feature_manifest.json").write_text(json.dumps(interface))
+    monkeypatch.setattr(bt, "MODEL_DIR", model)
+    monkeypatch.setattr(bt, "SYMBOL", "BTCUSDC")
+    monkeypatch.delenv("MM_FEATURE_WARMUP_DIR", raising=False)
+    monkeypatch.setattr(bt, "load_execution_trades", lambda *_a, **_k: _trades())
+    monkeypatch.setattr(bt, "load_1s_bars", lambda *_a, **_k: None)
+    monkeypatch.setattr(bt, "load_bbo_data", lambda *_a, **_k: None)
+    monkeypatch.setattr(bt, "load_l2_data", lambda *_a, **_k: None)
+    calls = {"inference": 0, "validation": 0}
+
+    def old_inference(*_args, **_kwargs):
+        # Reproduce a cache emitted before the new input ABI check existed.
+        calls["inference"] += 1
+        return (np.array([1, 2]), np.array([0.4, 0.6]), {"a": np.array([1.0, 2.0])})
+
+    monkeypatch.setattr(bt, "load_ml_predictions", old_inference)
+    params = {
+        "execution_trade_source": "trades", "market_context_warmup_days": 0,
+        "ml_enabled": True, "toxicity_horizon_s": 5,
+        "legacy_monolithic_window_cache_write_enabled": cache_layer == "whole_window",
+        "legacy_component_v1_write_enabled": cache_layer == "overlay_v1",
+    }
+    if cache_layer == "overlay_v1":
+        monkeypatch.setattr(dw, "load_model_overlay", lambda **_k: None)
+
+    def load():
+        return load_tick_window(
+            "2099-01-02", params, feature_dir=panel, require_historical_bbo=False,
+            cache_dir=tmp_path / "cache",
+        )
+
+    validate = bt._load_ml_inference_metadata
+
+    def counted_validation(path, *, toxicity_horizon_s):
+        calls["validation"] += 1
+        assert path == panel
+        assert toxicity_horizon_s == 5
+        return validate(path, toxicity_horizon_s=toxicity_horizon_s)
+
+    monkeypatch.setattr(bt, "_load_ml_inference_metadata", counted_validation)
+    load()
+    assert calls == {"inference": 1, "validation": 0}
+    if compatible:
+        result = load()
+        assert result.ml_data[1].tolist() == [0.4, 0.6]
+    else:
+        with pytest.raises(RuntimeError, match="incompatible feature_cutoff_semantics"):
+            load()
+    assert calls == {"inference": 1, "validation": 1}

@@ -1,0 +1,22 @@
+{
+  "delta_grid": [
+    0.1,
+    14.0,
+    30.0
+  ],
+  "delta_star": 14.0,
+  "kappa_eff": 0.067,
+  "metadata": {
+    "authority": "public_dry_run_only",
+    "distance_unit": "USDC_per_BTC",
+    "event_type": "touch",
+    "horizon_s": 10.0
+  },
+  "model_type": "empirical_survival",
+  "probability_grid": [
+    0.8,
+    0.2,
+    0.01
+  ],
+  "schema_version": "narrowgate_p3_touch_calibration.v2"
+}

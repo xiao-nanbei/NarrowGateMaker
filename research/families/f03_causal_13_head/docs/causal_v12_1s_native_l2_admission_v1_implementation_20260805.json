@@ -1,0 +1,170 @@
+{
+  "artifact_identity": "causal_v12_1s_native_l2_admission_v1_implementation_20260805",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "2026_07_29_native_l2_source_materialization_blocker_cleared",
+  "decision": {
+    "target_day": "2026-07-29",
+    "warmup_day": "2026-07-28",
+    "physical_materialization_eligible": true,
+    "failure_reasons": [],
+    "provider_fallback_used": false,
+    "provider_source_upgraded_to_native": false,
+    "scope": "native L2 daily source admission for one F03 target day"
+  },
+  "implementation": {
+    "quality_schema": "narrowgate.native_l2_day_quality.v1",
+    "source_kind": "cryptohft_native_snapshot_delta",
+    "clock_source": "cryptohft_transaction_time_100ms_grid",
+    "timestamp_source": "transaction",
+    "cadence_ms": 100,
+    "levels": 20,
+    "required_quality_dimensions": [
+      "sequence",
+      "coverage",
+      "gap",
+      "freshness",
+      "depth",
+      "source_clock",
+      "cross_channel_consistency",
+      "input_sha256"
+    ],
+    "target_and_warmup_authority_are_separate": true,
+    "canonical_identity_is_fail_closed": true,
+    "atomic_artifact_write": true
+  },
+  "code_identities": {
+    "native_l2_daily_quality": {
+      "path": "models/audit/native_l2_daily_quality.py",
+      "sha256": "55b68c58e22d8ea1da40d06d042551ebc93ec54be576be2aecf3db2763021e8c"
+    },
+    "f03_daily_sources": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_daily_sources.py",
+      "sha256": "5f4292ef6e782a7aa4faaf1eb8f15c8ed324f3b1ecd026f0965effa52e149734"
+    },
+    "f03_orico_source_spec": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_orico_source_spec.py",
+      "sha256": "ed78beea07d34d2ddb8fda62cf566726bbdbc6bc4f9ed282f3d458ea30830a99"
+    },
+    "tests": {
+      "path": "tests/test_native_l2_daily_quality.py",
+      "sha256": "5557aa9f518bf74928a2e5ba12c14779219d09b6f912d9ddc2f60adbba76b161"
+    }
+  },
+  "authority_inputs": {
+    "registry_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_postfit_oos_20260725_31_context_registry_v1/manifest.json",
+      "sha256": "2a89055ee2532c842a1f1243bb90264b7ace8c695174690c7e0d38c4f9812484",
+      "size_bytes": 17704
+    },
+    "sequence_detail": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/marketdata_update_20260802/cryptohft_btcusdc_20260726_31_sequence.json",
+      "sha256": "18e486f24e0c7e29a8887f711e02538730c62d66cef6d1862365077c47791583",
+      "size_bytes": 23059
+    },
+    "sequence_summary": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/marketdata_update_20260802/narrowgate_20260725_31_sequence_audit.csv",
+      "sha256": "5f90bb2ebb24ca046d69cf06134afe0ffd6b9ab3a2f197a30da3dc5cda99ed90",
+      "size_bytes": 294
+    },
+    "source_availability": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/marketdata_update_20260802/narrowgate_20260725_31_source_availability.csv",
+      "sha256": "496914c664565089daefc64ca55275e43ae450d7b8b8e8a04b82af3679590196",
+      "size_bytes": 520
+    }
+  },
+  "daily_quality_artifacts": {
+    "2026-07-28": {
+      "role": "previous_natural_day_midnight_warmup_only",
+      "path": "${NARROWGATE_DATA_ROOT}/native_l2_daily_quality_v1/quality/BTCUSDC-2026-07-28.json",
+      "file_sha256": "5094bbfc0472b3ea5f8ab3844442582caa0ca91c0163d8aa73ff74c7a810e417",
+      "size_bytes": 6836,
+      "identity_sha256": "3db66d13f8b46d4bedd9b7995f03d04131f58379be27fd0a79151d818ca587a8",
+      "native_sequence_valid": true,
+      "normalized_structural_valid": true,
+      "target_replay_candidate": false,
+      "target_failure_reasons": [
+        "max_contiguous_gap_exceeds_target_limit"
+      ],
+      "midnight_warmup_candidate": true,
+      "midnight_warmup_failure_reasons": [],
+      "coverage": 0.9936414698338134,
+      "p99_gap_s": 0.18,
+      "max_gap_s": 419.735,
+      "end_age_s": 0.129,
+      "valid_spread_ratio": 1.0,
+      "l2_sha256": "3c5c8fcb1d748dea3f9f903ab482dd6f3fc3b3725995f5cb9bd26ce006632810"
+    },
+    "2026-07-29": {
+      "role": "native_target_and_midnight_warmup",
+      "path": "${NARROWGATE_DATA_ROOT}/native_l2_daily_quality_v1/quality/BTCUSDC-2026-07-29.json",
+      "file_sha256": "7f3cea217bb6b8b360f7f62c4a8a3fba2773bb229c872a408682d7d5e2307690",
+      "size_bytes": 6757,
+      "identity_sha256": "47bfa8871bb052648c9bc36606b4aeac6e52bdf7ab00ae3d930890b3d18a711e",
+      "native_sequence_valid": true,
+      "normalized_structural_valid": true,
+      "target_replay_candidate": true,
+      "target_failure_reasons": [],
+      "midnight_warmup_candidate": true,
+      "midnight_warmup_failure_reasons": [],
+      "coverage": 0.9999991203703602,
+      "p99_gap_s": 0.172,
+      "max_gap_s": 2.571,
+      "end_age_s": 0.163,
+      "valid_spread_ratio": 1.0,
+      "l2_sha256": "39265f39bb3ddf3b82cee2f637bb9ec10d6d899cc6fe6705ff0722da0429f382"
+    }
+  },
+  "physical_source_probe": {
+    "source_spec": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_native_20260729_source_spec.json",
+      "sha256": "87a863f8ed850253a551a0ccd9e111c5a2d376ae6d123a8fe27baab7590273db",
+      "size_bytes": 2121
+    },
+    "probe": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_native_20260729_source_probe.json",
+      "sha256": "95bab8048f99d31700a66bd825347555416cb34c9692f8d843b0eea4307026d7",
+      "size_bytes": 27670
+    },
+    "bundle_identity_sha256": "25a3d6bb5a25f967172b0cb9b6879b0b3887f4f4aa0a757cc8f13d2641220a7a",
+    "physical_materialization_eligible": true,
+    "failure_reasons": [],
+    "required_days": [
+      "2026-07-28",
+      "2026-07-29"
+    ],
+    "all_path_day_denominators_valid": true,
+    "native_quality_schema_used": true,
+    "provider_fallback_used": false,
+    "economic_outcomes_read": false,
+    "ten_second_feature_rows_accepted": false
+  },
+  "verification": {
+    "focused_pytest": {
+      "command": ".venv/bin/python -m pytest -q tests/test_native_l2_daily_quality.py",
+      "passed": 7
+    },
+    "admission_regression": {
+      "command": ".venv/bin/python -m pytest -q tests/test_native_l2_daily_quality.py tests/test_causal_v12_1s_panel_materializer.py tests/test_causal_v12_1s_orico_source_spec.py",
+      "passed": 26
+    },
+    "ruff_check": "passed",
+    "ruff_format_check": "passed"
+  },
+  "permissions": {
+    "native_2026_07_29_source_materialization_eligible": true,
+    "native_2026_07_28_target_materialization_eligible": false,
+    "native_2026_07_28_midnight_warmup_eligible": true,
+    "all_2026_native_days_authorized": false,
+    "bulk_feature_panel_materialization_authorized": false,
+    "labels_read": false,
+    "predictions_read": false,
+    "economic_outcomes_read": false,
+    "training_started": false,
+    "training_authorized": false,
+    "validation_authorized": false,
+    "action_authorized": false,
+    "baseline_authorized": false,
+    "live_authorized": false
+  }
+}

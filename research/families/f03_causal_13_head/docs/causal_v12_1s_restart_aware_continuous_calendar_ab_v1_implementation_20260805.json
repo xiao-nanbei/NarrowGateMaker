@@ -1,0 +1,96 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_calendar_ab.implementation.v1",
+  "identity": "causal_v12_1s_candidate_vs_current_v9_10s_control_restart_aware_71d_v1",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "preflight_and_runner_skeleton_implemented_candidate_unbound_results_closed",
+  "calendar": {
+    "start_day": "2026-04-17",
+    "end_day": "2026-06-26",
+    "calendar_day_count": 71,
+    "trading_day_count": 71,
+    "whole_day_maintenance_placeholders": 0,
+    "native_execution_days": 52,
+    "provider_normalized_sensitivity_days": 19,
+    "restart_interval_count": 107,
+    "restart_timeline_sha256": "a825ac2c8ff34dd8fa15d60d27b7c12b0f6a0763d82758f42daacb4c711ba0d7"
+  },
+  "artifacts": {
+    "shared_plan_module": {
+      "path": "models/replay/restart_aware_continuous_ab.py",
+      "sha256": "956d282123887cdb569a547959a8bedcbcdc88893abc30dd835fd59ed236db45"
+    },
+    "f03_preflight_runner": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_restart_aware_continuous_ab.py",
+      "sha256": "46c89c223bb1bfa1048a65f67058601dd7a113aa4643fc2aa89c385b57f079b4"
+    },
+    "tests": {
+      "path": "tests/test_causal_v12_1s_restart_aware_continuous_ab.py",
+      "sha256": "3b3cf9e49c8304266a195caa8473d6e9d69b4cfd37fd5c8091f3a319968a79c4"
+    },
+    "preflight_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_preflight_20260805.json",
+      "sha256": "ba1c881d53d0197976557d53f786dafc0ae05f82c92d5ffbb7a3b50831def777"
+    },
+    "implementation_report": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_implementation_20260805.md",
+      "sha256": "8649e2f6f3e99e211219500ced12c9019e80f7109bd5f43b16f34d1bf7a38635"
+    },
+    "source_calendar_manifest": {
+      "path": "research/shared/replay_lifecycle/docs/calendar_continuity_manifest_20260417_20260730_v1.json",
+      "sha256": "5ecca6fef292cb7ffba51464473eebb2a8232fcaca7fbc1e0567f594737145bd"
+    },
+    "continuous_accounting_contract": {
+      "path": "research/shared/replay_lifecycle/docs/continuous_accounting_contract_v1.json",
+      "sha256": "4e00d0b682fa9a546ab188ffcc593a3f82ca73ca85a59c9f783d08d90e781b2b"
+    },
+    "continuous_accounting_implementation": {
+      "path": "models/replay/continuous_accounting.py",
+      "sha256": "ad04ea1ca8557bae1c58a4b16ce0b0d9bfb4867754860141960a5a5f387893e6"
+    },
+    "existing_71d_source_resolver": {
+      "path": "scripts/run_full_calendar_71d_baseline.py",
+      "sha256": "d2c7562f2bf7d8a8acc8c57c9b4bc9f2bf2c12942ee3fe49e114d8d525e97a01"
+    },
+    "existing_1s_replay_abi": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_ml_ab_replay.py",
+      "sha256": "88d86f5c0edd9e100d17397d2d759a9459813663ad0804ede4269ef636fbf5ce"
+    }
+  },
+  "semantics": {
+    "same_restart_manifest_both_arms": true,
+    "separate_mutable_state_both_arms": true,
+    "utc_midnight_accounting_only": true,
+    "economic_state_carried_across_midnight": true,
+    "orders_and_queue_carried_across_midnight_without_gap": true,
+    "gap_clears_orders_queue_pending_cancel_and_hazard": true,
+    "gap_preserves_cash_inventory_entry_pnl_and_campaign": true,
+    "past_only_warmup_before_resume": true,
+    "daily_request_is_source_admission_not_fresh_start": true
+  },
+  "candidate_bindings": {
+    "bundle_meta_bound": false,
+    "feature_dag_bound": false,
+    "overlay_index_bound": false,
+    "default_preflight_fail_closed": true
+  },
+  "verification": {
+    "new_contract_tests_passed": 10,
+    "focused_regression_tests_passed": 37,
+    "ruff_check_passed": true,
+    "ruff_format_check_passed": true,
+    "real_source_resolution_days_passed": 71,
+    "default_cli_failed_at_missing_candidate_identity": true
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "execution_results_read": false,
+    "tick_engine_called": false,
+    "prediction_results_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "baseline_replacement_authorized": false
+  }
+}

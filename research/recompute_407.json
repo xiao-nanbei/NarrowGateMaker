@@ -1,0 +1,234 @@
+{
+  "schema": "narrowgate.recompute_packages.v1",
+  "as_of": "2026-09-23",
+  "dataset_scope": "data/dataset_scope.json",
+  "historical_status_blocks_new_work": false,
+  "previous_use_reset": false,
+  "automatic_execution": false,
+  "f03": {
+    "existing_frozen_run_preserved": true,
+    "original_strategy_shards": 654,
+    "ml_off_strategy_shards": 204,
+    "total_strategy_shards": 858,
+    "selection_candidates": [
+      "inf",
+      "240",
+      "120",
+      "60"
+    ],
+    "ml_off_is_selection_candidate": false,
+    "final_requires_b_selection": true
+  },
+  "packages": [
+    {
+      "id": 1,
+      "families": [
+        "F10",
+        "SYS"
+      ],
+      "question": "Accounting, clocks and attribution",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "first_account_accounting_attribution_only_other_F10_SYS_work_open",
+      "candidate_budget": null,
+      "public_results": null,
+      "reused_evidence": "one_audited_F03_inf_vs_F05_development_account_ledger_delta_no_new_strategy_replay",
+      "remaining_scope": "full_attribution_and_any_exact_live_matching_require_their_own_trace_and_runtime_evidence"
+    },
+    {
+      "id": 2,
+      "families": [
+        "F08"
+      ],
+      "question": "Side-taker flow and hazard",
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 3,
+      "families": [
+        "F02"
+      ],
+      "question": "Static P3 touch",
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 4,
+      "families": [
+        "F04"
+      ],
+      "question": "Cross-market prediction",
+      "depends_on": [
+        "dual_market_features"
+      ],
+      "implementation_status": "bounded_two_market_Tardis_reference_producer_and_paired_direction_model_economic_entries_implemented_pending_real_input_admission",
+      "execution_status": "reference_fact_transport_in_progress_no_real_F04_fit_or_economic_replay_completed",
+      "candidate_budget": {
+        "frozen_first_batch_fit_utc_days": 8,
+        "new_M0_M1_fit_calls_budgeted": 2,
+        "new_M0_M1_fit_calls_completed": 0,
+        "paired_full_account_replays_budgeted": 2,
+        "paired_full_account_replays_completed": 0,
+        "conditional_existing_F03_reference_replay_budgeted": 1,
+        "additional_candidates_or_evaluation_accounts_budgeted": 0
+      },
+      "public_results": null,
+      "remaining_scope": "verify_all_bound_BTCUSDT_reference_facts_and_fit_labels_then_daylight_reference_bundles_paired_real_fits_and_one_common_account_M0_M1_complete_economics; existing_F03_reference_only_if_strict_comparability_fails"
+    },
+    {
+      "id": 5,
+      "families": [
+        "F03"
+      ],
+      "question": "13-head and time weighting",
+      "depends_on": [
+        "train_only_p3_features_labels"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "completed_modeled_economics_negative",
+      "candidate_budget": 4,
+      "public_results": "families/f03_causal_13_head/results_20260922.json"
+    },
+    {
+      "id": 6,
+      "families": [
+        "F02"
+      ],
+      "question": "Conditional P3 and reach-time",
+      "depends_on": [
+        "3"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 7,
+      "families": [
+        "F05"
+      ],
+      "question": "Opportunity Quote-EV prediction",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "ten_head_training_binding_and_one_existing_action_consumer_exercised_other_F05_mechanisms_open",
+      "execution_status": "first_bounded_development_economic_evaluation_complete_negative_family_open",
+      "candidate_budget": 1,
+      "public_results": "families/f05_fill_quality_quote_ev/README.md",
+      "first_batch": {
+        "training_support_independent_two_day_accounts": 2,
+        "trained_heads": 10,
+        "training_selection_refits": 0,
+        "frozen_candidate_policies": 1,
+        "evaluation_independent_two_day_accounts_budgeted": 1,
+        "evaluation_independent_two_day_accounts_completed": 1,
+        "evaluation_independent_two_day_accounts_remaining": 0,
+        "result_direction_vs_frozen_F03_inf": "negative",
+        "evidence_availability": "private_not_distributed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "remaining_scope": "other_preexisting_F05_mechanisms_and_family_selection_require_separate_predeclared_support_and_budget_not_an_automatic_extension_of_this_batch"
+    },
+    {
+      "id": 8,
+      "families": [
+        "F09",
+        "F04",
+        "F05"
+      ],
+      "question": "Fixed action comparisons",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "one_F05_existing_quote_widen_action_comparison_complete_negative_other_components_open",
+      "candidate_budget": null,
+      "public_results": "families/f05_fill_quality_quote_ev/README.md",
+      "completed_component_budget": "F05_one_frozen_candidate_one_independent_development_account_no_remaining_first_batch_evaluation",
+      "remaining_scope": "F04_F09_and_other_F05_action_questions_require_their_own_inputs_contracts_and_budget"
+    },
+    {
+      "id": 9,
+      "families": [
+        "F01"
+      ],
+      "question": "Fixed-parameter racing",
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "frozen_F03_signal_and_P3_gated_independent_candidate_replay_verified",
+      "execution_status": "first_bounded_development_pair_complete_B0_retained_risk_gate_failed_family_open",
+      "candidate_budget": 1,
+      "public_results": "families/f01_fixed_parameter_racing/README.md",
+      "first_batch": {
+        "development_independent_two_day_accounts_completed": 1,
+        "nonbaseline_gamma_candidates_completed": 1,
+        "conditional_paired_evaluation_accounts_completed": 0,
+        "conditional_paired_evaluation_accounts_remaining": 0,
+        "selection": "retain_frozen_F03_inf_B0_candidate_reduced_loss_but_exceeded_predeclared_peak_inventory_gate",
+        "whole_strategy_fresh_holdout": false,
+        "evidence_availability": "private_not_distributed"
+      },
+      "remaining_scope": "other_preexisting_F01_parameter_questions_require_separately_frozen_budget_and_support_no_automatic_followup_from_this_result"
+    },
+    {
+      "id": 10,
+      "families": [
+        "F06"
+      ],
+      "question": "Placement CIF and marginal value",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 11,
+      "families": [
+        "F07",
+        "F05"
+      ],
+      "question": "KEEP/CANCEL/REENTER and E/C",
+      "depends_on": [
+        "10"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 12,
+      "families": [
+        "F05",
+        "F09"
+      ],
+      "question": "Multiscale and duration policies",
+      "depends_on": [
+        "10",
+        "11"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    }
+  ]
+}

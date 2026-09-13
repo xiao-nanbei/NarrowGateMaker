@@ -1,0 +1,93 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_event_lockstep_implementation.v1",
+  "identity": "f07_order_lifecycle_v2_event_lockstep.v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "mechanics_harness_local_verified_formal_40_day_not_run",
+  "scope": {
+    "mechanics_only": true,
+    "economic_outcomes_read": false,
+    "q90_action_enabled": false,
+    "pnl_or_policy_authority_granted": false,
+    "formal_40_day_execution_performed": false
+  },
+  "artifacts": {
+    "lockstep_harness": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_event_lockstep.py",
+      "sha256": "e0af33e5876df0303d52fb4c4ddf1e76b28c7e9b66ce2e0e8e7c30f1947aa806"
+    },
+    "synthetic_and_authoritative_replay_tests": {
+      "path": "tests/test_order_lifecycle_v2_event_lockstep.py",
+      "sha256": "ec43d5ec77e8b53e05473e8cb314fd331831ae0edcf64bb6d92b1b5135229ce5"
+    },
+    "python_replay_adapter": {
+      "path": "models/replay/order_lifecycle_v2_replay_adapter.py",
+      "sha256": "838ca1934768502bbc161f3fb33aa4d32f6c423c828a8e605fd43777bf24dd47"
+    },
+    "quantity_weighted_lifecycle": {
+      "path": "execution/order_lifecycle.py",
+      "sha256": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957"
+    },
+    "journal_v2_schema": {
+      "path": "execution/order_lifecycle_journal_v2.py",
+      "sha256": "c24bdfd8514afc38773c3dc1a0c16dd52829a1309fbe875ec897458450a9ae64"
+    }
+  },
+  "input_contract": {
+    "journal_v2": "exact_order_lifecycle_journal_v2_schema",
+    "legacy_trace": "mechanics_projection_only",
+    "legacy_economic_columns_projected": false,
+    "replay_session_scope": "fresh_start_per_target_utc_day",
+    "streaming_unit": "one_fresh_start_replay_utc_day",
+    "prospective_live_epoch_transport_authorized": false,
+    "cross_midnight_live_requirement": "epoch_wide_cursor_or_explicit_left_truncation",
+    "parquet_batch_default_rows": 4096,
+    "atomic_result": true,
+    "input_sha256_bound_in_atomic_result": true
+  },
+  "lockstep_checks": [
+    "stable_client_and_lifecycle_identity",
+    "unique_event_id_and_contiguous_lifecycle_sequence",
+    "legacy_global_sequence_uniqueness_and_stream_monotonicity",
+    "comparable_event_and_phase_sequence",
+    "applicable_visibility_and_exchange_clocks",
+    "remaining_quantity_chain",
+    "terminal_reason",
+    "visible_risk_intervals_and_quantity_time_exposure_recomputation",
+    "exchange_quantity_time_exposure_recomputation",
+    "explicit_exchange_clock_invalid_reason_coverage",
+    "zero_events_after_exchange_terminal_or_local_shutdown_censor",
+    "zero_fill_risk_after_terminal_or_censor"
+  ],
+  "synthetic_branch_coverage": [
+    "partial_fill",
+    "cancel_pending_partial_fill",
+    "cancel_reject",
+    "cancel_ack",
+    "pre_activation_reject",
+    "expiry",
+    "local_shutdown_censor"
+  ],
+  "verification": {
+    "focused_tests_passed": 5,
+    "ruff_passed": true,
+    "authoritative_simulate_tick_fixture_passed": true,
+    "atomic_parquet_result_verified": true,
+    "post_terminal_failure_fixture_verified": true
+  },
+  "formal_40_day_input_blockers": [
+    "fully_bound_40_day_replay_runtime_identity_and_day_manifest_not_frozen",
+    "40_day_journal_v2_and_legacy_trace_parquet_parts_not_materialized_and_atomically_admitted",
+    "current_legacy_trace_has_one_event_clock_field_and_cannot_alone_claim_full_dual_clock_cross_source_parity",
+    "authoritative_python_replay_does_not_currently_generate_exchange_cancel_reject_events",
+    "sub_lot_terminal_remainder_must_be_proven_absent_or_receive_an_explicit_terminal_semantics",
+    "formal_per_day_zero_drop_zero_error_writer_health_and_row_count_manifests_not_admitted",
+    "cpp_lifecycle_state_and_100ms_cif_event_stream_not_yet_bound_to_this_lockstep_result"
+  ],
+  "permissions": {
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "live_deployment": false
+  }
+}

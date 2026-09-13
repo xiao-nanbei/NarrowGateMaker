@@ -1,0 +1,147 @@
+{
+  "schema_version": "buy_q90_abi_v4_40day_lockstep.v1.1",
+  "identity": "buy_q90_abi_v4_40day_lockstep_v1_1",
+  "status": "frozen_before_development_mechanics_read",
+  "frozen_at_utc": "2026-08-03T00:00:00Z",
+  "canonical_spec_sha256": "02a1ca27567b2b445255394e7ad53cb7a8f9a7bc02ceb5902aac71c571d04dbe",
+  "scope": "F10 Development-only BUY q90 ABI v4 Python/C++ event lockstep; lifecycle mechanics only",
+  "successor_amendment": {
+    "predecessor_spec": "research/families/f10_live_replay_attribution/docs/buy_q90_abi_v4_40day_lockstep_v1_spec_20260803.json",
+    "predecessor_spec_sha256": "9aa4cfe1abbd749798a00034a3671bbf95a86e6a1be99ca2dbe3d94fd088e7ae",
+    "predecessor_result": "failed_closed_on_real_2026_04_22_visibility_boundary_parity",
+    "failure_stage": "active_order_evaluation",
+    "failure_reason": "Python invalidated a coalesced same-feature-ready book/trade boundary while C++ retained a valid active path",
+    "mechanics_or_economics_read": "mechanics_only",
+    "threshold_or_panel_changed": false,
+    "fix": "propagate visibility-scheduler same-boundary ambiguity to the native active path"
+  },
+  "frozen_40day_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+    "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d"
+  },
+  "v4_implementation_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_fresh_prospective_placement_recovery_v4_implementation_20260802.json",
+    "sha256": "ccc08cab886ad12bc0d41c40cb761f953e2253cfe5c440c233606a2e09d9173d"
+  },
+  "development_days": [
+    "2026-04-17",
+    "2026-04-18",
+    "2026-04-19",
+    "2026-04-20",
+    "2026-04-22",
+    "2026-04-23",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-05-06",
+    "2026-05-13",
+    "2026-05-29",
+    "2026-05-30",
+    "2026-05-31",
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-17",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-23",
+    "2026-06-24",
+    "2026-06-25",
+    "2026-06-26"
+  ],
+  "operational_config_identity": {
+    "path": "${NARROWGATE_LIVE_CONFIG}",
+    "sha256": "0b0f137461db59eafbb05519da178e61bac0b3e6242d4ee8a35ea746580d6a64",
+    "required_runtime_state": {
+      "dynamic_fill_hazard_shadow_enabled": true,
+      "dynamic_fill_hazard_action_enabled": false
+    },
+    "operational_baseline_pointer_expected_sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8",
+    "pointer_drift_is_recorded_not_modified": true
+  },
+  "model_identity": {
+    "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json",
+    "sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6"
+  },
+  "policy_identity": {
+    "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+    "sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "threshold_change_allowed": false
+  },
+  "native_module_identity": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "cc85ce43174156d8ba71561f721a02720e3c0338dddeaab91dd710a98f236866",
+    "abi_version": "dynamic_fill_hazard_native_book_q90.v4",
+    "full_cpp_tick_replay_authority": false
+  },
+  "input_cache_manifest_canonical_sha256": "180ac5e0e5299076f030e68a1f896231ecc11b8f802a5154210785566d20b701",
+  "input_cache_contract": {
+    "rows": 40,
+    "window_cache_bytes": 48365497982,
+    "window_cache_version": 13,
+    "cache_write_allowed": false,
+    "relocated_source_signature_fallback": "newest explicitly hashed compatible v13 day cache",
+    "native_tape_files_per_day": 48,
+    "validation_or_holdout_inputs_allowed": false
+  },
+  "lockstep_gates": {
+    "terminal_route_path_score_cancel_recovery_transitions": "Python/C++ exact lockstep",
+    "post_terminal_hazard_reuse_max": 0,
+    "post_terminal_cursor_reuse_max": 0,
+    "terminal_cursor_retention_end_max": 0,
+    "unsupported_terminal_route_max": 0,
+    "python_cpp_mismatch_max": 0,
+    "exchange_exposure_coverage": "report valid complete null and invalid reasons without threshold relaxation",
+    "future_feature_time_requires_explicit_attribution": true,
+    "all_40_days_required": true
+  },
+  "implementation_sha256": {
+    "models/backtest_tick.py": "744b195589653f83b960887b92169a5129b57d9e3dab45464f77324e6380c598",
+    "research/families/f10_live_replay_attribution/audit/buy_q90_abi_v4_40day_lockstep.py": "5cead6a571f44bafc442217455a21d2835807f2c6fb5cd0801b00a117e76d402",
+    "tests/test_buy_q90_abi_v4_40day_lockstep.py": "df4910f55f2ab178357aa6683c80fca0b495557a9e84d9883fcd4f8554abf445",
+    "execution/order_lifecycle.py": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957",
+    "execution/order_lifecycle_journal.py": "6acbdf1158549557dab7f8469108b1ae5600039514b9efd34edb1609cf96ed6e",
+    "strategy/dynamic_fill_hazard_model.py": "a0c54430a68493757d4682798d2b7274c4e3c834fc502d2ad2ffd3ba37654b88",
+    "models/exchange_book_replay.py": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177",
+    "models/data_windows.py": "ea0734cdff4db8e4cb6d4a144a7bd1b6f3ddae65745bab2d11f0288642d42899",
+    "models/backtest_config.py": "3b0f1907944e9587f9c8ef4a31a3f9b0625e427249bac49e998ae1f02fa3d9c1",
+    "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "687c377abfcd38438558d7f48226167258101ea94768b9433821f9e49d8e1c8c",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "533132126fa1ed2d32fc11b2fed6bb58726f4965b5cc64a0106934c786dc7eba",
+    "cpp/narrowgate_cpp/bindings.cpp": "afad64fc4826f0267a49ba8c1027b323a299bb6b6e665c7beabc1d045327a798"
+  },
+  "storage": {
+    "cache_root": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "output_root": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_1_20260803/development",
+    "cache_write_allowed": false
+  },
+  "permissions": {
+    "development_mechanics_execution_allowed": true,
+    "economic_outcome_read": false,
+    "markout_read": false,
+    "campaign_economics_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "deployment_allowed": false,
+    "q90_operational_action_enable_allowed": false,
+    "threshold_change_allowed": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

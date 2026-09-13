@@ -1,0 +1,452 @@
+"""Continuous cash, inventory, campaign, and UTC-slice accounting."""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from typing import Any
+
+from .replay_state_checkpoint import (
+    ContinuousReplayState,
+    EconomicCampaignState,
+)
+
+SCHEMA_VERSION = "continuous_accounting_contract.v2"
+CAMPAIGN_ACCOUNTING_SEMANTICS = "zero_boundary_flip_fee_split_v2"
+FEE_ACCOUNTING_SEMANTICS = "signed_fee_positive_cost_negative_rebate_v2"
+FUNDING_ACCOUNTING_SEMANTICS = "signed_position_times_settlement_mark_rate_v1"
+_EPS = 1e-10
+
+
+def marked_equity_change(
+    start: dict[str, Any], end: dict[str, Any], *,
+    fees_usdc: float, funding_cashflow_usdc: float | None,
+    max_mark_age_ms: int | None,
+) -> dict[str, Any]:
+    """Attribute one interval using cumulative cash, never future closing fills.
+
+    Boundary states must be captured before equal-time events. Cash already
+    includes fees and known funding; these explanatory flows are NOT debited
+    again. A missing funding amount leaves all-in economics incomplete.
+    ``None`` age policy is explicit legacy compatibility, not freshness proof.
+    """
+    if max_mark_age_ms is not None and (
+        isinstance(max_mark_age_ms, bool) or max_mark_age_ms < 0
+        or int(max_mark_age_ms) != max_mark_age_ms
+    ):
+        raise ValueError("invalid mark age policy")
+    if end["boundary_ts_ms"] <= start["boundary_ts_ms"]:
+        raise ValueError("accounting boundaries must increase")
+    flows = [fees_usdc] + ([] if funding_cashflow_usdc is None else [funding_cashflow_usdc])
+    if not all(math.isfinite(float(value)) for value in flows):
+        raise ValueError("accounting flows must be finite")
+    equities = []
+    ages = []
+    for state in (start, end):
+        cash, inventory = float(state["cash_usdc"]), float(state["inventory_btc"])
+        if not all(math.isfinite(value) for value in (cash, inventory)):
+            raise ValueError("accounting state must be finite")
+        price, clock = state.get("mark_price"), state.get("mark_clock_ts_ms")
+        age = None if clock is None else state["boundary_ts_ms"] - float(clock)
+        valid = (
+            price is not None and math.isfinite(float(price)) and float(price) > 0
+            and age is not None and age > 0
+            and (max_mark_age_ms is None or age <= max_mark_age_ms)
+        )
+        equities.append(cash if inventory == 0 else cash + inventory * float(price) if valid else None)
+        ages.append(age)
+    known = all(value is not None for value in equities)
+    change = equities[1] - equities[0] if known else None
+    complete = known and funding_cashflow_usdc is not None
+    return {
+        "start_equity_usdc": equities[0], "end_equity_usdc": equities[1],
+        "observed_equity_change_usdc": change,
+        "net_equity_change_usdc": change if complete else None,
+        "fees_usdc": float(fees_usdc), "funding_cashflow_usdc": funding_cashflow_usdc,
+        "economic_complete": complete, "mark_ages_ms": ages,
+        "valuation_freshness_checked": max_mark_age_ms is not None,
+        "terminal_liquidation_applied": False,
+    }
+
+
+def funding_cashflow_usdc(position_btc: float, mark_price: float, funding_rate: float) -> float:
+    """Positive rates debit longs and credit shorts in a linear settled contract."""
+    q, mark, rate = float(position_btc), float(mark_price), float(funding_rate)
+    if not all(math.isfinite(value) for value in (q, mark, rate)) or mark <= 0:
+        raise ValueError("funding requires finite position/rate and a positive finite mark")
+    cashflow = -q * mark * rate
+    if not math.isfinite(cashflow):
+        raise ValueError("funding cashflow overflowed")
+    return cashflow
+
+
+@dataclass(frozen=True)
+class DailyPnlSlice:
+    day: str
+    start_equity_usdc: float
+    end_equity_usdc: float
+    pnl_usdc: float
+    start_inventory_btc: float
+    end_inventory_btc: float
+    end_mark_price: float
+
+
+@dataclass(frozen=True)
+class ClosedCampaign:
+    campaign_id: str
+    side: str
+    start_ts_ms: int
+    end_ts_ms: int
+    start_equity_usdc: float
+    end_equity_usdc: float
+    value_usdc: float
+    peak_abs_inventory_btc: float
+    terminal_reason: str = "flat"
+
+
+@dataclass(frozen=True)
+class GapCarry:
+    gap_id: str
+    start_ts_ms: int
+    end_ts_ms: int
+    position_btc: float
+    start_mark_price: float
+    end_mark_price: float
+    pnl_usdc: float
+
+
+class UtcAccountingMarkRecorder:
+    """Checkpointable UTC marks; reads the replay price clock, never trades.
+
+    Midnight closes the previous day before any equal-ms event. These are
+    valuation-clock timestamps, not claims of a newly observed exchange book.
+    Missing initial marks stay unknown; later prices never fill them backward.
+    """
+
+    def __init__(self, start_ts_ms: int) -> None:
+        self.start_ts_ms = int(start_ts_ms)
+        self.next_boundary_ms = (self.start_ts_ms // 86_400_000 + 1) * 86_400_000
+        self.last_price: float | None = None
+        self.last_clock_ms: int | None = None
+        self.rows = [self._row(self.start_ts_ms)]
+
+    def _row(self, boundary_ms: int) -> dict[str, Any]:
+        return {
+            "boundary_ts_ms": int(boundary_ms),
+            "mark_price": self.last_price,
+            "mark_clock_ts_ms": self.last_clock_ms,
+            "mark_basis": "replay_terminal_price_clock",
+        }
+
+    def advance(self, ts_ms: int) -> None:
+        while self.next_boundary_ms <= int(ts_ms):
+            self.rows.append(self._row(self.next_boundary_ms))
+            self.next_boundary_ms += 86_400_000
+
+    def observe(self, ts_ms: int, price: float) -> None:
+        ts, px = int(ts_ms), float(price)
+        if ts < self.start_ts_ms or (self.last_clock_ms is not None and ts < self.last_clock_ms):
+            raise ValueError("UTC accounting price clock moved backward")
+        if not math.isfinite(px) or px <= 0:
+            raise ValueError("UTC accounting mark must be positive and finite")
+        self.advance(ts)
+        self.last_clock_ms, self.last_price = ts, px
+        if ts == self.start_ts_ms:
+            self.rows[0] = self._row(ts)
+
+    def finish(self, end_ts_ms_inclusive: int) -> list[dict[str, Any]]:
+        end = int(end_ts_ms_inclusive)
+        if end < self.start_ts_ms or (self.last_clock_ms is not None and end < self.last_clock_ms):
+            raise ValueError("UTC accounting end precedes its market clock")
+        self.advance(end + 1)
+        if self.rows[-1]["boundary_ts_ms"] != end + 1:
+            self.rows.append(self._row(end + 1))
+        return self.rows
+
+
+def _day(ts_ms: int) -> str:
+    return datetime.fromtimestamp(ts_ms / 1_000.0, tz=UTC).date().isoformat()
+
+
+class ContinuousAccountingLedger:
+    """Use marked equity as the only authoritative PnL process."""
+
+    def __init__(self, state: ContinuousReplayState) -> None:
+        state.validate()
+        self._state = state
+        self._day_start_equity = state.equity_usdc
+        self._day_start_inventory = state.position_btc
+        self._day_start = _day(state.checkpoint_ts_ms)
+        self.daily_slices: list[DailyPnlSlice] = []
+        self.closed_campaigns: list[ClosedCampaign] = []
+        self.gap_carries: list[GapCarry] = []
+
+    @property
+    def state(self) -> ContinuousReplayState:
+        return self._state
+
+    @property
+    def equity_usdc(self) -> float:
+        return self._state.equity_usdc
+
+    def mark(self, ts_ms: int, price: float) -> ContinuousReplayState:
+        if int(ts_ms) < self._state.checkpoint_ts_ms:
+            raise ValueError("accounting mark timestamp moved backward")
+        self._state = self._state.with_mark(int(ts_ms), float(price))
+        return self._state
+
+    def enter_planned_restart(self, ts_ms: int) -> ContinuousReplayState:
+        if int(ts_ms) < self._state.checkpoint_ts_ms:
+            raise ValueError("planned restart timestamp moved backward")
+        self._state = self._state.for_planned_restart(int(ts_ms))
+        return self._state
+
+    def funding(
+        self, *, ts_ms: int, mark_price: float, funding_rate: float
+    ) -> ContinuousReplayState:
+        """Book settlement once, without a fill, inventory reset or new campaign.
+
+        Callers use exchange-effective inventory at the frozen settlement time,
+        not delayed private-callback inventory. Equal-ms fill ordering belongs
+        to the caller's explicit execution model.
+        """
+        ts = int(ts_ms)
+        before = self._state
+        if ts < before.checkpoint_ts_ms:
+            raise ValueError("funding timestamp moved backward")
+        if ts <= before.last_funding_ts_ms:
+            raise ValueError("funding settlement was already applied or is out of order")
+        payment = funding_cashflow_usdc(before.position_btc, mark_price, funding_rate)
+        state = replace(
+            before,
+            checkpoint_ts_ms=ts,
+            cash_usdc=before.cash_usdc + payment,
+            cumulative_funding_usdc=before.cumulative_funding_usdc + payment,
+            last_funding_ts_ms=ts,
+            cumulative_pnl_usdc=before.cumulative_pnl_usdc + payment,
+        )
+        state.validate()
+        self._state = state
+        return state
+
+    def resume_after_warmup(
+        self,
+        *,
+        decision_ts_ms: int,
+        feature_ready_ts_ms: int,
+    ) -> ContinuousReplayState:
+        if int(decision_ts_ms) < self._state.checkpoint_ts_ms:
+            raise ValueError("restart decision timestamp moved backward")
+        if int(feature_ready_ts_ms) > int(decision_ts_ms):
+            raise ValueError("restart feature-ready timestamp is in the future")
+        state = replace(
+            self._state,
+            checkpoint_ts_ms=int(decision_ts_ms),
+            feature_warmup_ready=True,
+            quoting_enabled=True,
+        )
+        state.validate(require_restart_safe=True)
+        self._state = state
+        return self._state
+
+    def fill(
+        self,
+        *,
+        ts_ms: int,
+        side: str,
+        quantity_btc: float,
+        price: float,
+        fee_usdc: float = 0.0,
+        new_campaign_id: str | None = None,
+    ) -> ContinuousReplayState:
+        if int(ts_ms) < self._state.checkpoint_ts_ms:
+            raise ValueError("fill timestamp moved backward")
+        side = str(side).upper()
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("fill side must be BUY or SELL")
+        qty = float(quantity_btc)
+        px = float(price)
+        fee = float(fee_usdc)
+        if not math.isfinite(qty) or qty <= 0 or not math.isfinite(px) or px <= 0:
+            raise ValueError("fill quantity and price must be positive and finite")
+        if not math.isfinite(fee):
+            raise ValueError("fill fee must be finite")
+
+        before = self._state
+        signed_qty = qty if side == "BUY" else -qty
+        q0 = before.position_btc
+        q1 = q0 + signed_qty
+        if abs(q1) <= _EPS:
+            q1 = 0.0
+        cash = before.cash_usdc - signed_qty * px - fee
+        realized = before.cumulative_realized_pnl_usdc
+        entry = before.average_entry_price
+        campaign = before.economic_campaign
+        closed_campaign: ClosedCampaign | None = None
+
+        same_direction = abs(q0) <= _EPS or q0 * signed_qty > 0
+        if same_direction:
+            if abs(q0) <= _EPS:
+                if not new_campaign_id or not str(new_campaign_id).strip():
+                    raise ValueError("opening fill requires a stable economic campaign id")
+                entry = px
+                start_equity = before.equity_usdc
+                campaign = EconomicCampaignState(
+                    campaign_id=str(new_campaign_id),
+                    side="LONG" if q1 > 0 else "SHORT",
+                    start_ts_ms=int(ts_ms),
+                    start_equity_usdc=float(start_equity),
+                    peak_abs_inventory_btc=abs(q1),
+                )
+            else:
+                entry = (abs(q0) * entry + qty * px) / abs(q1)
+                if campaign is None:
+                    raise ValueError("non-flat inventory lost its economic campaign")
+                campaign = replace(
+                    campaign,
+                    peak_abs_inventory_btc=max(
+                        campaign.peak_abs_inventory_btc,
+                        abs(q1),
+                    ),
+                )
+        else:
+            closed_qty = min(abs(q0), qty)
+            closing_fee = fee * closed_qty / qty
+            opening_fee = fee - closing_fee
+            realized += closed_qty * (px - entry) * (1.0 if q0 > 0 else -1.0)
+            if abs(q1) <= _EPS:
+                if campaign is None:
+                    raise ValueError("closing fill lost its economic campaign")
+                end_equity = cash
+                closed_campaign = ClosedCampaign(
+                    campaign_id=campaign.campaign_id,
+                    side=campaign.side,
+                    start_ts_ms=campaign.start_ts_ms,
+                    end_ts_ms=int(ts_ms),
+                    start_equity_usdc=campaign.start_equity_usdc,
+                    end_equity_usdc=end_equity,
+                    value_usdc=end_equity - campaign.start_equity_usdc,
+                    peak_abs_inventory_btc=campaign.peak_abs_inventory_btc,
+                    terminal_reason="flat",
+                )
+                entry = 0.0
+                campaign = None
+            elif q0 * q1 > 0:
+                if campaign is None:
+                    raise ValueError("partial reduction lost its economic campaign")
+            else:
+                if campaign is None:
+                    raise ValueError("inventory flip lost its closing campaign")
+                # Value the old campaign exactly at zero inventory.  The full
+                # fill cash already paid both fee legs, so add the opening leg
+                # back before closing the old campaign.  The new campaign then
+                # starts before its opening fee and therefore carries that fee.
+                close_equity = cash + q1 * px + opening_fee
+                closed_campaign = ClosedCampaign(
+                    campaign_id=campaign.campaign_id,
+                    side=campaign.side,
+                    start_ts_ms=campaign.start_ts_ms,
+                    end_ts_ms=int(ts_ms),
+                    start_equity_usdc=campaign.start_equity_usdc,
+                    end_equity_usdc=close_equity,
+                    value_usdc=close_equity - campaign.start_equity_usdc,
+                    peak_abs_inventory_btc=campaign.peak_abs_inventory_btc,
+                    terminal_reason="flip",
+                )
+                if not new_campaign_id or not str(new_campaign_id).strip():
+                    raise ValueError("inventory flip requires a new economic campaign id")
+                entry = px
+                campaign = EconomicCampaignState(
+                    campaign_id=str(new_campaign_id),
+                    side="LONG" if q1 > 0 else "SHORT",
+                    start_ts_ms=int(ts_ms),
+                    start_equity_usdc=close_equity,
+                    peak_abs_inventory_btc=abs(q1),
+                )
+
+        mark_price = before.last_mark_price
+        equity = cash + q1 * mark_price
+        self._state = replace(
+            before,
+            checkpoint_ts_ms=int(ts_ms),
+            cash_usdc=cash,
+            position_btc=q1,
+            average_entry_price=entry,
+            cumulative_realized_pnl_usdc=realized,
+            cumulative_fees_usdc=before.cumulative_fees_usdc + fee,
+            cumulative_pnl_usdc=equity - before.equity_anchor_usdc,
+            economic_campaign=campaign,
+        )
+        self._state.validate()
+        if closed_campaign is not None:
+            self.closed_campaigns.append(closed_campaign)
+        return self._state
+
+    def record_gap(
+        self,
+        *,
+        gap_id: str,
+        start_ts_ms: int,
+        end_ts_ms: int,
+        start_mark_price: float,
+        end_mark_price: float,
+    ) -> GapCarry:
+        if end_ts_ms <= start_ts_ms:
+            raise ValueError("gap end must follow gap start")
+        self.mark(start_ts_ms, start_mark_price)
+        position = self._state.position_btc
+        self.mark(end_ts_ms, end_mark_price)
+        row = GapCarry(
+            gap_id=str(gap_id),
+            start_ts_ms=int(start_ts_ms),
+            end_ts_ms=int(end_ts_ms),
+            position_btc=position,
+            start_mark_price=float(start_mark_price),
+            end_mark_price=float(end_mark_price),
+            pnl_usdc=position * (float(end_mark_price) - float(start_mark_price)),
+        )
+        self.gap_carries.append(row)
+        return row
+
+    def close_utc_day(self, *, day_end_ts_ms: int, mark_price: float) -> DailyPnlSlice:
+        self.mark(day_end_ts_ms, mark_price)
+        current_day = _day(max(0, int(day_end_ts_ms) - 1))
+        if current_day != self._day_start:
+            raise ValueError(
+                f"UTC accounting boundary mismatch: expected={self._day_start} got={current_day}"
+            )
+        row = DailyPnlSlice(
+            day=current_day,
+            start_equity_usdc=self._day_start_equity,
+            end_equity_usdc=self._state.equity_usdc,
+            pnl_usdc=self._state.equity_usdc - self._day_start_equity,
+            start_inventory_btc=self._day_start_inventory,
+            end_inventory_btc=self._state.position_btc,
+            end_mark_price=float(mark_price),
+        )
+        self.daily_slices.append(row)
+        self._day_start_equity = self._state.equity_usdc
+        self._day_start_inventory = self._state.position_btc
+        self._day_start = _day(int(day_end_ts_ms))
+        return row
+
+    def accounting_audit(self) -> dict[str, Any]:
+        daily_sum = sum(row.pnl_usdc for row in self.daily_slices)
+        closed_days_pnl = self._day_start_equity - self._state.equity_anchor_usdc
+        return {
+            "schema_version": f"{SCHEMA_VERSION}.audit",
+            "campaign_accounting_semantics": CAMPAIGN_ACCOUNTING_SEMANTICS,
+            "fee_accounting_semantics": FEE_ACCOUNTING_SEMANTICS,
+            "funding_accounting_semantics": FUNDING_ACCOUNTING_SEMANTICS,
+            "cumulative_funding_usdc": self._state.cumulative_funding_usdc,
+            "daily_slice_count": len(self.daily_slices),
+            "closed_daily_pnl_sum_usdc": daily_sum,
+            "closed_daily_equity_change_usdc": closed_days_pnl,
+            "closed_daily_additivity_error_usdc": daily_sum - closed_days_pnl,
+            "continuous_pnl_usdc": self._state.cumulative_pnl_usdc,
+            "open_day_pnl_usdc": self._state.equity_usdc - self._day_start_equity,
+            "campaigns_closed": len(self.closed_campaigns),
+            "gap_count": len(self.gap_carries),
+            "gap_inventory_pnl_usdc": sum(row.pnl_usdc for row in self.gap_carries),
+        }

@@ -1,0 +1,48 @@
+{
+  "schema_version": "risk_selection_policy.v1",
+  "value_unit": "USDC_per_action",
+  "policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+  "features": {
+    "inventory_btc": {
+      "unit": "BTC",
+      "mean": -0.00039534883720930244,
+      "scale": 0.0005762563578308776
+    },
+    "quantity_btc": {
+      "unit": "BTC",
+      "mean": 0.001,
+      "scale": 1.0
+    },
+    "microprice_shift_bps": {
+      "unit": "bps",
+      "mean": -0.009215795613785535,
+      "scale": 0.03810011858212521
+    }
+  },
+  "models": {
+    "E:BUY": {
+      "intercept_usdc": 0.022420919053223153,
+      "coefficients": {
+        "inventory_btc": -9.795180316792847e-33,
+        "quantity_btc": 0.0,
+        "microprice_shift_bps": 0.007128225077089503
+      }
+    },
+    "E:SELL": {
+      "intercept_usdc": -0.0359994558652562,
+      "coefficients": {
+        "inventory_btc": 7.143675494117277e-33,
+        "quantity_btc": 0.0,
+        "microprice_shift_bps": -0.06817447608439144
+      }
+    },
+    "C:SELL": {
+      "intercept_usdc": 0.06033487352776659,
+      "coefficients": {
+        "inventory_btc": 0.002880187523775222,
+        "quantity_btc": 0.0,
+        "microprice_shift_bps": 0.03540852070312463
+      }
+    }
+  }
+}

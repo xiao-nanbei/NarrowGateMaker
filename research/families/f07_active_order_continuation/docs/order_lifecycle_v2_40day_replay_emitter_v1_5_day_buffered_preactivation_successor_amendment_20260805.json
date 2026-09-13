@@ -1,0 +1,115 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_40day_replay_emitter_v1_5_execution_successor_amendment.v1",
+  "identity": "order_lifecycle_v2_40day_replay_emitter_v1_5_day_buffered_preactivation_successor",
+  "amendment_date": "2026-08-05",
+  "status": "formal_execution_restarted_first_day_admitted",
+  "historical_documents_unchanged": [
+    "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_3_native_queue_authority_amendment_20260805.json",
+    "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_4_model_overlay_dag_binding_amendment_20260805.json",
+    "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_5_strict_native_overlay_runtime_amendment_20260805.json"
+  ],
+  "diagnostic_not_admitted_attempts": [
+    {
+      "root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run2",
+      "reason": "per_callback_parquet_commit_performance_trial_aborted_before_day_admission",
+      "admitted_day_count": 0
+    },
+    {
+      "root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run3",
+      "reason": "pre_activation_cancel_request_lifecycle_semantics_failed_closed_before_day_admission",
+      "admitted_day_count": 0
+    }
+  ],
+  "successor_contract": {
+    "replay_commit_scope": "one_content_addressed_parquet_part_per_unadmitted_day_staging",
+    "crash_recovery": "discard_unadmitted_day_staging_and_replay_frozen_day",
+    "parent_admission": "validate_then_parent_staging_directory_fsync_os_replace",
+    "pre_activation_cancel": {
+      "before_activation": "no_fill_risk_and_no_backdated_cancel_pending_exposure",
+      "activation_after_request": "activate_then_immediate_cancel_pending_at_activation_visibility_time",
+      "cancel_ack_before_activation": "submitted_to_exchange_terminal_and_explicit_no_activation_censor",
+      "cancel_reject_before_activation": "fail_fast_unsupported_by_lifecycle_abi_v2"
+    },
+    "strict_native_gate_changed": false,
+    "dual_clock_gate_changed": false,
+    "economic_gate_opened": false
+  },
+  "implementation_artifacts": [
+    {
+      "path": "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+      "sha256": "27c292be987dcfc447aa7fc43a0d7413cce76eaa85b0bf959781466bee9a3bba"
+    },
+    {
+      "path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+      "sha256": "1be258a8ba53dc234cec5c6dcccefa4c299118e3298f16e91acab665771a5fda"
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py",
+      "sha256": "fed14237be760069e006b77cbc255cf4557003901dfab80baa361cdcbe5db79b"
+    },
+    {
+      "path": "tests/test_order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+      "sha256": "125d7d020de47988e07d6cb9e5fb876df3b3958fd9d25fdd83f8822d38dd6a00"
+    },
+    {
+      "path": "tests/test_order_lifecycle_v2_40day_replay_emitter.py",
+      "sha256": "1e9f7e32f2cdb4e36742837ac7572d418e3172ad9d166ea0cd3a4daa0547f4d0"
+    }
+  ],
+  "stable_native_binding": {
+    "loaded_module_path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "loaded_module_sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+    "cpp_rebuilt_for_this_successor": false
+  },
+  "formal_execution": {
+    "root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4",
+    "execution_plan_file_sha256": "30693fe79f423d2c563aa705219a0069ee290c3a1c0e972a66a4121525158bd2",
+    "canonical_plan_sha256": "6a83e033cd143b20aeefc657938a3c32fb5eae237783e351b58023512e717d0a",
+    "prepared_at_utc": "2026-08-05T04:29:35.429961+00:00",
+    "first_admitted_day": {
+      "day": "2026-04-17",
+      "writer_started_at_utc": "2026-08-05T04:30:25.514592+00:00",
+      "writer_closed_at_utc": "2026-08-05T04:42:25.236437+00:00",
+      "writer_elapsed_s": 719.722,
+      "day_manifest_file_sha256": "bf6329da41260aa61b2b13ececf47f31ac2cc6b6d307cd61e1f1282736fe39eb",
+      "canonical_day_manifest_sha256": "a8a6b63ad358237239cc808caa5535e6e74acb881dca1868126c8e27467a16aa",
+      "journal_row_count": 68861,
+      "callback_count": 68860,
+      "lifecycle_count": 17492,
+      "terminal_observation_count": 17492,
+      "exact_native_lifecycle_count": 17143,
+      "native_queue_censored_lifecycle_count": 349,
+      "part_count": 1,
+      "part_size_bytes": 4931007,
+      "part_sha256": "b9356d3d5f053284e0db2445aa6964f90a209a9d0cb19a004b5023a29b070ccb",
+      "rows_dropped": 0,
+      "writer_errors": 0,
+      "dual_clock_missing_count": 0,
+      "dual_clock_ordering_violation_count": 0,
+      "invalid_exchange_exposure_count": 0,
+      "terminal_positive_remainder_count": 0,
+      "staging_entry_count_after_admission": 0
+    }
+  },
+  "tests": {
+    "command_scope": "day-buffered writer, emitter, replay adapter, ABI-v2 binding, event lockstep, 40-day lockstep",
+    "passed": 56,
+    "failed": 0
+  },
+  "scope": {
+    "mechanics_only": true,
+    "economic_outcomes_read": false,
+    "pnl_read": false,
+    "q90_action_enabled": false,
+    "formal_40day_journal_emission_complete": false,
+    "formal_40day_lockstep_complete": false
+  },
+  "permissions": {
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "live_transport": false,
+    "live_deployment": false
+  },
+  "canonical_document_sha256": "c7b684ed3c9f3343c7de9e9d74e74647112b7ba4f6b58a5d8281bdf54dfe4b25"
+}

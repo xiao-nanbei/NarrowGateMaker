@@ -1,0 +1,13 @@
+# UTC equity attribution migration
+
+[English](utc_equity_attribution.md) | [简体中文](utc_equity_attribution.zh-CN.md)
+
+Last materially synchronized: 2026-09-19
+
+The retired E3 research worktree contained four uncommitted files adding target-day marked equity and distinguishing it from D+1 lifecycle washout and campaign-cohort terminal value. The useful accounting rule and carried-risk test are now implemented in [`marked_equity_change`](../models/replay/continuous_accounting.py) and [its behavior tests](../tests/test_marked_equity_attribution.py). The current [F03 daily ledger validator](../research/families/f03_causal_13_head/time_weighted_evaluation.py) calls this shared implementation. This is a selective semantic migration, not a four-file merge or restoration of the retired F05 orchestrator.
+
+Use cumulative cash and inventory states captured before equal-time boundary events. Day changes telescope inside a continuous two-day shard; separate shards still initialize independent accounts. An eventual next-day closing fill must not be credited backward. Campaign-cohort terminal value and full-window PnL are different statistics, not substitutes for target-day equity change. Fees and signed funding already included in cash are explanatory columns and must not be deducted twice. Unknown funding keeps complete net PnL unavailable. Nonflat boundaries require valid past marks; a declared maximum mark age rejects stale marks. Flat cash requires no invented valuation price. MTM does not simulate liquidation.
+
+The shared function explicitly accepts `max_mark_age_ms=None` for historical compatibility and reports that freshness was not checked; this is not freshness acceptance. F03 propagates a row's declared `max_mark_age_ms`. New producers must bind that policy to their frozen execution contract. This change does not itself implement missing ledger producers, certify original fill/funding traces, prove source-observation freshness from a sampled clock, or complete economic replay. The caller must supply the actual valuation observation clock, not refresh it at sampling time.
+
+The old worktree's two orchestrator-related files changed historical report keys and scorecard scope; those obsolete entrypoints are not restored. Their distinction between daily equity, campaign-cohort value and full execution-window diagnostics is preserved here. The extracted tests cover carried inventory, independent outcome after the boundary, two-day telescoping, costs/funding once, unknown funding, stale/future marks, and the actual F03 consumer. Historical mechanism conclusions are not invalidated by retiring the worktree.

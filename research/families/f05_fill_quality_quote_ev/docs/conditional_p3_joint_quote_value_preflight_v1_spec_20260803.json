@@ -1,0 +1,95 @@
+{
+  "artifact_identities": {
+    "exact_distance_surface_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_exact_distance_surface.py",
+      "sha256": "16d7eb4d48f8aef72868537d74e51b81aab2068dd32ac4cf6b4aa1064212012c",
+      "size_bytes": 28935
+    },
+    "f06_resolution_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/paired_action_resolution_feasibility_v1_development_20260728/report.json",
+      "sha256": "a6c36d5bb46a284a177b247dc3b8b99d96db92939cf2746abb366e907f578098",
+      "size_bytes": 7263
+    },
+    "p3_v4_1_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_1_spec_20260803.json",
+      "sha256": "d681fcf83f2a8d2689e8245d3132b76b7d91f3d1a8486e00e19c671c2c38d47a",
+      "size_bytes": 3291
+    },
+    "p3_v4_cache_usage": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/cache_usage.csv",
+      "sha256": "f5c5743d9558751248049e982ca8b5d8ea1cbac86513b3c53252584b15731550",
+      "size_bytes": 68370
+    },
+    "preflight_contract": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/conditional_p3_joint_quote_value_preflight.py",
+      "sha256": "8ffd959f9b55f6eb9ca0e9513b080ba926c7d9778e11460594a14464736ce7e3",
+      "size_bytes": 12358
+    },
+    "preflight_implementation": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/run_conditional_p3_joint_quote_value_preflight.py",
+      "sha256": "b9343ab0ad3c0c0ca800d7adcc51a0d5741f19f79c12322d022250bb58f20794",
+      "size_bytes": 15431
+    }
+  },
+  "canonical_spec_identity_sha256": "7121755a384783a34954633fd4c1d5840638043f8ea8ae35d481090a071c816d",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "decision_clock": {
+    "cadence": "one_authoritative_opportunity_per_side_per_canonical_10s_boundary",
+    "feature_ready_rule": "feature_ready_ts_ns_lte_decision_ts_ns",
+    "same_timestamp_bbo_required": true,
+    "timestamp_source": "placement_submit_exchange_time"
+  },
+  "estimand": {
+    "candidate_set": [
+      "baseline__BUY_current__SELL_current",
+      "BUY_closer_1tick__SELL_current",
+      "BUY_farther_1tick__SELL_current",
+      "BUY_closer_2tick__SELL_current",
+      "BUY_farther_2tick__SELL_current",
+      "BUY_closer_4tick__SELL_current",
+      "BUY_farther_4tick__SELL_current",
+      "SELL_closer_1tick__BUY_current",
+      "SELL_farther_1tick__BUY_current",
+      "SELL_closer_2tick__BUY_current",
+      "SELL_farther_2tick__BUY_current",
+      "SELL_closer_4tick__BUY_current",
+      "SELL_farther_4tick__BUY_current"
+    ],
+    "cross_side_additivity_assumed": false,
+    "formal_distance_gaps_ticks": [
+      2,
+      4
+    ],
+    "negative_control_gap_ticks": 1,
+    "p3_event_type": "side_specific_aggressive_reach",
+    "p3_horizon_s": 10.0,
+    "p3_role": "ordinary_input_to_future_direct_value_model",
+    "touch_probability_multiplied_outside_value_model": false
+  },
+  "historical_evidence_boundary": {
+    "development_only": true,
+    "f06_economic_outcomes_previously_read": true,
+    "independent_confirmation": false,
+    "mechanics_informed_successor": true,
+    "preflight_reads_economic_outcomes": false,
+    "preflight_reads_operational_lifecycle_outcomes": true
+  },
+  "identity": "conditional_p3_joint_quote_value_preflight_v1",
+  "permissions": {
+    "action_experiment_authorized": false,
+    "live_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false,
+    "value_model_fit_authorized": false
+  },
+  "resolution_partition_root": "${NARROWGATE_DATA_ROOT}/reports/paired_action_resolution_feasibility_v1_development_20260728/partitions",
+  "schema_version": "conditional_p3_joint_quote_value_preflight.v1.spec",
+  "support_gates": {
+    "minimum_days_per_oof_fold": 5,
+    "minimum_filled_rows_per_side_role_action": 30,
+    "minimum_supported_days": 30,
+    "required_oof_fold_count": 4,
+    "require_all_grid_activated": true,
+    "require_exact_bbo_clock": true
+  }
+}

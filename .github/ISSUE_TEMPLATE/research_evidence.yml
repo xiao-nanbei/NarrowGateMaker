@@ -1,0 +1,96 @@
+name: Research evidence proposal
+description: Propose a governed research contract, execution attempt, or public evidence PR.
+title: "[Research evidence] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read CONTRIBUTING.md and docs/opensource/research_contributions.md first. Do not submit outcomes before the research contract and evidence permissions are frozen. Never attach private data or owner-side evidence.
+  - type: input
+    id: unit
+    attributes:
+      label: Public research unit
+      description: Name the existing public family or proposed repository-relative location.
+      placeholder: research/families/...
+    validations:
+      required: true
+  - type: input
+    id: research_identity
+    attributes:
+      label: Research identity
+      description: Name the scientific question, not the executor revision.
+    validations:
+      required: true
+  - type: dropdown
+    id: identity_change
+    attributes:
+      label: Identity classification
+      options:
+        - Same research identity; new execution attempt
+        - New research identity; frozen scientific contract changed
+        - Public presentation or documentation only
+        - Unsure and requesting governance review
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract_elements
+    attributes:
+      label: Frozen contract elements changed
+      description: Select every scientific-contract element changed from the predecessor, if any.
+      options:
+        - label: Sample
+        - label: Baseline or candidate ladder
+        - label: Folds
+        - label: Estimand
+        - label: Statistical contract
+        - label: None; implementation or presentation only
+  - type: textarea
+    id: question
+    attributes:
+      label: Question and decision rule
+      description: State the hypothesis, estimand, frozen gates, and possible decisions without outcome values.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data authority and availability
+      description: Describe public or logical sources, chronological scope, quality gates, and artifact availability. Do not include local paths or data files.
+    validations:
+      required: true
+  - type: textarea
+    id: split
+    attributes:
+      label: Evidence split and permissions
+      description: Identify Development, Validation, and sealed-holdout roles and confirm which panels remain unread.
+    validations:
+      required: true
+  - type: textarea
+    id: attempt
+    attributes:
+      label: Formal execution state
+      description: Record stability-gate status and, when available, the public clean commit, annotated execution tag, attempt ID, and pre-run manifest. Do not report economics here before freeze.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority boundary
+      description: State prediction, action, Validation, holdout, deployment, and live permissions explicitly.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: Ordinary implementation failures remain attempts under the same research identity and are not relabeled as research vXX.
+          required: true
+        - label: No economic outcome was read before the frozen contract and attempt manifest allowed it.
+          required: true
+        - label: All locators are public links, repository-relative paths, or approved placeholders with honest availability.
+          required: true
+        - label: This proposal includes no private host, path, data, credentials, raw live state, or owner-side evidence.
+          required: true
+        - label: I understand that shadow output and a passing research result do not by themselves grant action or live authority.
+          required: true

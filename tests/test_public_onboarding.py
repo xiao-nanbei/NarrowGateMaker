@@ -1,0 +1,443 @@
+from __future__ import annotations
+
+import importlib
+import io
+import json
+import os
+import shlex
+import tomllib
+import unittest
+from contextlib import redirect_stdout
+from fnmatch import fnmatchcase
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+import yaml
+
+from narrowgate.cli import main as narrowgate_main
+from scripts.export_compat_requirements import render_requirements
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _project_config() -> dict[str, Any]:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _configured_packages(config: dict[str, Any] | None = None) -> set[str]:
+    """Resolve the public setuptools package set from explicit or find config."""
+    config = config or _project_config()
+    packages = config["tool"]["setuptools"]["packages"]
+    if isinstance(packages, list):
+        return set(packages)
+
+    find_config = packages["find"]
+    if find_config.get("where", ["."]) != ["."]:
+        raise AssertionError("public package discovery must remain rooted at the repository")
+    if find_config.get("namespaces", True):
+        raise AssertionError("public package discovery must require __init__.py")
+
+    include = find_config.get("include", ["*"])
+    exclude = find_config.get("exclude", [])
+    roots = {
+        pattern.split("*", 1)[0].rstrip(".").split(".", 1)[0]
+        for pattern in include
+        if pattern.split("*", 1)[0].rstrip(".")
+    }
+    discovered: set[str] = set()
+    for root_name in roots:
+        for init_file in (ROOT / root_name).rglob("__init__.py"):
+            package = ".".join(init_file.parent.relative_to(ROOT).parts)
+            if not any(fnmatchcase(package, pattern) for pattern in include):
+                continue
+            if any(fnmatchcase(package, pattern) for pattern in exclude):
+                continue
+            discovered.add(package)
+    return discovered
+
+
+def _docker_copy_sources() -> set[str]:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    logical_lines = dockerfile.replace("\\\n", " ").splitlines()
+    sources: set[str] = set()
+    for line in logical_lines:
+        if not line.startswith("COPY "):
+            continue
+        tokens = [token for token in shlex.split(line)[1:] if not token.startswith("--")]
+        sources.update(token.removeprefix("./").rstrip("/") for token in tokens[:-1])
+    return sources
+
+
+def _dockerignore_rules() -> list[str]:
+    return [
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _docker_context_includes(relative_path: str) -> bool:
+    path = relative_path.strip("/")
+    ignored = False
+    for rule in _dockerignore_rules():
+        negated = rule.startswith("!")
+        pattern = rule[1:] if negated else rule
+        directory_only = pattern.endswith("/")
+        pattern = pattern.lstrip("/").rstrip("/")
+        if directory_only:
+            matched = path == pattern
+        elif "/" in pattern:
+            matched = fnmatchcase(path, pattern) or fnmatchcase(path, f"{pattern}/**")
+        else:
+            matched = any(fnmatchcase(part, pattern) for part in path.split("/"))
+        if matched:
+            ignored = not negated
+    return not ignored
+
+
+class PublicOnboardingSmokeTest(unittest.TestCase):
+    def test_python_and_cpp_packages_share_the_main_dev_version(self) -> None:
+        config = _project_config()
+        with (ROOT / "cpp" / "pyproject.toml").open("rb") as handle:
+            cpp_version = tomllib.load(handle)["project"]["version"]
+
+        self.assertEqual(config["project"]["version"], "0.1.2.dev0")
+        self.assertEqual(cpp_version, "0.1.2.dev0")
+
+    def test_doctor_redacts_paths_and_paths_command_reveals_them(self) -> None:
+        configured = {
+            "NARROWGATE_MARKETDATA_ROOT": "/example-owner/private-marketdata",
+            "NARROWGATE_DATA_ROOT": "/example-owner/private-data",
+            "NARROWGATE_CACHE_ROOT": "/example-owner/private-cache",
+            "XDG_CACHE_HOME": "/example-owner/private-xdg-cache",
+            "NARROWGATE_TICK_WINDOW_CACHE_DIR": "/example-owner/private-window-cache",
+            "NARROWGATE_LIVE_CONFIG": "/example-owner/private-live-config.yaml",
+            "MM_DATA_ROOT": "/example-owner/legacy-data",
+        }
+        with patch.dict(os.environ, configured, clear=False):
+            doctor_output = io.StringIO()
+            with redirect_stdout(doctor_output):
+                self.assertEqual(narrowgate_main(["doctor"]), 0)
+            paths_output = io.StringIO()
+            with redirect_stdout(paths_output):
+                self.assertEqual(narrowgate_main(["paths"]), 0)
+
+        doctor = json.loads(doctor_output.getvalue())
+        rendered_doctor = doctor_output.getvalue()
+        self.assertEqual(doctor["root"], "<redacted; run `narrowgate paths`>")
+        self.assertEqual(doctor["narrowgate_data_root_env"], "<set>")
+        self.assertEqual(doctor["xdg_cache_home_env"], "<set>")
+        self.assertEqual(doctor["path_details_command"], "narrowgate paths")
+        self.assertNotIn(str(ROOT), rendered_doctor)
+        self.assertTrue(all(value not in rendered_doctor for value in configured.values()))
+
+        paths = json.loads(paths_output.getvalue())
+        self.assertEqual(paths["repo_root"], str(ROOT))
+        self.assertEqual(
+            paths["marketdata_root"],
+            str(Path(configured["NARROWGATE_MARKETDATA_ROOT"]).resolve()),
+        )
+        self.assertEqual(
+            paths["data_root"],
+            str(Path(configured["NARROWGATE_DATA_ROOT"]).resolve()),
+        )
+        self.assertEqual(
+            paths["cache_root"],
+            str(Path(configured["NARROWGATE_CACHE_ROOT"]).resolve()),
+        )
+        self.assertEqual(paths["private_config_env"], configured["NARROWGATE_LIVE_CONFIG"])
+
+    def test_no_data_quote_demo(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            return_code = narrowgate_main(["quote-demo"])
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(return_code, 0)
+        self.assertLess(payload["bid_price"], payload["ask_price"])
+
+    def test_base_install_imports_execution_and_research_packages(self) -> None:
+        importlib.import_module("execution")
+        importlib.import_module("research")
+        importlib.import_module("research.families.f03_causal_13_head.audit")
+
+    def test_setuptools_declares_every_public_package(self) -> None:
+        config = _project_config()
+        declared = _configured_packages(config)
+        roots = {name.split(".", 1)[0] for name in declared}
+        discovered: set[str] = set()
+
+        for root_name in roots:
+            for init_file in (ROOT / root_name).rglob("__init__.py"):
+                relative = init_file.parent.relative_to(ROOT)
+                if "private" in relative.parts:
+                    continue
+                discovered.add(".".join(relative.parts))
+
+        self.assertEqual(discovered - declared, set())
+        self.assertEqual(declared - discovered, set())
+
+    def test_wheel_declares_exact_public_governance_resources(self) -> None:
+        from research.governance.historical_reproduction import REGISTRY_PATH
+        from research.governance.paths import MIGRATION_MANIFESTS
+
+        package_root = ROOT / "research" / "governance"
+        required = {
+            path.relative_to(package_root).as_posix()
+            for path in (REGISTRY_PATH, *MIGRATION_MANIFESTS)
+        }
+        declared = _project_config()["tool"]["setuptools"]["package-data"]
+        self.assertEqual(set(declared["research.governance"]), required)
+        self.assertTrue(all((package_root / path).is_file() for path in required))
+        self.assertNotIn("*.json", declared.get("*", []))
+        self.assertNotIn("**/*.json", declared.get("*", []))
+
+    def test_dockerfile_copies_every_declared_package_root_and_module(self) -> None:
+        config = _project_config()
+        setuptools = config["tool"]["setuptools"]
+        package_roots = {name.split(".", 1)[0] for name in _configured_packages(config)}
+        module_sources = {f"{name}.py" for name in setuptools["py-modules"]}
+        copy_sources = _docker_copy_sources()
+
+        self.assertEqual(package_roots - copy_sources, set())
+        self.assertEqual(module_sources - copy_sources, set())
+        self.assertIn("execution", copy_sources)
+        self.assertIn("research", copy_sources)
+        self.assertIn("scripts", copy_sources)
+
+    def test_docker_context_keeps_code_and_synthetic_examples_only(self) -> None:
+        setuptools = _project_config()["tool"]["setuptools"]
+        required = {
+            "LICENSE",
+            "README.md",
+            "data/README.md",
+            "live/formal_dry_run_public.yaml",
+            "pyproject.toml",
+            "narrowgate/replay_demo.py",
+        }
+        required.update(f"{name}.py" for name in setuptools["py-modules"])
+        for package in _configured_packages():
+            package_dir = ROOT / package.replace(".", "/")
+            required.update(
+                str(path.relative_to(ROOT)) for path in package_dir.glob("*.py")
+            )
+        for example in (
+            ROOT / "examples" / "live_dry_run_config.yaml",
+            ROOT / "examples" / "order_level_score_demo.py",
+        ):
+            required.add(str(example.relative_to(ROOT)))
+        for fixture_dir in (
+            ROOT / "examples" / "public_dry_run_model_bundle",
+            ROOT / "examples" / "replay_demo",
+            ROOT / "narrowgate" / "fixtures" / "replay_demo",
+        ):
+            required.update(
+                str(path.relative_to(ROOT))
+                for path in fixture_dir.rglob("*")
+                if path.is_file()
+            )
+        excluded = (
+            ".venv/bin/python",
+            ".env",
+            "private/root-secret.py",
+            "data/raw_trades/BTCUSDC/day.csv",
+            "data/quality/private_day.parquet",
+            "data/private/secret.py",
+            "data/quality/private/secret.py",
+            "data/quality/nested/private/secret.py",
+            "docs/private/live_config.current.local.yaml",
+            "execution/private/runtime.json",
+            "examples/private/local-fixture.json",
+            "narrowgate/private/local-module.py",
+            "research/families/example/private/result.json",
+            "models/saved_private/model.txt",
+            "logs/maker.log",
+            "results/replay/output.json",
+        )
+
+        self.assertTrue(all((ROOT / path).is_file() for path in required))
+        self.assertTrue(all(_docker_context_includes(path) for path in required))
+        self.assertTrue(all(not _docker_context_includes(path) for path in excluded))
+        self.assertEqual(
+            _dockerignore_rules()[-4:],
+            ["private", "private/**", "**/private", "**/private/**"],
+        )
+
+    def test_all_extra_is_the_union_of_supported_workflows(self) -> None:
+        optional = _project_config()["project"]["optional-dependencies"]
+        expected = (
+            set(optional["dev"])
+            | set(optional["data"])
+            | set(optional["research"])
+            | set(optional["live"])
+            | set(optional["studio"])
+        )
+        self.assertEqual(set(optional["all"]), expected)
+        self.assertIn("requests>=2.28", optional["research"])
+        self.assertEqual(optional["provider-cryptohft"], ["cryptohftdata>=0.2.1"])
+        self.assertNotIn("cryptohftdata>=0.2.1", optional["all"])
+
+        requirements = {
+            line.strip()
+            for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        compatibility_superset = (
+            set(_project_config()["project"]["dependencies"])
+            | set(optional["data"])
+            | set(optional["research"])
+            | set(optional["live"])
+            | set(optional["provider-cryptohft"])
+        )
+        self.assertEqual(requirements, compatibility_superset)
+        self.assertEqual(
+            (ROOT / "requirements.txt").read_text(encoding="utf-8"),
+            render_requirements(_project_config()["project"]),
+        )
+
+    def test_compat_requirements_export_preserves_specs_and_deduplicates(self) -> None:
+        spec = 'example>=1; python_version < "3.13"'
+        project = {
+            "dependencies": [spec],
+            "optional-dependencies": {
+                "data": [spec],
+                "research": ["research-only>=2"],
+                "live": [],
+                "provider-cryptohft": ["provider>=1"],
+                "dev": ["never-include-dev>=1"],
+                "studio": ["never-include-studio>=1"],
+            },
+        }
+        rendered = render_requirements(project)
+        lines = [line for line in rendered.splitlines() if not line.startswith("#")]
+        self.assertEqual(lines, sorted([spec, "research-only>=2", "provider>=1"]))
+
+    def test_ci_has_base_smoke_single_native_build_and_root_admission(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        )
+        jobs = workflow["jobs"]
+
+        base = jobs["base-install-smoke"]
+        self.assertEqual(base["name"], "Base install smoke")
+        base_install = next(
+            step for step in base["steps"] if step.get("name") == "Install base package only"
+        )["run"]
+        self.assertIn("python -m pip install -e .", base_install)
+        self.assertNotIn(".[", base_install)
+        base_smoke = next(
+            step for step in base["steps"] if step.get("name") == "Base-only public workflow smoke"
+        )["run"]
+        self.assertIn("narrowgate replay-demo", base_smoke)
+        self.assertIn("test_public_onboarding.py", base_smoke)
+
+        self.assertEqual(
+            jobs["python"]["name"],
+            "Python 3.12 full public suite and native parity",
+        )
+        native_install = next(
+            step
+            for step in jobs["python"]["steps"]
+            if step.get("name") == "Install Python and native test dependencies once"
+        )["run"]
+        self.assertIn('python -m pip install -e ".[all]"', native_install)
+        self.assertIn("python -m pip install -e cpp", native_install)
+        self.assertNotIn("cpp-build-smoke", jobs)
+        pytest_step = next(
+            step for step in jobs["python"]["steps"] if step.get("id") == "pytest"
+        )
+        self.assertIsNot(pytest_step.get("continue-on-error"), True)
+        self.assertEqual(jobs["admission"]["name"], "CI admission")
+
+        branch_protection = (ROOT / "docs" / "dev" / "ci.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("`CI admission`", branch_protection)
+
+    def test_devcontainer_uses_all_and_external_data_volumes(self) -> None:
+        config = json.loads(
+            (ROOT / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(config["build"]["dockerfile"], "../Dockerfile")
+        self.assertEqual(config["build"]["context"], "..")
+        self.assertEqual(config["build"]["args"]["NARROWGATE_INSTALL_TARGET"], ".[all]")
+        self.assertIn("--no-deps", config["postCreateCommand"])
+        self.assertIn("--no-build-isolation", config["postCreateCommand"])
+        self.assertEqual(
+            config["remoteEnv"]["NARROWGATE_DATA_ROOT"],
+            "/narrowgate/marketdata/NarrowGate_BTCUSDC",
+        )
+        self.assertNotEqual(config["remoteEnv"]["NARROWGATE_DATA_ROOT"], "/workspace/data")
+        self.assertTrue(any("target=/narrowgate/marketdata" in mount for mount in config["mounts"]))
+
+    def test_readme_quickstart_runs_this_base_only_smoke(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        quickstart = readme.split("## 5-Minute Quickstart", 1)[1].split(
+            "## What This Repo Is For", 1
+        )[0]
+
+        self.assertIn("python -m pip install -e .", quickstart)
+        self.assertIn("test_public_onboarding.py", quickstart)
+        self.assertNotIn("test_parameter_selection.py", quickstart)
+
+    def test_readme_has_one_canonical_dry_run_and_replay_demo_route(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        section = readme.split("## Offline Checks And Their Limits", 1)[1].split(
+            "## What This Repo Is For", 1
+        )[0]
+
+        self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
+        self.assertIn("narrowgate replay-demo", readme)
+        self.assertEqual(readme.count("(docs/ops/live_dry_run.md)"), 1)
+        self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)
+        self.assertIn("docs/ops/live_dry_run.md", section)
+        self.assertIn("examples/replay_demo/README.md", readme)
+
+    def test_chinese_readme_matches_quickstart_and_canonical_routes(self) -> None:
+        readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+        quickstart = readme.split("## 5 分钟快速开始", 1)[1].split(
+            "## 离线检查及其边界", 1
+        )[0]
+
+        self.assertIn("python -m pip install -e .", quickstart)
+        self.assertIn("test_public_onboarding.py", quickstart)
+        self.assertNotIn("test_parameter_selection.py", quickstart)
+        self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
+        self.assertIn("narrowgate replay-demo", readme)
+        self.assertIn("(docs/ops/live_dry_run.zh-CN.md)", readme)
+
+    def test_readme_links_public_participation_and_data_tutorial(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("[Contributing](CONTRIBUTING.md)", readme)
+        self.assertIn("[Security policy](SECURITY.md)", readme)
+        self.assertIn(
+            "[source-available project navigation](docs/opensource/README.md)",
+            readme,
+        )
+        self.assertIn("[one-day data pipeline](docs/opensource/one_day_data_pipeline.md)", readme)
+        self.assertIn("[Branch protection](docs/dev/ci.md#branch-protection)", readme)
+        self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)
+
+    def test_data_dependency_contract_is_documented(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        tutorial = (ROOT / "docs" / "opensource" / "one_day_data_pipeline.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('python -m pip install -e ".[data]"', readme)
+        self.assertNotIn('python -m pip install -e ".[provider-cryptohft]"', readme)
+        self.assertIn("private delivery configuration", readme)
+        self.assertIn("requirements.txt", readme)
+        for command in ("download --config", "inventory --root", "normalize --root", "validate --bundle"):
+            self.assertIn("python -m data " + command, tutorial)
+        self.assertNotIn("download-raw-trades", tutorial)
+        self.assertNotIn("download-agg-trades", tutorial)
+        self.assertNotIn("python -m models.backtest_tick", tutorial)
+        self.assertIn("not full content acceptance", tutorial)
+
+
+if __name__ == "__main__":
+    unittest.main()
