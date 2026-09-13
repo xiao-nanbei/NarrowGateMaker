@@ -1,0 +1,30 @@
+{
+  "extends": "placement_fill_full_curve_cif_v1_spec_20260727.json",
+  "extends_sha256": "71efb2f30d2ec8d6ddbf95f139a87e56720de1485300cb073ec2a54011ed25d0",
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v2",
+  "family_id": "placement_fill_full_curve_cif_v2",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v2_full_curve_development_fit",
+  "revision_reason": "v1 midpoint quadrature left deterministic holes in early non-fill risk intervals and overpredicted the cumulative CIF; v2 uses action-keyed stratified risk sampling and doubles the quadrature support",
+  "evidence_scope": "v1 Development exposed the sampling defect; Validation and sealed holdout remain unread and unavailable",
+  "lineage": {
+    "v1_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_cif_v1_development_20260727/report.json",
+    "v1_development_report_sha256": "0a38765d7a6a5cfe59896d54fe05adaa131158a59f1828397e8d3ef90ccf1b7b",
+    "v1_failure": "OOF cumulative fill probability was roughly twice observed because fixed midpoint risk sampling did not cover unsampled early intervals",
+    "implementation": "models/audit/full_curve_fill_cif.py",
+    "implementation_sha256": "b4ef4b3dd0fe2544dbe572003f89e8f2d678c515dc0fe675b613fa11455e73ae"
+  },
+  "development_fit": {
+    "maximum_negative_intervals_per_action": 8,
+    "risk_sampling": "hash_stratified_v1"
+  },
+  "reporting": {
+    "curve_level_gate": "not frozen in v2; Development remains diagnostic and cannot unlock Validation"
+  },
+  "permissions": {
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

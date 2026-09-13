@@ -1,0 +1,473 @@
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+from models.backtest_tick import simulate_tick
+from models.replay.runtime_checkpoint_io import load_trusted_runtime_checkpoint, save_runtime_checkpoint
+from tests.test_tick_runtime_checkpoint import assert_same, scenario
+
+
+@pytest.mark.parametrize("cut_offset", [1999, 2101])
+def test_bounded_parquet_loader_midnight_resume_keeps_pending_fills_and_accounting(tmp_path, monkeypatch, cut_offset):
+    import pandas as pd
+    from models import backtest_tick as bt
+
+    args, kwargs = scenario("async")
+    offset = int(pd.Timestamp("2026-01-02", tz="UTC").value // 1_000_000) - 2000
+    source = kwargs["bbo_data"]
+    axis = source.ts_ms + offset
+    frame = pd.DataFrame({"timestamp": axis, "best_bid": source.best_bid, "best_ask": source.best_ask,
+                          "bid_qty": source.bid_qty, "ask_qty": source.ask_qty})
+    days = ["2026-01-01", "2026-01-02"]
+    for day in days:
+        start = int(pd.Timestamp(day, tz="UTC").value // 1_000_000)
+        frame[(axis >= start) & (axis < start + 86_400_000)].to_parquet(tmp_path / f"BTCUSDC-bbo-{day}.parquet")
+    monkeypatch.setattr(bt, "SYMBOL", "BTCUSDC")
+    monkeypatch.setattr(bt, "BBO_DIR", tmp_path)
+    monkeypatch.setattr(bt, "filter_paths_for_orderbook_quality", lambda paths, *a, **k: paths)
+    monkeypatch.setattr(bt, "allowed_timestamp_mask", lambda ts, *a, **k: np.ones(len(ts), dtype=bool))
+    trades = args[0].copy()
+    trades.transact_time += offset
+    params = {**args[3], "replay_event_clock_start_ts_ms": offset,
+              "planned_quote_stop_ts_ms": offset + 2000, "replay_event_clock_end_ts_ms": offset + 4000,
+              "record_utc_accounting": True}
+    full_book = bt.load_bbo_data(days)
+    expected = simulate_tick(trades, args[1] + offset, args[2], params, bbo_data=full_book)
+    first = bt.load_bbo_data(days, time_bounds_ms=(offset, offset + 2500))
+    partial = simulate_tick(trades[trades.transact_time < offset + 2500].copy(), args[1] + offset, args[2],
+                            {**params, "replay_event_clock_end_ts_ms": offset + 2499}, bbo_data=first,
+                            checkpoint_at_ts_ms=offset + cut_offset)
+    checkpoint_path = tmp_path / "runtime.pkl"
+    save_runtime_checkpoint(checkpoint_path, partial["_replay_checkpoint"])
+    second = bt.load_bbo_data(days, time_bounds_ms=(offset + 500, offset + 4001))
+    actual = simulate_tick(trades[trades.transact_time >= offset + 500].copy(), args[1] + offset, args[2],
+                           {**params, "replay_event_clock_start_ts_ms": offset + 500},
+                           bbo_data=second, resume_input_batch=True,
+                           resume_checkpoint=load_trusted_runtime_checkpoint(checkpoint_path))
+    assert_same(actual, expected)
+    assert len(second.ts_ms) < len(full_book.ts_ms)
+
+
+@pytest.mark.parametrize("changed_overlap", [False, True])
+def test_rotation_copies_bbo_usability_and_checks_consumed_overlap(changed_overlap):
+    from types import SimpleNamespace
+    from models.replay.runtime_input_window import _CLOCK_FIELDS, rotate_runtime_inputs
+
+    def runtime(times, usable):
+        return SimpleNamespace(
+            trade_ts=np.array(times), bbo_ts=np.array(times), bbo_usable=np.array(usable),
+            is_execution_trade=np.ones(3, dtype=bool), exchange_book_scheduler=None,
+            replay_origin_ts_ms=100, eff_rq_ms=1000, max_samples=1000,
+            n_execution_trades=3, input_window_count=1, input_event_offset=0,
+            input_clock_offsets=dict.fromkeys(_CLOCK_FIELDS, 0), bbo_idx=1,
+            replay_event_cursor={"index": 1}, bid_orders=[], ask_orders=[],
+            local_lifecycle_boundary_scheduler=None, serial_rest_decision=None,
+            pending_quote_compute=None, quote_ti_cursor=0, cooldown_duration_policy_evaluator=None,
+        )
+
+    saved = runtime([100, 200, 300], [True, False, True])
+    fresh = runtime([200, 300, 400], [changed_overlap, True, False])
+    if changed_overlap:
+        with pytest.raises(ValueError, match="overlapping bbo_usable"):
+            rotate_runtime_inputs(saved, fresh, (1, 200))
+        assert saved.bbo_ts.tolist() == [100, 200, 300]
+        assert saved.bbo_usable.tolist() == [True, False, True]
+    else:
+        assert rotate_runtime_inputs(saved, fresh, (1, 200)) == (0, 200)
+        assert saved.bbo_ts.tolist() == [200, 300, 400]
+        assert saved.bbo_usable.tolist() == [False, True, False]
+        assert saved.bbo_idx == 0
+
+
+def test_automatic_context_retains_dormant_consumers_and_resumes_exactly(tmp_path):
+    from research.families.f01_fixed_parameter_racing.campaign_outcome_replay_audit import _runtime_batch_bounds
+
+    args, kwargs = scenario("ordinary")
+    args[0]["transact_time"] *= 10
+    kwargs["bbo_data"].ts_ms[:] *= 10
+    params = {**args[3], "requote_interval": 15., "rq_min": 15., "rq_max": 15.,
+              "replay_event_clock_end_ts_ms": 40_000}
+    ts = np.arange(0, 40_001, 1_000)
+    variance = np.linspace(1., 2., len(ts))
+    full_args = (args[0], ts, variance, params)
+    expected = simulate_tick(*full_args, **kwargs)
+    partial = simulate_tick(*full_args, **kwargs, checkpoint_at_ts_ms=11_000)
+    path = tmp_path / "paused.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    saved = load_trusted_runtime_checkpoint(path)
+    runtime = saved["runtime"]
+    assert runtime.bbo_ts[runtime.decision_bbo_idx] < 10_000
+    (start, end), cut = _runtime_batch_bounds(0, 40_000, 11_000, 30_000, 1_000,
+                                             runtime=runtime)
+    assert start == 0 and end == 40_000 and cut is None
+    # The loader preserves dormant cursor rows; it does not fast-forward them.
+    cursor = runtime.var_idx
+    actual = simulate_tick(*full_args, **kwargs, resume_checkpoint=saved, resume_input_batch=True)
+    assert runtime.var_idx == cursor
+    assert_same(actual, expected)
+
+
+def test_context_retains_pending_payload_rows_without_mutating_state():
+    from types import SimpleNamespace
+    from models.replay.runtime_input_window import runtime_input_context_start
+
+    order = {"queue_l2_seen_idx": 2}
+    pending = {"trade_idx": 1, "order": order}
+    runtime = SimpleNamespace(
+        trade_ts=np.arange(10) * 1000, l2_ts=np.arange(10) * 1000,
+        main_loop_enabled=False, dynamic_rq=False, bid_orders=[order], ask_orders=[],
+        local_lifecycle_boundary_scheduler=None, serial_rest_decision=pending,
+        pending_quote_compute=None,
+    )
+    assert runtime_input_context_start(runtime, 8000, 300) == 700
+    assert pending["trade_idx"] == 1 and order["queue_l2_seen_idx"] == 2
+    pending["trade_idx"] = 0
+    assert runtime_input_context_start(runtime, 8000, 300) == 0
+
+
+def test_checkpoint_compaction_keeps_complete_written_path_and_shared_live_state():
+    from types import SimpleNamespace
+    from models.replay.runtime_input_window import (
+        compact_runtime_checkpoint, ensure_runtime_sample_capacity,
+    )
+
+    order = {"remaining_qty": .001}
+    runtime = SimpleNamespace(
+        si=3, max_samples=1_000_000,
+        pnl_arr=np.arange(1_000_000, dtype=float),
+        inv_arr=np.arange(1_000_000, dtype=float),
+        ts_arr=np.arange(1_000_000, dtype=np.int64),
+        bid_orders=[order], pending_quote_compute={"order": order},
+        source_ts=np.arange(1_000_000), rows={"obsolete": True},
+    )
+    compact = compact_runtime_checkpoint(runtime)
+    assert compact.bid_orders[0] is compact.pending_quote_compute["order"] is order
+    assert not hasattr(compact, "source_ts") and not hasattr(compact, "rows")
+    for name in ("pnl_arr", "inv_arr", "ts_arr"):
+        np.testing.assert_array_equal(getattr(compact, name), np.arange(3))
+        assert getattr(compact, name).base is None
+    assert sum(getattr(compact, name).nbytes for name in ("pnl_arr", "inv_arr", "ts_arr")) == 72
+    assert runtime.max_samples == 1_000_000
+    ensure_runtime_sample_capacity(compact)
+    assert compact.max_samples == 4099
+    assert compact.si == 3
+    for name in ("pnl_arr", "inv_arr", "ts_arr"):
+        np.testing.assert_array_equal(getattr(compact, name)[:3], np.arange(3))
+
+
+@pytest.mark.parametrize("record_utc_accounting", [False, True])
+@pytest.mark.parametrize("consume_resume_checkpoint", [False, True])
+def test_repeated_input_start_keeps_saved_timer_price_instead_of_book_mid(record_utc_accounting, consume_resume_checkpoint):
+    args, kwargs = scenario("async")
+    args[3]["record_utc_accounting"] = record_utc_accounting
+    trades = args[0].copy()
+    trades.loc[trades.transact_time < 700, "price"] = 97.5
+    trades = trades[~trades.transact_time.between(500, 699)].copy()
+    expected = simulate_tick(trades, *args[1:], **kwargs)
+    first = simulate_tick(trades, *args[1:], **kwargs, checkpoint_at_ts_ms=1_005)
+    cropped = trades[trades.transact_time >= 500].copy()
+    params = {**args[3], "replay_event_clock_start_ts_ms": 500}
+    second = simulate_tick(cropped, args[1], args[2], params, **kwargs,
+                           resume_checkpoint=first["_replay_checkpoint"],
+                           resume_input_batch=True, checkpoint_at_ts_ms=2_001,
+                           consume_resume_checkpoint=consume_resume_checkpoint)
+    saved = second["_replay_checkpoint"]
+    assert saved["runtime"].trade_ts[0] == 500
+    assert saved["runtime"].trade_price[0] == 97.5
+    actual = simulate_tick(cropped, args[1], args[2], params, **kwargs,
+                           resume_checkpoint=saved, resume_input_batch=True,
+                           consume_resume_checkpoint=consume_resume_checkpoint)
+    assert_same(actual, expected)
+
+
+def test_rotated_clock_retains_price_before_first_new_execution():
+    from models.backtest_tick import build_replay_event_clock
+    args, kwargs = scenario("ordinary")
+    trades = args[0].iloc[-1:].copy()
+    first = int(trades.transact_time.iloc[0])
+    clock, _ = build_replay_event_clock(trades, mode="merged", interval_ms=100,
+        start_ts_ms=first - 100, end_ts_ms=first, bbo_data=kwargs["bbo_data"],
+        initial_clock_price=97.5)
+    assert (clock.loc[clock.transact_time < first, "price"] == 97.5).all()
+    assert clock.loc[clock.transact_time == first, "price"].iloc[-1] == trades.price.iloc[0]
+
+
+def test_only_cold_flat_start_can_wait_for_the_first_actual_price():
+    from models.backtest_tick import build_replay_event_clock
+    args, kwargs = scenario("ordinary")
+    trades = args[0].iloc[10:].copy()
+    bbo = kwargs["bbo_data"]
+    bbo = replace(bbo, **{name: getattr(bbo, name)[5:] for name in
+                         ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")})
+    options = dict(mode="merged", interval_ms=100, start_ts_ms=0, end_ts_ms=4_000, bbo_data=bbo)
+    with pytest.raises(ValueError, match="no causal BBO/L2"):
+        build_replay_event_clock(trades, **options)
+    clock, count = build_replay_event_clock(trades, **options, cold_flat_start=True)
+    assert clock.transact_time.iloc[0] == 500
+    assert clock.price.iloc[0] == 100.
+    assert count == len(trades)
+    assert not clock[clock.transact_time < 1_000]._is_execution_trade.any()
+    args[3].update(signal_cold_start=True, initial_inventory=.001)
+    with pytest.raises(ValueError, match="empty experimental account"):
+        simulate_tick(*args, **kwargs)
+
+
+def test_utc_accounting_keeps_unpriced_cold_flat_calendar_prefix():
+    from tests.test_exec_book_visibility_delay import _message_schedule_replay_inputs
+    from tests.test_python_planned_maintenance_replay import _async_fifo_params
+
+    inputs = _message_schedule_replay_inputs()
+    inputs["trades_df"]["transact_time"] += 500
+    source = inputs["var_ts_ms"] + 500
+    for name in ("bbo_data", "l2_data"):
+        inputs[name] = replace(inputs[name], ts_ms=source.copy())
+    inputs["var_ts_ms"] = source.copy()
+    inputs["ml_data"] = (source.copy(), *inputs["ml_data"][1:])
+    params = inputs["params"]
+    for feed in params["_exec_message_delivery"].values():
+        for clock in ("exchange_ts_ns", "receive_ts_ns", "feature_ready_ts_ns"):
+            feed[clock] = feed[clock] + 500_000_000
+    params.update(_async_fifo_params())
+    params.pop("planned_quote_stop_ts_ms", None)
+    params.update(signal_cold_start=True, runtime_compute_initial_bucket_end_ms=None,
+                  runtime_compute_clock="prediction_delivery", runtime_compute_bucket_ms=10_000,
+                  _runtime_compute_samples_by_path={path: [[2., 4., 1.]] for path in
+                      ("cached_no_new_bucket", "new_bucket", "catch_up")},
+                  _runtime_compute_sample_semantics="synthetic paired compute phases",
+                  replay_event_clock_start_ts_ms=0, replay_event_clock_end_ts_ms=5_000)
+    baseline = simulate_tick(**inputs)
+    params["record_utc_accounting"] = True
+    actual = simulate_tick(**inputs)
+    marks = actual.pop("_utc_accounting_marks")
+    baseline.pop("_utc_accounting_marks")
+    assert_same(actual, baseline)
+    assert marks[0] == {"boundary_ts_ms": 0, "mark_price": None,
+                        "mark_clock_ts_ms": None, "mark_basis": "replay_terminal_price_clock"}
+    assert marks[-1]["boundary_ts_ms"] == 5_001
+    assert marks[-1]["mark_clock_ts_ms"] <= 5_000
+
+
+@pytest.mark.parametrize("capture_cutoffs", [(500, 1_250, 2_050), (500,)])
+def test_configured_buy_sell_policy_state_persists_and_rotates(tmp_path, monkeypatch, capture_cutoffs):
+    from models.exchange_book_replay import HistoricalMessageDeliverySchedule, ReceiveTimeCooldownReplayAdapter
+    from models.tick_data_types import HistoricalL2Data
+    from strategy.boolean_cooldown_live import (
+        LiveBooleanCooldownPolicy, RuntimeCooldownPolicyEvaluator, OWNER_POLICY_SELECTED_PREDICATES,
+    )
+    from tests.test_boolean_cooldown_buy_e3 import _artifact
+
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "0")
+    ts = np.arange(10, 5_010, 100, dtype=np.int64)
+    depth = HistoricalL2Data(ts, (100 + np.sin(np.arange(len(ts))))[:, None],
+                             np.ones((len(ts), 1)), (102 + np.sin(np.arange(len(ts))))[:, None],
+                             np.ones((len(ts), 1)))
+
+    def adapter(start, end, directory):
+        directory.mkdir()
+        buy, _ = _artifact(directory)
+        sell = LiveBooleanCooldownPolicy(evaluator=RuntimeCooldownPolicyEvaluator(
+            rules=(("FIXED_166S", (tuple((name, False) for name in OWNER_POLICY_SELECTED_PREDICATES),)),),
+            policy_sha256="1" * 64, predicate_bundle_sha256="2" * 64,
+        ), warmup_s=.2, max_feature_age_s=5., native_runtime=False)
+        part = replace(depth, **{name: getattr(depth, name)[start:end].copy()
+                                for name in ("ts_ms", "bid_px", "bid_qty", "ask_px", "ask_qty")})
+        clock = part.ts_ms * 1_000_000
+        return ReceiveTimeCooldownReplayAdapter(
+            part, HistoricalMessageDeliverySchedule(clock, clock + 1, clock + 2),
+            policies={"BUY": buy, "SELL": sell},
+        )
+
+    expected = adapter(0, len(ts), tmp_path / "full")
+    actual = adapter(0, 35, tmp_path / "first")
+
+    def capture(subject, cutoff, side):
+        cutoff *= 1_000_000
+        snapshot = subject.capture_exposure_fill(
+            assignment_id=f"{cutoff}:{side}", fill_exchange_ts_ns=cutoff - 1,
+            fill_visible_ts_ns=cutoff, m0_context={"side": side, "fill_visible_ts_ns": cutoff,
+                "baseline_duration_ms": 85_000., "campaign_age_s": 300.},
+        )
+        return subject.evaluate(snapshot, 85_000.)
+
+    for cutoff in capture_cutoffs:
+        for side in ("BUY", "SELL"):
+            assert capture(actual, cutoff, side) == capture(expected, cutoff, side)
+    path = tmp_path / "policies.pickle"
+    save_runtime_checkpoint(path, {"schema": "tick_replay_runtime.v1", "adapter": actual,
+                                   "emitter": actual})
+    restored = load_trusted_runtime_checkpoint(path)
+    actual = restored["adapter"]
+    assert restored["emitter"] is actual
+    assert actual._policies["BUY"].windows._updates > 0
+    fresh = adapter(10, len(ts), tmp_path / "second")
+    if len(capture_cutoffs) == 1:
+        saved_cursor = actual._cursor
+        # An equal-time callback is still causally ambiguous, not disposable.
+        with pytest.raises(ValueError, match="undelivered depth callbacks"):
+            actual.resume_input_window(fresh, before_ts_ns=int(actual._ready[9]))
+        assert actual._cursor == saved_cursor
+    actual.resume_input_window(fresh, before_ts_ns=2_450_000_000)
+    for cutoff in (2_450, 3_999, 5_100):
+        for side in ("BUY", "SELL"):
+            assert capture(actual, cutoff, side) == capture(expected, cutoff, side)
+    for side in ("BUY", "SELL"):
+        assert_same(vars(actual._policies[side].windows._state),
+                    vars(expected._policies[side].windows._state))
+        assert actual._policies[side].windows._feature_ready_ts_ns == expected._policies[side].windows._feature_ready_ts_ns
+    for key in ("depth_callbacks_consumed", "depth_rows_available", "snapshots_emitted", "evaluations"):
+        assert actual.audit()[key] == expected.audit()[key]
+
+    def replay_inputs(directory, depth_start=0):
+        args, kwargs = scenario("async")
+        policy = adapter(depth_start, len(ts), directory)
+        args[3].update(fill_cooldown=85., requote_threshold_bps=1., cooldown_duration_policy_evaluator=policy,
+                       cooldown_v2_snapshot_emitter=policy)
+        return args, kwargs
+
+    args, kwargs = replay_inputs(tmp_path / "runtime-full")
+    uninterrupted = simulate_tick(*args, **kwargs)
+    args, kwargs = replay_inputs(tmp_path / "runtime-first")
+    partial = simulate_tick(*args, **kwargs, checkpoint_at_ts_ms=1_250)
+    saved = partial["_replay_checkpoint"]
+    assert saved["runtime"].cooldown_duration_policy_evaluator._captures > 0
+    save_runtime_checkpoint(path, saved)
+    args, kwargs = replay_inputs(tmp_path / "runtime-next", depth_start=10)
+    args = (args[0][args[0].transact_time >= 500].copy(), *args[1:])
+    continued = simulate_tick(*args, **kwargs, resume_input_batch=True,
+                              resume_checkpoint=load_trusted_runtime_checkpoint(path))
+    # The health audit measures real host evaluation microseconds; it is not an
+    # economic/replay clock. All modeled outputs must still match exactly.
+    for result in (continued, uninterrupted):
+        for key in ("_cooldown_v2_snapshot_emitter_audit", "_cooldown_duration_policy_audit"):
+            result.pop(key, None)
+    assert_same(continued, uninterrupted)
+
+
+@pytest.mark.parametrize("repeated_basename", [False, True])
+def test_native_file_window_rotation_matches_uninterrupted_runtime(tmp_path, repeated_basename):
+    from models.exchange_book_replay import HistoricalExchangeBookEvent
+
+    args, kwargs = scenario("async")
+    base = 1_700_000_000_000
+    args[0]["transact_time"] += base
+    args[1][:] += base
+    kwargs["bbo_data"].ts_ms[:] += base
+    args[3].update(exchange_book_queue_mode="diagnostic",
+                   replay_event_clock_end_ts_ms=base + 3_000)
+    events = [HistoricalExchangeBookEvent(
+        market_id="binance_futures:perpetual:BTCUSDC", event_type="snapshot",
+        exchange_ts_ns=(base + timestamp) * 1_000_000,
+        local_receive_ts_ns=(base + timestamp + 1) * 1_000_000,
+        last_update_id=index + 1, source=f"/old/{'00' if index < 2 else '01'}.jsonl",
+        source_ordinal=index,
+        levels=(("bid", 960, 1.), ("bid", 999, 1.), ("ask", 1001, 1.), ("ask", 1040, 1.)),
+    ) for index, timestamp in enumerate((-100, 300, 800, 1_105, 1_105, 1_200, 2_000, 2_800))]
+    if repeated_basename:
+        events = [replace(event, source=event.source.removesuffix('.jsonl') + '/book.parquet')
+                  for event in events]
+    expected = simulate_tick(*args, **kwargs, exchange_book_event_tape=events)
+    partial = simulate_tick(*args, **kwargs, exchange_book_event_tape=events,
+                            checkpoint_at_ts_ms=base + 1_110)
+    path = tmp_path / "native-window.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    cropped = args[0][args[0].transact_time >= base + 500].copy()
+    bbo = kwargs["bbo_data"]
+    bbo = replace(bbo, **{name: getattr(bbo, name)[bbo.ts_ms >= base + 500].copy()
+                          for name in ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")})
+    # Include the old file too: identical provider basenames in each hour must
+    # not match its cursor against an earlier hour's same within-file ordinal.
+    retained = events if repeated_basename else events[2:]
+    new_events = [replace(event, source=event.source.replace('/old/', '/new/'), source_ordinal=index)
+                  for index, event in enumerate(retained)]
+    actual = simulate_tick(cropped, *args[1:], bbo_data=bbo,
+                           exchange_book_event_tape=new_events,
+                           resume_checkpoint=load_trusted_runtime_checkpoint(path),
+                           resume_input_batch=True)
+    assert_same(actual, expected)
+
+
+@pytest.mark.parametrize("mode", ["ordinary", "async", "compute", "timeout", "emergency", "close_replace"])
+@pytest.mark.parametrize("cut", [1_005, 1_110, 1_121, 1_399, 2_001])
+def test_rotated_arrays_keep_accounting_and_order_lifecycle(mode, cut, tmp_path):
+    args, kwargs = scenario(mode)
+    expected = simulate_tick(*args, **kwargs)
+    # The first batch has lookahead beyond the cut. The second drops a real
+    # consumed prefix; it is not merely an uninterrupted replay with checkpoints.
+    first_args = (args[0][args[0].transact_time < 2_500].copy(), args[1], args[2],
+                  {**args[3], "replay_event_clock_end_ts_ms": 2_499})
+    first_bbo = kwargs["bbo_data"]
+    partial = simulate_tick(*first_args, bbo_data=first_bbo, checkpoint_at_ts_ms=cut)
+    if partial.get("completed") is not False:
+        assert_same(partial, expected)
+        return
+    path = tmp_path / "batch.pickle"
+    save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+    old = load_trusted_runtime_checkpoint(path)
+    second_args = (args[0][args[0].transact_time >= 500].copy(), args[1], args[2], args[3])
+    # The delayed-compute case still references the first quote's snapshot.
+    # Keep that actual predecessor instead of fabricating a newer snapshot.
+    bbo_start = 0 if mode == "compute" else 500
+    bbo = replace(first_bbo, **{
+        name: getattr(first_bbo, name)[first_bbo.ts_ms >= bbo_start].copy()
+        for name in ("ts_ms", "best_bid", "best_ask", "bid_qty", "ask_qty")
+    })
+    actual = simulate_tick(*second_args, bbo_data=bbo, resume_checkpoint=old, resume_input_batch=True)
+    assert_same(actual, expected)
+    assert len(second_args[0]) < len(args[0])
+
+
+@pytest.mark.parametrize("delayed_fill", [False, True])
+def test_multiple_windows_rotate_book_variance_predictions_and_pending_fills(tmp_path, delayed_fill):
+    import pandas as pd
+    from models.tick_data_types import HistoricalBBOData, HistoricalL2Data
+    from tests.test_python_planned_maintenance_replay import _async_fifo_params, _params
+
+    # Real 120-second local-rank context is retained in every batch. Earlier
+    # short tests exercise cursor translation; this case exercises lookbacks.
+    times = np.arange(0, 142_001, 100)
+    trades = pd.DataFrame({
+        "transact_time": times, "price": np.full(times.size, 100.0),
+        "quantity": np.zeros(times.size), "is_buyer_maker": np.ones(times.size, dtype=np.uint8),
+    })
+    for timestamp, price, side in ((133_100, 90., 1), (137_100, 110., 0), (139_100, 90., 1)):
+        trades.loc[(trades.transact_time >= timestamp) & (trades.transact_time < timestamp + 500),
+                   ["price", "quantity", "is_buyer_maker"]] = [price, 10., side]
+    variance_ts = np.arange(0, 142_001, 1_000)
+    variance = np.linspace(1.0, 1.2, variance_ts.size)
+    params = {**_params(), **_async_fifo_params(), "replay_event_clock_end_ts_ms": 142_000,
+              "rq_min": 0.5, "rq_max": 1.0, "trace_decisions_max": 1_000,
+              "ml_enabled": True, "vol_blend": 0.2,
+              "queue_l2_cancel_ahead_enabled": True}
+    if delayed_fill:
+        params["_private_fill_visibility_latency_samples_ms"] = [1_200.]
+
+    def inputs(start, end):
+        clock = times[(times >= start) & (times <= end)]
+        mask = (variance_ts >= start) & (variance_ts <= end)
+        return {
+            "trades_df": trades[(trades.transact_time >= start) & (trades.transact_time <= end)].copy(),
+            "var_ts_ms": variance_ts[mask], "var_ssq": variance[mask],
+            "var_ti": np.linspace(40., 60., variance_ts.size)[mask],
+            "var_retsq": np.linspace(1., 2., variance_ts.size)[mask],
+            "ml_data": (variance_ts[mask], np.linspace(.4, .6, variance_ts.size)[mask],
+                        variance[mask], np.zeros(mask.sum())),
+            "params": {**params, "replay_event_clock_end_ts_ms": end},
+            "bbo_data": HistoricalBBOData(clock, np.full(clock.size, 99.9), np.full(clock.size, 100.1),
+                                          np.ones(clock.size), np.ones(clock.size)),
+            "l2_data": HistoricalL2Data(clock, np.tile([99.9, 96.], (clock.size, 1)),
+                                        np.ones((clock.size, 2)), np.tile([100.1, 104.], (clock.size, 1)),
+                                        np.ones((clock.size, 2))),
+        }
+
+    expected = simulate_tick(**inputs(0, 142_000))
+    checkpoint = None
+    for start, end, cut in ((0, 140_000, 134_001), (1_000, 142_000, 138_001)):
+        partial = simulate_tick(**inputs(start, end), resume_checkpoint=checkpoint,
+                                resume_input_batch=checkpoint is not None, checkpoint_at_ts_ms=cut)
+        path = tmp_path / "rolling.pickle"
+        save_runtime_checkpoint(path, partial["_replay_checkpoint"])
+        checkpoint = load_trusted_runtime_checkpoint(path)
+    actual = simulate_tick(**inputs(5_000, 142_000), resume_checkpoint=checkpoint, resume_input_batch=True)
+    assert expected["fills_bid"] + expected["fills_ask"] >= 2
+    assert_same(actual, expected)

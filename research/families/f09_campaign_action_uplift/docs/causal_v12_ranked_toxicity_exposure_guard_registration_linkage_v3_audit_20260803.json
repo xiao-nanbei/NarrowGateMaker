@@ -1,0 +1,29 @@
+{
+  "buy_sell_frozen_bundle_identity_equal": true,
+  "canonical_spec_identity_sha256": "82c60bfd0fb775d3757ba358351c374fd20e16c0225a34112c78f76fd4a53538",
+  "config_to_v12_bundle_hash_link_valid": true,
+  "config_to_v12_bundle_path_link_valid": true,
+  "configured_bundle_meta": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+  "configured_model_dir": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary",
+  "current_operational_config_path": "${NARROWGATE_LIVE_CONFIG}",
+  "economic_outcome_columns_read": [],
+  "frozen_v12_bundle_meta": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+  "operational_baseline_projection": {
+    "buy_fill_selection_enabled": true,
+    "ml_enabled": true,
+    "q90_action_enabled": false,
+    "q90_shadow_enabled": true
+  },
+  "permissions": {
+    "action_experiment_authorized": false,
+    "development_economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "mechanics_read": false,
+    "mechanics_registration_linkage_valid": true,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "ranked_toxicity_registration_linkage_amendment.v2.audit",
+  "stage": "registration_linkage_v2_validated_mechanics_not_run"
+}

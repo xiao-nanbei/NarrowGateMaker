@@ -1,0 +1,62 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_execution.v1.3.contract",
+  "identity": "causal_v12_1s_71day_authoritative_continuous_tick_ab_v1_3",
+  "status": "concrete_adapter_implemented_candidate_and_control_artifacts_unbound",
+  "last_materially_modified": "2026-08-05",
+  "historical_v1_2_framework": {
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_restart_aware_continuous_execution_v1_2/execution-plan.json",
+    "sha256": "decf35c6caf102d19ebd7c95f26240de2d216ea7d61eda127dc11dd6bd06f4e1",
+    "classification": "implemented_orchestration_framework_not_executable_replay"
+  },
+  "frozen_denominator": {
+    "calendar_day_count": 71,
+    "native_day_count": 52,
+    "provider_normalized_day_count": 19,
+    "source_artifact_count": 213,
+    "calendar_restart_and_source_hashes_must_remain_exact": true
+  },
+  "arms": {
+    "control": "current_v9_10s_ml_on_q90_action_off_buy_selector_off",
+    "candidate": "true_1s_ml_on_q90_action_off_buy_selector_off"
+  },
+  "execution": {
+    "engine": "actual_narrowgate_cpp_tick_replay_via_backtest_tick",
+    "active_epoch_may_cross_utc_midnight": true,
+    "utc_midnight_resets_state": false,
+    "utc_midnight_is_accounting_and_cluster_slice": true,
+    "maintenance_cancel_ack_fill_race_is_authoritative": true,
+    "offline_gap_trading": false,
+    "offline_inventory_marking": true,
+    "past_only_warmup_before_resume": true,
+    "panel_terminal_inventory_mtm_once": true,
+    "forced_daily_flat": false,
+    "checkpoint_boundary": "post_cancel_ack_drain_and_restart_reset",
+    "resume_is_atomic": true,
+    "paired_receipt_is_only_epoch_admission_commit": true,
+    "unadmitted_single_arm_checkpoint_is_recomputed": true,
+    "runtime_source_and_compiled_extension_hashes_required": true
+  },
+  "checkpoint_required_state": [
+    "cash_position_average_entry",
+    "economic_campaign_and_reward_path",
+    "cumulative_accounting_and_utc_slice_cursor",
+    "active_pending_orders",
+    "queue_positions_and_cursors",
+    "cooldown_lineages",
+    "feature_and_model_held_state",
+    "rng_path_identity"
+  ],
+  "authority": {
+    "native_exact_queue_lifecycle": true,
+    "provider_exact_queue": false,
+    "provider_exact_lifecycle": false,
+    "provider_q90": false,
+    "provider_continuous_pnl_inventory_campaign_sensitivity_only": true,
+    "primary_40_day_exact_native_substitute": false
+  },
+  "economic_outcomes_read": false,
+  "economic_results_aggregated": false,
+  "promotion_authorized": false,
+  "action_authorized": false,
+  "live_authorized": false
+}

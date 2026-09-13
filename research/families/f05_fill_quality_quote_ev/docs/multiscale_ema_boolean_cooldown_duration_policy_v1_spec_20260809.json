@@ -1,0 +1,475 @@
+{
+  "schema_version": "multiscale_ema_boolean_cooldown_duration_policy.v1.spec",
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "last_materially_modified": "2026-08-09",
+  "family_id": "F05_fill_quality_quote_ev",
+  "research_class": "exploratory_state_to_duration_policy",
+  "status_at_freeze": "frozen_before_development_duration_labels_or_economic_results",
+  "question": "At each causally visible exposure-increasing fill, can a side-specific sparse Boolean rule policy over the complete multiscale EMA-pair state choose the total add-cooldown duration that improves full-path terminal value relative to CONTROL_85N?",
+  "research_mapping": {
+    "user_question": "learn the cooldown duration from intersections and unions of multiscale EMA golden-cross, death-cross, ordering, magnitude, and persistence states",
+    "input_state": "fill-time causal canonical-mid EMA surface, all legal fast/slow pairs, BUY and SELL side-signed separately",
+    "model_search_class": "nested-chronological sparse Boolean rule lists with AND, OR, and NOT literals",
+    "output_action": "one total cooldown-duration policy id chosen once when an exposure-increasing fill creates a cooldown-lineage revision",
+    "counterfactual_label": "one complete-path Q^pi0(x,tau) fork for every legal opportunity and every side-specific candidate duration",
+    "full_path_test": "current CONTROL_85N policy versus the frozen learned side policy, with all descendant orders, queue, fills, inventory, cooldown, and campaign state regenerated"
+  },
+  "non_equivalence": {
+    "not_existing_mechanism_explanation": true,
+    "not_add_now_vs_wait_one_epoch": true,
+    "not_market_direction_prediction": true,
+    "not_single_best_ema_pair_selection": true,
+    "not_independent_pair_scoring_or_linear_vote": true,
+    "not_linear_ridge": true,
+    "not_global_constant_cooldown_replacement": true,
+    "closed_predecessor_results_do_not_close_this_identity": [
+      "multiscale_ema_add_wait_incremental_value_v1",
+      "multiscale_ema_add_wait_incremental_value_v1_1",
+      "multiscale_ema_add_wait_incremental_value_source_aware_v1_2"
+    ]
+  },
+  "permission_boundary": {
+    "development_duration_labels_read_at_freeze": false,
+    "development_policy_economics_read_at_freeze": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "registry_update_authorized": false,
+    "python_only_result_can_authorize_progression": false,
+    "daily_fresh_start_result_can_authorize_live": false
+  },
+  "authoritative_control": {
+    "baseline_id": "btc_usdc_current_live_held_ber_replay_baseline_40d_20260809",
+    "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+    "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+    "operational_baseline_identity": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "operational_baseline_identity_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
+    "config_path": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+    "control_action_id": "CONTROL_85N",
+    "control_duration_semantics": "85 seconds times the same-side filled-quantity units after the target fill",
+    "clock_mode": "wall_time",
+    "fill_cooldown_s": 85.0,
+    "order_size_btc": 0.001,
+    "lot_size_btc": 0.001,
+    "quantity_unit_definition": "max(order_size_btc, lot_size_btc)",
+    "quantity_unit_btc": 0.001,
+    "consecutive_reset_policy": "opposite_fill_only",
+    "expiry_resets_consecutive_units": false,
+    "reducing_cooldown_s": 0.0,
+    "adaptive_add_cooldown_enabled": false,
+    "q90_action_enabled": false,
+    "buy_fill_selection_action_enabled": false,
+    "global_ber_unchanged": true,
+    "all_non_cooldown_strategy_and_execution_fields_identical_across_forks": true
+  },
+  "fill_time_lineage_contract": {
+    "assignment_event": "strategy-visible exposure-increasing fill callback",
+    "exposure_classification_uses": "inventory immediately before the target fill",
+    "exposure_increasing_definition": {
+      "BUY": "inventory_before_fill >= 0",
+      "SELL": "inventory_before_fill <= 0"
+    },
+    "eligible_fill_roles": [
+      "opener",
+      "add"
+    ],
+    "policy_effect": "block future same-side exposure-increasing add permission until the frozen deadline",
+    "reducing_quote_bypass": true,
+    "opposite_quote_and_reducing_quote_unchanged": true,
+    "same_side_active_orders_at_assignment": "use the frozen baseline cancel-request, cancel-ACK, partial-fill, and terminal routing; no synthetic instantaneous removal",
+    "assignment_clock": "fill visibility time; exchange time is retained as provenance but cannot make the policy visible earlier",
+    "feature_cutoff": "every feature_ready_ts must be less than or equal to assignment visibility time",
+    "feature_snapshot": "last canonical decision-visible local BBO mid generation available at assignment; no post-assignment BBO or future trade may enter",
+    "lineage_revision": "each eligible exposure-increasing fill creates one immutable same-side cooldown-lineage revision and replaces the same-side deadline exactly once",
+    "policy_evaluations_per_lineage_revision": 1,
+    "dynamic_deadline_recomputation": "forbidden",
+    "later_exposure_fill": "creates a new lineage revision under the same frozen policy",
+    "same_side_reducing_fill_with_zero_reducing_cooldown": "must not create a candidate duration and must not erase an already-active add cooldown",
+    "opposite_side_fill": "clears the opposite side consecutive-unit counter and deadline according to the frozen control ABI",
+    "deadline_semantics": "assignment_visible_ts plus the chosen total duration; fixed candidates are not multiplied by n",
+    "duration_expiry": "restores permission only; it does not force an order submission",
+    "reducing_side_never_blocked_by_this_policy": true
+  },
+  "ema_state_contract": {
+    "implementation_identity": "multiscale_ema_boolean_cooldown_duration_policy_v1.ema_state.v1",
+    "price_source": "canonical decision-visible local mid",
+    "price_source_mixing_forbidden": [
+      "trade price",
+      "microprice",
+      "external fair price",
+      "post-assignment BBO"
+    ],
+    "continuous_time_recurrence": "E_h(t_i)=exp(-ln(2)*dt/h)*E_h(t_i-1)+(1-exp(-ln(2)*dt/h))*P(t_i)",
+    "half_lives_s": [
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      16.0,
+      32.0,
+      64.0,
+      128.0,
+      256.0
+    ],
+    "all_fast_slow_pairs_required": true,
+    "pair_count": 45,
+    "adjacent_pairs_only": false,
+    "pair_distance_definition": "10000*(EMA_fast-EMA_slow)/canonical_mid",
+    "side_sign": {
+      "BUY": 1,
+      "SELL": -1
+    },
+    "required_pair_state": [
+      "current favorable or adverse ordering",
+      "last cross direction",
+      "cross age",
+      "arrangement persistence",
+      "signed and absolute distance",
+      "provider-normalized distance",
+      "distance expansion or convergence",
+      "fast and slow EMA slopes"
+    ],
+    "required_surface_state": [
+      "all EMA levels relative to mid",
+      "all EMA slopes",
+      "full ordering signature",
+      "full ordering persistence",
+      "curvature implied by the ordered EMA bank"
+    ],
+    "cross_overlap_semantics": "multiple cross predicates overlap while their ordering, age, persistence, and magnitude predicates remain true; simultaneous millisecond crossings are not required",
+    "atomic_predicate_source": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+      "sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035",
+      "predicate_count": 360,
+      "all_pair_count": 45
+    },
+    "unknown_or_unsupported_predicate": "fail closed for the opportunity; do not impute a Boolean value"
+  },
+  "source_separation": {
+    "provider_2025": {
+      "role": "unsupervised EMA predicate construction and normalization only",
+      "training_days": 66,
+      "training_rows_both_sides": 112090884,
+      "sampling": "all admitted provider-normalized 100ms BBO source rows with natural D-1 warmup",
+      "economic_outcomes_read": false,
+      "cooldown_labels_generated": false,
+      "queue_fill_or_lifecycle_authority": false,
+      "provider_encoder_path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid.npz",
+      "provider_encoder_sha256": "369ee07e5f8568ad0d9b41cf9c407c2d01fe794f072f7af55942fbeba917236d",
+      "provider_encoder_manifest_path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid_manifest.json",
+      "provider_encoder_manifest_sha256": "59970d00136c56e7500f50ca4df71ed3487fb3dcec705c371b75f530b0eb4def"
+    },
+    "native_2026": {
+      "role": "all cooldown-duration full-path labels, nested chronological model discovery, outer OOF policy scoring, and every economic gate",
+      "panel_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "panel_sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+      "development_days": 40,
+      "panel_role": "historical_native_development_previously_consumed_elsewhere_but_not_for_this_duration_estimand",
+      "daily_fresh_start": true,
+      "provider_replay_pnl_authority": false
+    }
+  },
+  "outcome_blind_duration_artifact": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+    "sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035",
+    "schema_version": "multiscale_ema_boolean_cooldown_duration_policy_v1.outcome_blind_inputs.v1",
+    "economic_outcomes_read": false,
+    "duration_source": "daily-fresh-start, day-equal-weighted Kaplan-Meier p25, p50, p75, and p90 of next inventory-state-change time and incremental-inventory undo time in the frozen current baseline",
+    "right_censoring": "an unobserved next-state or undo event is right-censored at the natural UTC day end of its frozen daily-fresh-start Development path",
+    "distribution_scope": "daily_fresh_start_development_distribution_only_not_a_cross_day_physical_duration_distribution",
+    "control_85n_distribution": {
+      "estimator": "day_equal_weighted_empirical_quantile_reported_separately_from_Kaplan_Meier_candidates",
+      "BUY_p25_p50_p75_p90_s": [
+        85,
+        170,
+        170,
+        255
+      ],
+      "SELL_p25_p50_p75_p90_s": [
+        85,
+        170,
+        170,
+        255
+      ]
+    },
+    "authoritative_config_lock": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+      "clock_mode": "wall_time",
+      "fill_cooldown_s": 85.0,
+      "quantity_unit_definition": "max(order_size_btc, lot_size_btc)",
+      "order_size_btc": 0.001,
+      "lot_size_btc": 0.001,
+      "quantity_unit_btc": 0.001,
+      "consecutive_reset_policy": "opposite_fill_only",
+      "adaptive_add_cooldown_enabled": false,
+      "reducing_cooldown_s": 0.0,
+      "q90_action_enabled": false,
+      "buy_fill_selection_action_enabled": false
+    },
+    "rounding": "nearest whole second for action serialization only",
+    "candidate_set_locked_before_duration_value_labels": true,
+    "control_required_for_each_side": true,
+    "candidate_actions": {
+      "BUY": [
+        "CONTROL_85N",
+        "FIXED_79S",
+        "FIXED_173S",
+        "FIXED_223S",
+        "FIXED_356S",
+        "FIXED_640S",
+        "FIXED_709S",
+        "FIXED_2048S"
+      ],
+      "SELL": [
+        "CONTROL_85N",
+        "FIXED_79S",
+        "FIXED_166S",
+        "FIXED_211S",
+        "FIXED_349S",
+        "FIXED_660S",
+        "FIXED_686S",
+        "FIXED_1748S"
+      ]
+    },
+    "candidate_count_per_side": 8,
+    "duration_grid_search_after_outcomes": "forbidden"
+  },
+  "development_denominator": {
+    "opportunity_definition": "every legal exposure-increasing fill in the frozen 40-day native control path with valid fill identity, side, campaign, inventory-before, full causal EMA state, and positive CONTROL_85N duration",
+    "expected_opportunity_count_from_outcome_blind_census": 8600,
+    "all_legal_opportunities_required": true,
+    "sampling_allowed": false,
+    "one_row_per_day_side_role_sampling": "forbidden",
+    "subgroup_balancing_by_deleting_rows": "forbidden",
+    "forks_per_opportunity": 8,
+    "expected_single_action_fork_count": 68800,
+    "formal_label_panel_rule": "the exact Cartesian product of every admitted opportunity and every candidate duration for that opportunity's side",
+    "batching_and_checkpointing_allowed": true,
+    "partition_keys_allowed": [
+      "UTC day",
+      "side",
+      "campaign id",
+      "opportunity ordinal",
+      "candidate policy id"
+    ],
+    "partial_partition_as_formal_panel": "forbidden",
+    "missing_fork_policy": "fail closed; do not train, score, or read a reduced complete-case panel",
+    "engineering_capacity_failure": "execution_blocker_without_estimand_change",
+    "campaign_total_analysis_weight": 1.0,
+    "campaign_weighting_does_not_change_materialization_denominator": true
+  },
+  "single_action_label_contract": {
+    "identity_namespace": "multiscale_ema_boolean_cooldown_duration_policy_v1.single_action_label",
+    "label_key": "opportunity_id x side x candidate_policy_id",
+    "estimand": "Q^pi0_s(x_t,tau)=E[Y from target fill assignment to economic washout when only this target lineage duration is changed and all later decisions return to the frozen control policy]",
+    "target_action_only": true,
+    "later_lineage_revisions_use": "CONTROL_85N",
+    "second_research_assignment_before_washout": "forbidden",
+    "each_candidate_fork_starts_from_identical_pre_assignment_state": true,
+    "same_market_path_latency_rng_and_queue_identity": true,
+    "full_path_components_required": [
+      "submit and activation",
+      "GTX rejection",
+      "queue ahead and reset",
+      "partial and full fill",
+      "cancel request and cancel ACK race",
+      "cooldown permission",
+      "all later baseline quotes",
+      "inventory and campaign continuation",
+      "fees and continuous accounting"
+    ],
+    "primary_reward": "assignment_to_economic_washout_terminal_value_usdc",
+    "secondary_rewards": [
+      "closed_campaign_value_usdc",
+      "inventory_time_btc_s",
+      "mae_usdc",
+      "max_abs_inventory_btc",
+      "post_assignment_fill_counts"
+    ],
+    "economic_washout": {
+      "inventory_flat_in_arm": true,
+      "campaign_inactive": true,
+      "all_descendant_orders_terminal": true,
+      "no_pending_submit_cancel_or_ack": true,
+      "no_queue_cursor_or_hazard_owner": true,
+      "new_campaign_quarantine_until_washout": true
+    },
+    "data_boundary_without_washout": "right_censored with contemporaneous mid and executable marks; no forced terminal and no arbitrary maximum duration",
+    "complete_case_training_if_any_required_fork_is_censored": "forbidden"
+  },
+  "boolean_policy_search": {
+    "side_specific_models": [
+      "BUY",
+      "SELL"
+    ],
+    "side_pooling": "forbidden",
+    "policy_form": "ordered sparse Boolean rule list",
+    "clause_form": "AND of positive or negated atomic predicates",
+    "or_form": "multiple clauses with the same duration consequence form a union",
+    "not_form": "a signed negative literal; post-hoc complement labels are forbidden",
+    "all_360_atomic_predicates_eligible": true,
+    "all_45_ema_pairs_eligible": true,
+    "first_matching_rule_wins": true,
+    "default_action": "CONTROL_85N",
+    "allowed_consequences": "the side-specific candidate policies in the outcome-blind duration artifact",
+    "complexity_grid": {
+      "max_literals_per_clause": [
+        1,
+        2,
+        3,
+        4,
+        6
+      ],
+      "max_clauses": [
+        2,
+        4,
+        8
+      ],
+      "minimum_clause_support": {
+        "distinct_utc_days": 4,
+        "distinct_campaign_side_clusters": 10,
+        "campaign_weight_fraction": 0.01
+      },
+      "search": "deterministic bounded beam search",
+      "beam_width": 256,
+      "seed": 20260809
+    },
+    "inner_selection_objective": "maximize inner chronological OOF campaign-weighted chosen-duration terminal value minus CONTROL_85N value",
+    "complexity_selection": "one-standard-error rule; among statistically tied candidates choose fewer clauses, then fewer literals, then lexicographic serialized rule hash",
+    "linear_additive_score_or_majority_vote": "forbidden",
+    "threshold_discovery_from_2026_economic_outcomes": "forbidden; atomic thresholds are frozen by the outcome-blind artifact",
+    "serialized_policy_fields": [
+      "side",
+      "ordered clauses",
+      "signed literals",
+      "duration consequence",
+      "default CONTROL_85N",
+      "predicate artifact SHA256",
+      "duration artifact SHA256",
+      "training fold identities",
+      "implementation SHA256"
+    ]
+  },
+  "nested_chronological_development": {
+    "outer_fold_source_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
+    "outer_fold_source_sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908",
+    "outer_fold_field": "chronological_oof",
+    "outer_design": "16-day initial history followed by four non-overlapping six-day test folds",
+    "outer_test_days": 24,
+    "outer_test_rows": "all legal opportunities on the exact outer test-day union, never a sampled row set",
+    "outer_calendar_embargo_days": 1,
+    "outer_label_end_purge": "exclude every fit opportunity with any candidate fork right-censored or joint washout at or after the first assignment in the outer test fold",
+    "inner_fold_count_per_outer_fold": 3,
+    "inner_test_construction": "within each outer fit-day candidate list, take the last nine ordered admissible days and split them into three consecutive non-overlapping three-day inner test blocks",
+    "inner_train_construction": "for each inner block use only earlier outer-fit days, apply a one-calendar-day embargo, and purge every label whose washout reaches the first inner assignment",
+    "model_and_rule_discovery_location": "inner folds only",
+    "outer_test_use": "execute the already selected inner rule-search procedure and score once; no threshold, rule, duration, or subgroup changes",
+    "campaign_total_weight": 1.0,
+    "opportunity_weight_within_campaign": "equal shares summing to one within each prospective campaign-side cluster",
+    "uncertainty_cluster": "UTC day and prospective campaign-side",
+    "future_training_rows_allowed": false,
+    "test_fold_overlap_allowed": false
+  },
+  "development_gates": {
+    "BUY_and_SELL_promote_separately": true,
+    "pooled_promotion": "forbidden",
+    "required_outer_folds": 4,
+    "primary": [
+      "day/campaign-clustered LCB95 of learned-policy terminal value minus CONTROL_85N is greater than zero",
+      "day/campaign-clustered LCB95 of learned-policy closed-campaign value minus CONTROL_85N is greater than zero"
+    ],
+    "risk": [
+      "campaign q10 does not worsen",
+      "campaign CVaR10 does not worsen",
+      "MAE does not worsen",
+      "maximum inventory does not worsen",
+      "inventory-time does not worsen"
+    ],
+    "mechanics": [
+      "every admitted opportunity has all eight side-specific forks",
+      "CONTROL_85N fork exactly reproduces the authoritative control path",
+      "reducing quote changes equal zero",
+      "second assignment before label washout equals zero",
+      "causal feature cutoff violations equal zero",
+      "campaign accounting error is at most 1e-6 USDC"
+    ],
+    "model_support": [
+      "every non-control clause meets the frozen day, campaign, and weight support",
+      "all selected literals and thresholds existed before outer outcomes",
+      "all four outer folds contain the chosen action or the side fails closed"
+    ],
+    "gate_failure": "close only this exact Boolean duration-policy identity on Development; do not rewrite it as evidence for ADD-vs-WAIT, linear EMA, or all cooldown models"
+  },
+  "final_policy_identity_separation": {
+    "single_action_labels_are_not_a_policy_replay": true,
+    "label_identity": "one target lineage duration override followed by CONTROL_85N continuation",
+    "learned_policy_identity": "apply the frozen rule list at every future legal exposure-increasing fill lineage revision",
+    "learned_policy_requires_new_full_path_replay": true,
+    "policy_full_path_control": "current CONTROL_85N on every lineage",
+    "policy_full_path_candidate": "frozen side-specific Boolean duration rule on every eligible lineage, with the other side remaining CONTROL_85N unless it independently passes",
+    "policy_assignment_and_attribution": "carryover-safe campaign-side episode; no campaign may contribute to more than one independent policy assignment before economic washout",
+    "label_metrics_cannot_substitute_for_policy_economics": true
+  },
+  "execution_and_confirmation_sequence": [
+    "freeze this Spec, execution amendment, and outcome-blind inputs",
+    "freeze the complete 8600-opportunity native manifest without reading duration economics",
+    "implement and pass Python/C++ opportunity, duration, deadline, quote-permission, lifecycle, and terminal-path parity",
+    "materialize all 68800 single-action forks with checkpointed atomic admission",
+    "run nested chronological Development model discovery and outer OOF scoring separately for BUY and SELL",
+    "serialize one immutable side policy only for a side that passes every Development gate",
+    "run current-control versus learned-policy daily-fresh-start full-path Development screening",
+    "run restart-aware continuous confirmation with identical restart/gap schedules and continuous accounting",
+    "only after all prior stages pass may a separately frozen F09 action identity request Validation, holdout, canary, or live authority"
+  ],
+  "daily_fresh_start_screening": {
+    "development_mode": "daily_fresh_start",
+    "purpose": "historical Development screening and reproducible partitioned execution",
+    "UTC_midnight_behavior": "fresh cash, inventory, campaign, orders, queue, cooldown, and EMA warmup state for each independent day",
+    "continuous_live_pnl_claimed": false,
+    "live_authority": false
+  },
+  "continuous_confirmation": {
+    "required_after_daily_full_path_pass": true,
+    "ordinary_UTC_midnight": "preserve each arm's cash, inventory, campaign, cooldown lineage, and cumulative accounting",
+    "planned_gap_or_restart": "both arms use one frozen restart manifest and the exact production restart-state contract; no arm-specific synthetic reset",
+    "active_orders_at_restart": "complete the shared cancel and terminal boundary contract before the offline interval",
+    "final_panel_inventory": "mark to contemporaneous executable and mid prices; never discard",
+    "UTC_day_role": "cluster and accounting partition only, not forced terminal",
+    "non_Grade_A_gap_evidence": "cannot grant exact queue or lifecycle authority near the gap"
+  },
+  "validation_and_holdout": {
+    "validation_read_by_this_contract": false,
+    "sealed_holdout_read_by_this_contract": false,
+    "development_failure_rescue": "forbidden",
+    "read_requires": "a successor execution amendment binding one immutable side-specific policy produced without Validation or holdout outcomes",
+    "parameter_or_rule_changes_after_validation": "new identity required"
+  },
+  "hard_blockers_before_f09_or_live": [
+    "complete unsampled opportunity manifest",
+    "complete 68800-fork label panel or explicit execution_blocker status",
+    "Python/C++ duration-fork and full-path parity",
+    "side-specific nested chronological Development pass",
+    "immutable compiled policy artifact",
+    "policy-level full-path daily-fresh-start pass",
+    "restart-aware continuous confirmation pass",
+    "separately frozen F09 action and scorecard contract"
+  ],
+  "forbidden_changes_after_freeze": [
+    "sampling or down-selecting legal opportunities",
+    "dropping a candidate duration after seeing its value",
+    "adding a duration after seeing Development outcomes",
+    "changing the EMA price source or half-life bank",
+    "switching to a linear or pair-vote proxy",
+    "pooling BUY and SELL",
+    "using 2025 provider PnL, queue, fill, or lifecycle labels",
+    "letting a reducing quote inherit the add cooldown",
+    "recomputing duration during an active lineage",
+    "reading Validation or holdout to rescue Development",
+    "using a Python-only or label-only result as F09 or live authority"
+  ]
+}

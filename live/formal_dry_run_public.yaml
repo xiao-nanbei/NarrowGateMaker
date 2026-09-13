@@ -1,0 +1,12 @@
+# Public local-validation helper. It carries no live or deployment authority.
+project_name: "NarrowGate Public Dry Run"
+symbol: "BTCUSDC"
+
+api:
+  key: ""
+  secret: ""
+  testnet: true
+
+ml:
+  enabled: false
+  model_dir: "examples/public_dry_run_model_bundle"

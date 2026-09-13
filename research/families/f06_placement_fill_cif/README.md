@@ -1,0 +1,27 @@
+# F06 Placement Fill CIF
+
+Last materially modified: 2026-07-29
+
+Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
+
+Status: `closed_placement_distance_value_unidentified`. The placement fill-surface and marginal-value action-resolution paths are closed on Development and grant no Validation, holdout, Value, Action, or live permission. Fixed-horizon and full-curve predecessors remain frozen evidence; request-state v2 components remain only Development-supported building blocks.
+
+Closed curve runners require explicit `--historical-reproduction` and an exact spec path/SHA registered under `research/governance/`. Their output is stamped `historical_evidence_only` and cannot create a new experiment identity. The full-curve v1-v3 source revisions were not preserved byte-for-byte, so that runner remains source-readable but fail-closed rather than claiming a false reproduction.
+
+The ordered common-support v1 successor is also closed on Development. Its 18/18 pre-request curves passed, but the run exposed a common-clock implementation mismatch, activation/support calibration drift, and a pending uncertainty bound failure. See `docs/ordered_common_support_fill_surface_v1_development_20260728.md`. The post-run contract review is frozen separately in `docs/ordered_common_support_fill_surface_v1_contract_errata_20260728.md`; it does not modify the v1 Spec or reopen the family.
+
+The subsequent `paired_action_resolution_feasibility_v1` audit trained no model and replayed 800,853 frozen Development cohorts at baseline-relative 1/2/4-tick distances. Adjacent one-tick raw fill differences were not simultaneously identifiable; one-sided two- and four-tick differences were. However, none of 54 cells produced an economically one-sided value interval after the frozen pending-fill uncertainty was propagated. The placement fill-surface action-resolution path is therefore closed on Development; an ordered v2 model, Value identity, and action experiment are not created. See `docs/paired_action_resolution_feasibility_v1_development_20260728.md`.
+
+This is a narrow closure. The evidence does not say that quote distance lacks economic value or that two-/four-tick fill differences are absent. It says the observed fill differences do not establish signed conditional net value under the frozen 100 bps value envelope and the pending-fill uncertainty contract. The follow-up `placement_marginal_fill_value_feasibility_v1` replaced the old 100 bps absolute envelope with direct same-path marginal-fill values and a paired pending differential. Across 24 formal two-/four-tick side-role-contrast cells, 0/24 campaign-terminal intervals were one-sided and 0/24 reached 95% campaign attribution coverage. The pending differential radius narrowed to about `1.0e-5 USDC/decision`, but terminal-value lower bounds remained zero. See `docs/placement_marginal_fill_value_feasibility_v1_development_20260729.md`.
+
+The new differential result rules out the old explanation that absolute pending uncertainty was the main blocker. Terminal-value point estimates still reached only `-1.65e-5` to `+2.28e-5 USDC/decision`, and every day-clustered simultaneous interval crossed zero. Some opener cells had a stable raw daily sign, so the closure must not be overstated as universal sign instability; the stronger result is that no side-role-action cell established a one-sided economic lower bound.
+
+Campaign coverage is an independent fail-closed condition, not a rescue target. Raising the opener match tolerance, changing the terminal definition, or weakening the 95% threshold after seeing these outcomes would be a contract patch. Even perfect coverage would not change the observed `0/24` one-sided terminal-value result or make the largest point estimate exceed the frozen `0.0001 USDC/decision` economic budget.
+
+The SELL-add four-tick `current_farther` 30s mechanism hint remains diagnostic only. Its short-horizon interval was barely positive, while its campaign-terminal interval crossed zero. It is not a Validation candidate, an F09 action family, or a shadow/live arm, and the primary terminal estimand must not be replaced by 30s markout to rescue it.
+
+This closes the placement-distance marginal-value path rather than merely its fill-probability implementation. The completed chain is mechanics, fill CIF, request/ACK race, pending nuisance, common-support resolution, and direct marginal-fill USDC value. There is no remaining routine F06 step.
+
+Reopening requires an exogenous change to the problem, such as a changed tick, lot, or fee contract; a queue-preserving action with different mechanics; independent policy-feedback campaign counterfactuals; or a documented market structure shift. More model complexity, campaign remapping, additional dates, a different markout slice, a smaller uncertainty budget, or previously sealed Validation/holdout outcomes cannot reopen this identity.
+
+`audit/` contains panel, lifecycle, CIF, request-state, and evaluator code; `cpp/` contains the family-owned native expansion modules; `docs/` contains all frozen specs and reports. Shared dependencies: D, R, G.

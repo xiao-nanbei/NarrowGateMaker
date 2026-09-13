@@ -1,0 +1,142 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v5",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v5",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v4_20260811.json",
+    "sha256": "5ab2371de9e736d2f1d45e79a931ebe6073a83bb17fbbcb3cb148c8b343ceb9f"
+  },
+  "implementation_binding_replacements": {
+    "features": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_features.py",
+      "sha256": "fbcfadd8277b2a7ef35d2b16f584e661852b0a3066327e3e2c2f729b717964c0",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_features.py",
+      "test_sha256": "df7ab0c23f06deb3c2b3a3e17bf06d9dc9968465c06d8331955201ca99d654b7"
+    },
+    "native_features": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_native_features.py",
+      "sha256": "0d9ee2b7497b78b9274f0af6dc60500f232d83f9b12e857cd7b75d6c4251e689",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_native_features.py",
+      "test_sha256": "c79242a2266d5bdfa8ed07c594b6e93cc883a838ad731633ebf0f4bb814ae930"
+    },
+    "assignment_snapshot": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_snapshot.py",
+      "sha256": "5f4c10d3d55f02203807c67e4d32d09d1ba4097dea669e74ff8eca35dcd5f7ea",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_snapshot.py",
+      "test_sha256": "a8faf85a3aba2213095cda68a1889facaa5a0481c39cba38bd1bd3f99ccffd25"
+    },
+    "source_manifest_builder": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_source_manifest.py",
+      "sha256": "86f992b5df347b82b15dfcee60106d96494ec895648bb350fbc743501cf2f32c",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_source_manifest.py",
+      "test_sha256": "6e8083b8d73920cfa72d728766f9b72368f9330c8accd5b61c8d54f75a6105f9"
+    },
+    "outcome_blind_2025_predicate_materializer": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
+      "sha256": "176a347092183fb43454236c32d83b1754bf095ac555d1bb6e654b01da7b2bf9",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
+      "test_sha256": "bbd2235476134343a2329589e9f761eefcf7435c35e70788fdc9e5467997c5c9"
+    },
+    "replay_assignment_emitter": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_replay_emitter.py",
+      "sha256": "51784343a37635ca813023df8f8c494c75a37aa943baba7c96b0c6c5250cefcb",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_emitter.py",
+      "test_sha256": "c1c101a03d05b2897816547ce9a20daef574f72e6d77d12073ef2da8d17ee651"
+    },
+    "predicate_learner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_predicates.py",
+      "sha256": "4b8d0bf871690c2833b9dc7ae1e2f179fb81c88094b606ae9e22216da5106ab8",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_predicates.py",
+      "test_sha256": "c7768c90558673556a8b5adfdd6ffe5e0f2095483ebbdc9dcef5f8bdfcc9099d"
+    },
+    "nested_chronological_oof": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "f196dd3d0924e30e58dd62dcc3f73c9d452ab75a38397d213906f0a352e986db",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "test_sha256": "f9adeee733e6823e4cf783b6074f4b97b924c91cc2d24509a37060de48ac6e2e"
+    },
+    "study_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "3cd8acdf0cf2171574bfb8a22320e857afa5bf7a933f25ebb5fd96d324a56f91",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "ff5e35b46dda5824be676a9623d47c4e08cc74342b634ad0aac7a4f9b61c57f9"
+    },
+    "execution_replay_abi": {
+      "path": "models/backtest_tick.py",
+      "sha256": "293770d921f71341223240e016339b00260f037cf72dbbc2bcfcbc6fedbcd87c",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_binding.py",
+      "test_sha256": "fec17ddbd2253342b305b0d38bd4cfef8df58390932e121f3c04bce20449d0e7"
+    }
+  },
+  "raw_warmup_admission_contract": {
+    "source": "strict-native D-1 stream admission emitted by the raw source adapter",
+    "calendar_cutoff_inference_allowed": false,
+    "first_target_window_binds_admission": true,
+    "post_binding_admission_change_allowed": false,
+    "unadmitted_fallback": "CONTROL_85N"
+  },
+  "m0_cooldown_owner_contract": {
+    "learner_input_required": true,
+    "bounded_categories": [
+      "none",
+      "existing_same_side_lineage"
+    ],
+    "raw_lineage_format": "(buy|sell)-lineage-<positive revision>",
+    "side_revision_blocker_remaining_time_consistency_required": true,
+    "arbitrary_owner_strings_allowed": false
+  },
+  "outer_oof_support_contract": {
+    "support_population": "outer OOF opportunities receiving a non-CONTROL_85N action",
+    "campaign_day_minima_use_acted_support": true,
+    "zero_action_outer_fold_reselection_allowed": false,
+    "zero_action_outer_fold_effect": "deployment abstention with outer_fold_without_nonbaseline_action",
+    "cross_channel_AND_allowed": "only when every source field has the same frozen feature-ready cutoff mapping",
+    "continuous_comparator_role_report": "acted campaigns, acted days, day-cluster interval, and tails required",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "source_manifest_durability": {
+    "temporary_file_fsync": true,
+    "atomic_rename": true,
+    "parent_directory_fsync_after_rename": true
+  },
+  "reduced_M2_contract": {
+    "status": "explicit reduced M2, not full requested M2",
+    "deferred_unobserved_channels": [
+      "causal price impact",
+      "causal absorption",
+      "ownership-attributed depletion/refill"
+    ],
+    "deferred_channels_encoded_as_zero": false,
+    "full_M2_claim_allowed": false
+  },
+  "cache_and_label_compatibility": {
+    "raw_native_hour_cache_reusable": true,
+    "interrupted_source_manifest_admission_reusable": false,
+    "interrupted_2025_predicate_admission_reusable": false,
+    "formal_labels_previously_generated": false,
+    "formal_label_invalidation_required": false,
+    "reason": "raw source bytes remain reusable, while warmup and M0 predicate identity changes require fresh manifests and predicate admission"
+  },
+  "conditional_later_stages": {
+    "unified_policy_implementation_required_before_outer_oof_support": false,
+    "repeated_policy_implementation_required_before_outer_oof_support": false,
+    "unified_policy_and_repeated_policy_may_start_only_after_supported_outer_oof": true
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

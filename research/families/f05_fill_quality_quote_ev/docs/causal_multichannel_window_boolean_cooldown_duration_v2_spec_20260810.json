@@ -1,0 +1,584 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.spec.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "status": "execution_identity_frozen_outcome_blind_benchmark_only",
+  "research_type": "exploratory_successor",
+  "research_mapping": {
+    "user_question": "Which causally visible market, order, and inventory states justify which cooldown duration after an exposure-increasing fill?",
+    "input_state": "recent completed causal 100ms market windows plus fill-visible M0 lifecycle/campaign context",
+    "model_search_class": "side-specific ordered sparse Boolean rule lists with literal AND/OR/NOT and explicit unobserved state",
+    "output_action": "one frozen total cooldown duration selected once per eligible fill callback",
+    "counterfactual_label": "assignment-to-common-washout terminal USDC value for each frozen duration arm under pi0 continuation",
+    "economic_test": "strict-native one-shot labels followed by a separately frozen repeated-policy paired full-path A/B"
+  },
+  "predecessor_boundary": {
+    "v1_spec_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.json",
+    "v1_spec_sha256": "9f8c5abce4817b029d943648a46ab115d6ce7ac7f758b1326a48d75fa446e8ce",
+    "v1_exploratory_report_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_exploratory_oof_v1_development_20260810.md",
+    "v1_exploratory_report_sha256": "4d9962383939f154f46d9b86ec869792b35950dc7421e707ca169612ea9e5065",
+    "closed_identity_only": "BBO-mid-only + 10 EMA + 45 pairs + 360 fixed Boolean predicates + bounded sparse DNF + 8 discrete duration arms + one-shot continuation + modeled-queue Development labels",
+    "not_closed": [
+      "all EMA golden/death-cross cooldown policies",
+      "multichannel causal state",
+      "strict-native one-shot duration value",
+      "repeated-policy full-path economics",
+      "85 seconds as an optimal duration"
+    ],
+    "v1_results_immutable": true
+  },
+  "baseline": {
+    "current_control": "current_live_held_global_ber_control",
+    "operational_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "operational_identity_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
+    "config_path": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.aws_tokyo_20260808_ber_baseline.yaml",
+    "config_sha256": "f1d39df6d44c7e5ca494e3cac46ef72c362cc39f62ba8979956982e77231ca4e",
+    "control_duration_semantics": "85000ms * max(1.0, consecutive_same_side_fill_units_after_callback)",
+    "consecutive_units_reset": "opposite_fill_only",
+    "reducing_quote_changed": false,
+    "q90_action_enabled": false,
+    "buy_fill_selection_action_enabled": false,
+    "global_ber_unchanged": true
+  },
+  "opportunity_and_lineage": {
+    "assignment_event": "strategy-visible exposure-increasing fill callback",
+    "partial_fill_policy": "each callback is a distinct opportunity and lineage revision; use only its incremental fill quantity; do not coalesce callbacks that share an exchange timestamp",
+    "eligible_sides": [
+      "BUY",
+      "SELL"
+    ],
+    "eligible_roles": [
+      "opener",
+      "add"
+    ],
+    "reducing_fill_action": "none",
+    "same_side_fill_before_deadline": "new immutable lineage revision takes ownership and chooses once from the new fill-visible cutoff",
+    "opposite_fill": "preserve current opposite-fill reset ABI",
+    "ordinary_market_update": "must not extend or shorten an existing deadline",
+    "duration_expiry": "restore exposure-increasing quote eligibility only; never force an order",
+    "partial_fill_state_required": [
+      "order quantity",
+      "cumulative filled quantity before/after callback",
+      "remaining quantity after callback",
+      "partial-fill ordinal",
+      "order age",
+      "queue exact/known-zero/unknown with nullable queue ahead"
+    ],
+    "cooldown_state_required": [
+      "active blocker",
+      "remaining milliseconds",
+      "deadline owner",
+      "lineage revision before callback"
+    ],
+    "missing_prior_fill_age": "UNOBSERVED/null; zero is forbidden because zero means a fill just occurred",
+    "one_shot_label": "only the target lineage uses the candidate duration; later lineages use CONTROL_85N",
+    "repeated_policy": "separate successor ABI applies the frozen policy at every later legal fill callback"
+  },
+  "duration_vocabulary": {
+    "source": "unchanged from v1 outcome-blind lifecycle distribution artifact",
+    "source_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+    "source_sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035",
+    "BUY": [
+      "CONTROL_85N",
+      "FIXED_79S",
+      "FIXED_173S",
+      "FIXED_223S",
+      "FIXED_356S",
+      "FIXED_640S",
+      "FIXED_709S",
+      "FIXED_2048S"
+    ],
+    "SELL": [
+      "CONTROL_85N",
+      "FIXED_79S",
+      "FIXED_166S",
+      "FIXED_211S",
+      "FIXED_349S",
+      "FIXED_660S",
+      "FIXED_686S",
+      "FIXED_1748S"
+    ],
+    "fixed_candidate_semantics": "total duration from target fill-visible callback, not multiplied by consecutive units",
+    "duration_reselection_after_v2_outcomes": "forbidden"
+  },
+  "causal_window": {
+    "base_window_width_ns": 100000000,
+    "base_window_meaning": "admitted BBO/L2 data resolution, not an economic horizon or policy cadence",
+    "maximum_explicit_window_count": 864000,
+    "maximum_explicit_window_meaning": "24h raw causal audit buffer; recursive EMA state may carry an older hash-bound checkpoint",
+    "boundary": "[left,right)",
+    "normalized_book_source_timestamp": "last accepted native event timestamp inside each nonempty 100ms bucket",
+    "canonical_book_window_mapping": "floor(source_ts/100ms)*100ms + 100ms; a source event exactly on a boundary belongs to the next bucket",
+    "partial_current_window": "excluded",
+    "window_ready_time": "max feature_ready_ts_ns of admitted constituents and the right edge",
+    "decision_cutoff": "assignment fill-visible timestamp",
+    "ema_semantics": "standard continuous-time recursive EMA",
+    "half_lives_s": [
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      16.0,
+      32.0,
+      64.0,
+      128.0,
+      256.0
+    ],
+    "same_channel_fast_slow_pairs_only": true,
+    "cross_channel_ema_pair": "forbidden because units differ",
+    "cross_channel_boolean_clause": "allowed only when separately normalized channel predicates are evaluated at the same admitted 2026 assignment cutoff; the 2025 book and trade reference frames are never joined",
+    "gap_or_stale": "unobserved; no forward fill, interpolation, or zero imputation",
+    "restart": "restore a hash-bound EMA/cross checkpoint; otherwise use CONTROL_85N until a complete D-1 warmup is admitted",
+    "mid_source": "canonical decision-visible BBO mid from one market/depth generation",
+    "future_feature_rows_allowed": false,
+    "historical_visibility_profile": "historical_exchange_event_visibility_exploratory; fill receive time remains unknown and grants no transport authority",
+    "prospective_visibility_profile": "prospective_receive_feature_ready_transport; valid receive and feature-ready clocks required",
+    "top_k_depth_levels": 20
+  },
+  "feature_blocks": {
+    "R0": {
+      "purpose": "reproduce the exact narrow v1 BBO-mid Boolean interface as a diagnostic",
+      "learner_inputs": [
+        "BBO-mid EMA pair Boolean state only"
+      ],
+      "final_candidate_eligible": false
+    },
+    "M0": {
+      "purpose": "minimum action magnitude, lifecycle, inventory, and campaign context",
+      "fields": [
+        "side",
+        "opener/add",
+        "pre/post-fill inventory",
+        "fill, order, cumulative-filled, and remaining quantities",
+        "partial-fill ordinal and partial/full state",
+        "order age",
+        "queue exact/known-zero/unknown state",
+        "consecutive units",
+        "CONTROL_85N baseline duration",
+        "campaign age",
+        "campaign add count",
+        "MAE-to-date",
+        "inventory-time-to-date",
+        "last same/opposite fill age",
+        "cooldown blocker and remaining",
+        "deadline owner and lineage revision"
+      ]
+    },
+    "M1": {
+      "purpose": "M0 plus same-generation BBO/price EMA state",
+      "channels": [
+        "mid",
+        "spread",
+        "best bid quantity",
+        "best ask quantity",
+        "BBO imbalance",
+        "microprice deviation",
+        "EMA slope/curvature",
+        "pair ordering/cross age/persistence/distance/expansion/convergence"
+      ]
+    },
+    "M2": {
+      "purpose": "M1 plus local individual-trade and depth state",
+      "active_channels": [
+        "aggressive BUY/SELL quantity",
+        "signed flow and trade count",
+        "terminal aggressor run and last-side age",
+        "top-20 bid/ask depth and depth imbalance",
+        "side-specific cumulative-depth slope and convexity in BTC-per-tick units",
+        "consecutive-bucket displayed-depth increase/decrease rate"
+      ],
+      "registered_but_unobserved_until_formula_contract_exists": [
+        "arrival tempo distinct from trade count",
+        "causal trade price impact",
+        "causal absorption",
+        "exact-L2 depletion/refill attribution",
+        "target-price displayed quantity",
+        "provider queue state"
+      ],
+      "individual_trade_mapping": "is_buyer_maker=false is aggressive BUY; true is aggressive SELL",
+      "provider_2025_clock_limit": "book is provider-local receive-time; official trades are exchange-time and cannot form a joint action-grade row"
+    },
+    "M3": {
+      "status": "reserved_separate_ablation_only",
+      "blocks": [
+        "causal-v12 heads",
+        "q90 state",
+        "BER/markout EMA",
+        "external venues"
+      ]
+    }
+  },
+  "boolean_model": {
+    "side_specific": true,
+    "ordered_first_match_rules": true,
+    "literal_negation": true,
+    "and_within_clause": true,
+    "or_across_clauses": true,
+    "state_domain": [
+      "TRUE",
+      "FALSE",
+      "UNOBSERVED"
+    ],
+    "not_unobserved": "UNOBSERVED",
+    "missing_literal_may_match_rule": false,
+    "threshold_source": "outcome-blind 2025 source distribution or inner chronological Development only",
+    "exploratory_candidate_requires_pre_outer_lcb": false,
+    "deployment_gate_stage": "after untouched outer OOF",
+    "linear_ridge_substitution": "forbidden",
+    "direction_auc_substitution": "forbidden",
+    "continuous_state_comparator": "diagnostic ablation for Boolean information loss, not a replacement estimand"
+  },
+  "source_separation": {
+    "provider_2025": {
+      "role": "outcome-blind channel normalization, support, missingness, and predicate-threshold construction",
+      "required_sources": [
+        "provider-normalized causal BBO/L2",
+        "Binance Futures BTCUSDC official aggressive trade state"
+      ],
+      "day_manifest_path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_source_manifest.json",
+      "day_manifest_file_sha256": "0777f7ef4fe7dc6d41b046b3260a763d6f3f6f2bfc10debda79128d23b077d98",
+      "day_manifest_canonical_sha256": "ac18dfc2210504eb0ee494d2855ed152a725d4cea7f7198c9b2944830a571e21",
+      "target_day_count": 67,
+      "unique_source_day_count": 87,
+      "book_clock": "provider local_timestamp right boundary on the normalized 100ms grid",
+      "trade_clock": "Binance exchange trade time",
+      "joint_book_trade_visibility_authority": false,
+      "allowed_threshold_use": "per-channel clock-separated scale/support only; no cross-channel action-grade row",
+      "predicate_materialization_path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts",
+      "predicate_materialization_state": "admission is external to this Spec and must be hash-bound by preflight and study execution",
+      "economic_outcomes_read": false,
+      "cooldown_labels_generated": false,
+      "queue_or_lifecycle_authority": false,
+      "source_identity_is_model_input": false
+    },
+    "strict_native_2026": {
+      "role": "all one-shot duration labels, nested chronological discovery, outer OOF, and economic gates",
+      "panel_spec_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_spec_20260810.json",
+      "panel_spec_sha256": "98762d1000ff27aa6bbc72e3e219c6a73abf49da4bdd6f95f0f1679ec04a4abb",
+      "strict_spec_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_strict_native_latency_baseline_50d_v1_spec_20260810.json",
+      "strict_spec_sha256": "4d9a227ec2a8e090db973759f74cc58e7ebf295927ddab18d196a369c31cf726",
+      "prefix40_role": "historical Development",
+      "added10_role": "historical late diagnostic already read elsewhere",
+      "pooled50_role": "historical Development, not independent confirmation",
+      "full_D_minus_1_D_D_plus_1_feature_support_days": 41,
+      "full_support_identity": "full_D_minus_1_D_D_plus_1",
+      "full_support_label_policy": "formal one-shot economics run once with the M2 superset snapshot; derive R0/M0/M1 predicates from the same immutable opportunity row",
+      "reduced_support_identity": "reduced_source_diagnostic",
+      "reduced_support_days": [
+        "2026-04-20",
+        "2026-04-23",
+        "2026-05-06",
+        "2026-05-13",
+        "2026-05-31",
+        "2026-06-03",
+        "2026-06-26",
+        "2026-06-29",
+        "2026-07-10"
+      ],
+      "reduced_support_policy": "separate explicit identity; never silently pool with the 41 full-support days"
+    }
+  },
+  "ordered_utc_days": {
+    "prefix40": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "added10": [
+      "2026-06-29",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08",
+      "2026-07-09",
+      "2026-07-10",
+      "2026-07-16"
+    ],
+    "report_sections_required": [
+      "prefix40",
+      "added10",
+      "pooled50"
+    ]
+  },
+  "strict_native_one_shot_labels": {
+    "engine": "python",
+    "raw_source": "CryptoHFT snapshot/delta",
+    "warmup": "previous natural UTC day, complete 24h",
+    "continuation": "D plus D+1 through the next UTC boundary",
+    "execution_trade_source": "individual trades",
+    "queue_l2_cancel_ahead_enabled": false,
+    "queue_mode": "strict",
+    "queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+    "snapshot_replacement_semantics": "each accepted native snapshot atomically replaces all prior segment book levels",
+    "cross_side_structural_zero_semantics": "given an uncrossed snapshot, BUY quantity at or above snapshot best ask and SELL quantity at or below snapshot best bid are exact known-zero until a same-side delta creates the level",
+    "missing_queue_seed_required": 0,
+    "missing_queue_seed_trace_required": "one complete trace row per missing seed, including price tick, snapshot bounds, as-of exchange timestamp, segment, status, and reason",
+    "source_gap_invalid_sequence_sequence_gap_time_reversal_required": 0,
+    "ambiguous_or_invalidated_order_policy": "retain arm as censored and unsupported; never claim exact queue for it",
+    "same_market_path_latency_rng_queue_identity_across_arms": true,
+    "common_washout": [
+      "all target descendants terminal",
+      "both compared arms flat",
+      "no pending submit/cancel/ACK",
+      "no retained queue cursor/order age/hazard ownership"
+    ],
+    "D_plus_1_boundary_without_washout": "retain right-censored opportunity plus contemporaneous mid/executable marks; these marks are not terminal bounds and the row cannot enter point-label OOF",
+    "parent_stop": "the baseline parent stops generating new assignments at the target-day UTC boundary; already forked children continue through D+1 until washout or right censoring",
+    "complete_case_filtering": "forbidden",
+    "denominator_rows_retained": true,
+    "point_label_common_support_filter_disclosed": true,
+    "point_label_common_support": "all side-specific eight arms are strict-native eligible and reach common washout",
+    "unsupported_opportunity_sensitivity_status": "not_implemented_blocks_research_supported_promotion_when_any_unsupported_opportunity_remains",
+    "D_minus_1_D_D_plus_1_source_identity_contract_implemented": true,
+    "shared_prefix_checkpoint_metadata_contract_implemented": true,
+    "posix_copy_on_write_shared_prefix_execution_implemented": true,
+    "portable_checkpoint_restore_claimed": false,
+    "single_owner_72h_cache_prebuild_required": true,
+    "strategy_fork_cache_mode": "read_only_fail_closed",
+    "simulator_state_serialization_implemented": false,
+    "portable_arm_restore_execution_eligible": false,
+    "posix_shared_prefix_arm_execution_eligible": true,
+    "historical_AWS_receive_time_depth_available": false,
+    "exact_live_transport_claim": false
+  },
+  "compute_admission": {
+    "current_v2_arm_execution": "one Python prefix reaches the fill once; POSIX copy-on-write children execute eight arms with at most two concurrent",
+    "formal_full_support_day_count": 41,
+    "formal_feature_block": "M2",
+    "native_cache_prebuild_workers": 2,
+    "formal_day_workers": 1,
+    "R0_M0_M1_reuse_same_M2_opportunity_and_labels": true,
+    "feature_blocks_replaying_economics_separately": false,
+    "observed_target_day_opportunities_from_parent_stop_benchmark": 551,
+    "observed_target_day_side_role_counts": {
+      "BUY_opener": 207,
+      "SELL_opener": 199,
+      "BUY_add": 76,
+      "SELL_add": 69
+    },
+    "estimated_strict_opportunities_from_one_day_only": 551,
+    "estimated_strict_arms_from_one_day_only": 4408,
+    "estimate_is_denominator_authority": false,
+    "first_formal_day_side_role_execution_audit_required": true,
+    "shared_prefix_or_fill_time_checkpoint_required_before_full_50d": false,
+    "parallel_unit": "UTC day after a one-worker peak-RSS benchmark",
+    "arms_for_one_opportunity_share_one_worker": true,
+    "initial_workers": 1,
+    "maximum_workers_before_RSS_and_private_evidence_store_benchmark": 1,
+    "observed_single_day_parent_peak_rss_gib_approx": 12.4,
+    "ten_worker_blind_launch": "forbidden"
+  },
+  "nested_chronological_exploration": {
+    "blocks": [
+      "R0",
+      "M0",
+      "M1",
+      "M2"
+    ],
+    "BUY_SELL_pooled_training": false,
+    "opener_add_separate_reporting": true,
+    "campaign_total_training_weight": 1.0,
+    "inner_fold_role": "select predicates, Boolean rules, complexity, and duration-value policy",
+    "outer_fold_role": "execute the inner-frozen nonbaseline candidate and score only",
+    "outer_candidate_may_be_replaced_by_control_before_test": false,
+    "deployment_selector": "separate post-OOF gate",
+    "partial_identification_gate": "exact-subset OOF is exploratory only until unsupported opportunities have valid frozen bounds or equivalent identifying evidence",
+    "interval_clusters": [
+      "UTC day",
+      "campaign"
+    ],
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "repeated_policy_stage": {
+    "must_use_one_frozen_BUY_policy": true,
+    "must_use_one_frozen_SELL_policy": true,
+    "every_legal_future_fill_invokes_policy": true,
+    "tests": [
+      "single-day event mechanics",
+      "BUY-only",
+      "SELL-only",
+      "BUY+SELL",
+      "50-day paired full-path",
+      "restart-aware continuous"
+    ],
+    "one_shot_labels_may_be_summed_as_policy_PnL": false
+  },
+  "scorecard": {
+    "implementation_path": "models/audit/experiment_scorecard_v2.py",
+    "implementation_sha256": "200862bb883a714cdfbab254b1074f17db06ee5642dc81dfd706a0d41641ab14",
+    "profile_id": "action_defense_v2",
+    "profile_sha256": "29e3e8777672784e701a4016b31aa9c6b5116d46762e5ce84c78f48d2bea058e",
+    "hard_gates_before_ranking": true,
+    "side_specific_promotion": true,
+    "required_economics": [
+      "terminal MTM uplift lower bound positive",
+      "closed-campaign value uplift lower bound positive",
+      "campaign q10/CVaR not worse",
+      "MAE and maximum inventory not worse",
+      "inventory-time not worse",
+      "fill/activity retention in frozen range"
+    ]
+  },
+  "feature_implementation": {
+    "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_features.py",
+    "sha256": "f397bb538d257eba67acf047427ef577e8a9a77b1474d02d4f5953364adfa486",
+    "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_features.py",
+    "test_sha256": "cb83d3aab832c95cdac0d6403ce3c200f1df20f4ad4ac0005c98259730c87644"
+  },
+  "implementation_bindings": {
+    "causal_window_extractor": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_windows.py",
+      "sha256": "46148f56b96e85a57f22b1654f903cf36b831f11d6dd04d3ab4263baf2af8c78",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_windows.py",
+      "test_sha256": "f018c8f7c7c0802ffcaa71d4470124e7cc284d5b6d84980809b068cfb40d3b8d"
+    },
+    "strict_native_M2_extractor": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_native_features.py",
+      "sha256": "04b92394f56ad29c4481f906e3ca3283d4a7a293b5e94e0142477b9b9d8fa0cf",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_native_features.py",
+      "test_sha256": "262a926311b757255261a61da263e6ed59693476dfd4499e4360e96888bc5c25"
+    },
+    "assignment_snapshot": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_snapshot.py",
+      "sha256": "5f4c10d3d55f02203807c67e4d32d09d1ba4097dea669e74ff8eca35dcd5f7ea",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_snapshot.py",
+      "test_sha256": "c9f546eb1269f8c43bfd26874e639450427e9500e08e29d38732975d5e549436",
+      "replay_emitter_bound": true,
+      "live_emitter_bound": false
+    },
+    "outcome_blind_source_manifest_builder": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_source_manifest.py",
+      "sha256": "afbb2d2ffda025a3a7ce86e308d75a84f1a82b02af8f1233eafcde4a523c3eed",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_source_manifest.py",
+      "test_sha256": "8613f62767e6fb5f2a67d919aba02bd432ea7f9fc1a27807c205ae7f52e4c8bd"
+    },
+    "outcome_blind_2025_predicate_materializer": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
+      "sha256": "edcb96d0e1e1e60025593e312c1b24c3e7e790a277562794a2dd0d56a8088102",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
+      "test_sha256": "5a79e816da10e9379b383485808803709042bd0806c3c35b9e09045f373f9bdb"
+    },
+    "strict_checkpoint_metadata": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_checkpoint.py",
+      "sha256": "02734c28a40b200551ff39013acc12fb631e28583720ecc6b940510574a0c4aa",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_checkpoint.py",
+      "test_sha256": "16ff1c7c041eaaf6e42e2f580eada7e77daab786e3a9212e80a4832dec527714",
+      "metadata_admission_eligible": true,
+      "simulator_restore_execution_eligible": false
+    },
+    "replay_assignment_emitter": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_replay_emitter.py",
+      "sha256": "9442789b8fbc8ef1f739e35436f6146509a065b67b5f315d6fef903de96559b1",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_emitter.py",
+      "test_sha256": "f25c26855b52a7d48776ac084b8ea2159c4a0597c8c6ede23002a5aa1bfafc05"
+    },
+    "posix_shared_prefix": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "sha256": "946a05e5f25a30cd3d4259c86dccd1fa3567ebe169188cdb8b71a6448e6b7d53",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "test_sha256": "c64db8ee0e6ebf62d0a0da779aee63174750e7eef564f81e7a2d5a36eff48287"
+    },
+    "strict_one_shot_label_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "sha256": "fbdaafc69e08ab125ac6eb21fa371fcc1fa09be8f9c9e41329e5048c746495ce",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "test_sha256": "5f78df25b02dd961abb68e9ee9a2775a1e71642e884c962869de7219766e3d28"
+    },
+    "strict_label_panel": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "sha256": "9832232b45a990ed49826689461b0444cbc261337d291c75e32cb183068621aa",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "test_sha256": "c8e55c1d9a27fd39af44d5d6b2b6c32363cf266f8d9d23bcac980b26704f14e1"
+    },
+    "predicate_learner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_predicates.py",
+      "sha256": "ad7691951ae39b3dd1b20e33cb71990c2e65daeeaf31950909f6be6d129a5605",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_predicates.py",
+      "test_sha256": "18c10b4e06a655f434d3efb0e447364b6002f188fc9e85ad404e1b84a1a57ed3"
+    },
+    "nested_chronological_oof": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "0210472614a0eda4462c2edfa4a51625031362363d2a0b45cde55315e224649b",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "test_sha256": "0f3fdc5510b8e97b42d53f160251b661755377158749921b021646abec018f5c"
+    },
+    "strict_label_panel_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "sha256": "8b57b9d0f228d7bda2838b9313b327c42e3c0d80375471a7a7d0829cc26c03b5",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "test_sha256": "bda7be194caa6cda7e2e08e1ee95e5ed974d061c5bf79a7ff39ff7572be83667"
+    },
+    "multiday_study": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "dbbf94db95a8e7d494975e4191d238a9aef956accdb031b7cb2205eacd9f30b2",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "9ccdf99b7639fdd723010954a73c82c7f678ef9c42255e41ace36d23f01366e8"
+    },
+    "execution_replay_abi": {
+      "path": "models/backtest_tick.py",
+      "sha256": "3cdb2702a49fe5893a53ee6ab4e91b155accc593e14f53fa3ce0473e8ce98e9e",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_binding.py",
+      "test_sha256": "3bb75abd7a99ea1f857d503f3c4ba44708d910e50472f3229b8ac7cf110ebefe"
+    },
+    "native_queue_scheduler": {
+      "path": "models/exchange_book_replay.py",
+      "sha256": "a2c53a603dbdf6903faadedb976704de404951622f2cd671e0612fb18a4b5910",
+      "test_path": "tests/test_exchange_book_replay.py",
+      "test_sha256": "9e61f79d59cb3d4a9806b2b0b5d93b9892019bbb682c5de3b42cede751e3b526"
+    }
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "development_labels_generated": false,
+    "nested_OOF_run": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "transport_passed": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

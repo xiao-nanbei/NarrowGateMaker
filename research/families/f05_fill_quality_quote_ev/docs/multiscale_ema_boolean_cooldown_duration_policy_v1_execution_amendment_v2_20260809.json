@@ -1,0 +1,157 @@
+{
+  "schema_version": "multiscale_ema_boolean_cooldown_duration_policy.v1.execution_amendment.v2",
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "status": "formal_full_development_execution_eligible_economic_outcomes_unread",
+  "last_materially_modified": "2026-08-09",
+  "supersedes_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_execution_amendment_20260809.json",
+    "sha256": "425b05a71524e2cef44bb2593caf78791338e76a7cae521af8a08937806535ca",
+    "historical_identity_unchanged": true
+  },
+  "frozen_sources": {
+    "spec_json": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.json",
+      "sha256": "9f8c5abce4817b029d943648a46ab115d6ce7ac7f758b1326a48d75fa446e8ce"
+    },
+    "spec_markdown": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.md",
+      "sha256": "4526dbcd9924c04c8eca5e62b96027d8473426cc7949c51c8c748a0ca7f0cbfe"
+    },
+    "outcome_blind_inputs": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+      "sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035"
+    },
+    "current_replay_baseline": {
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    }
+  },
+  "formal_execution_identity": {
+    "sha256": "ff4873a18b0f77d2ddd4bbe19bddc18d66a5ff3d3f628d76bc538b0f2bb9eb40",
+    "formal_replay_engine": "cpp",
+    "python_scope": "diagnostic_parity_subset_only",
+    "fill_clock_semantics": "native_exchange_event_revealed_at_replay_event_clock_no_live_receive_time_claim",
+    "opportunity_count": 8600,
+    "duration_arms_per_opportunity": 8,
+    "formal_arm_row_count": 68800,
+    "sampling": "none_full_cartesian_coverage",
+    "development_day_count": 40,
+    "daily_boundary": "right_censor_without_forced_terminal_or_next_day_stitch"
+  },
+  "implementation_bindings": [
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_study.py",
+      "sha256": "e3482fb458f2831420e2990507c02e46bc97506138bf17341fa30c6f809e8d4d",
+      "role": "formal_study_runner"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration.py",
+      "sha256": "5fcd4afe14dcc226c10663c9a99eb95c7914aba972df107e093f2fdff4019c83",
+      "role": "ema_predicate_contract"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_rule_learner.py",
+      "sha256": "59fdd0ea84eba5d4f202171125f0ca34ab171e2a452703bd4274275800b8bf8d",
+      "role": "nested_boolean_rule_learner"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_training.py",
+      "sha256": "6aea6160f08fc445a594307f6e4c1e888301fdfdfedcddfaf927ecd234a84569",
+      "role": "nested_chronological_training"
+    },
+    {
+      "path": "models/backtest_tick.py",
+      "sha256": "4b1644c80540dc073518f275eb34fb680a509d7222961d466eb646d920dd8d56",
+      "role": "python_diagnostic_full_path"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "d98955033f198e85057cf67c75d598e689d4ec43e6edd6525a3e4fdfe7e61dc1",
+      "role": "cpp_formal_duration_fork"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "4ba5d3edde3a0c5b13cf53cd30f2cd870fb8acc6a13c8f7d8b4e2d9b98ae2f55",
+      "role": "cpp_formal_duration_fork_abi"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "15c7e87950dd3223c2665cacc251f8140269998b4ef4e9f0e333a23252c6f9d0",
+      "role": "cpp_python_binding"
+    },
+    {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "sha256": "3ea01e6c45235f5a169d552c76d776575268687e2a8901f32096de31a8ec87eb",
+      "role": "loaded_cpp_extension"
+    }
+  ],
+  "admitted_mechanics_evidence": {
+    "census_manifest": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/ema_boolean_cooldown_v1_execution_v8/census_manifest.json",
+      "sha256": "1e8c47ae15e4badfa1aedd7cdfaaef0fd3ce9f8e4bc5438e960384cec835a033",
+      "opportunities": 8600,
+      "arm_rows": 68800
+    },
+    "control_noop_attestation": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/ema_boolean_cooldown_v1_execution_v8/control_noop_attestation.json",
+      "sha256": "2dd102c1f112edbf50803a7a3a1d7fe4c4971271800c30fa5335bda83b18888c",
+      "baseline_fills": 17118,
+      "day_count": 40
+    },
+    "cpp_python_parity": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/ema_boolean_cooldown_v1_execution_v8/cpp_python_parity_manifest.json",
+      "sha256": "faca8fac1cc51369bd041c07b614aa48826426bf128c21ebc2ba4ec87f18ae7a",
+      "opportunities": 4,
+      "arm_rows": 32,
+      "covered_side_role_cells": [
+        "BUY:add",
+        "BUY:opener",
+        "SELL:add",
+        "SELL:opener"
+      ],
+      "all_rows_match": true
+    },
+    "targeted_tests": {
+      "result": "69 passed",
+      "test_file_sha256": {
+        "tests/test_multiscale_ema_boolean_cooldown_duration_cpp_parity.py": "11d2828734eac225f38fc7dee9d6038fa1478a1453da44efd3e3ca5685d0c607",
+        "tests/test_multiscale_ema_boolean_cooldown_duration_policy_study.py": "315a185241ab5d366734c70cdb5fe4d717ca547e5005a51a26fb1bae6a7764ca",
+        "tests/test_multiscale_ema_boolean_cooldown_duration_policy_training.py": "b63eed85aa0a9378d4fc42315efd78c619dfd75b7d2240aa82689c11255d5cc6",
+        "tests/test_multiscale_ema_boolean_cooldown_rule_learner.py": "fd87309a3a3de10234527d3a631b1428bd4b557612184d4d1284fc667a958131"
+      }
+    }
+  },
+  "terminal_and_washout_contract": {
+    "control_semantics": "exact current CONTROL_85N until first flat",
+    "single_action_label_quarantine": "first_flat_exposure_quarantine_scheduler_drained_v2",
+    "quarantine_purpose": "prevent a fork label from starting a second exposure campaign before common washout",
+    "quarantine_is_live_policy": false,
+    "synthetic_immediate_cancel_allowed": false,
+    "pending_cancel_ack": "must drain through the normal scheduler before visible washout terminal",
+    "terminal_timestamp": "current replay-visible event timestamp after all descendant orders and pending exchange events are terminal",
+    "joint_censoring": "if any duration arm is right-censored or lacks washout, the entire opportunity is excluded from model fitting",
+    "final_learned_policy_replay": "continuous full path without label quarantine"
+  },
+  "model_contract": {
+    "input_predicates": 360,
+    "ema_pair_count": 45,
+    "logic": "sparse AND_OR_NOT rules with bounded complexity",
+    "buy_sell_models_separate": true,
+    "training": "nested chronological Development",
+    "campaign_total_training_weight": 1.0,
+    "selection": "simultaneous lower confidence bound versus CONTROL_85N",
+    "fallback": "CONTROL_85N",
+    "provider_2025_use": "unsupervised normalization and predicate thresholds only",
+    "native_2026_use": "full-path duration value labels only"
+  },
+  "permission_boundary": {
+    "economic_development_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "model_trained": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "next_permitted_step": "generate all 68800 formal Development arm rows, admit mechanics-only artifacts, then explicitly read Development and run nested chronological OOF",
+    "promotion_requirement": "a separate continuous learned-policy full-path replay; label-fork or OOF evidence alone cannot authorize live"
+  }
+}

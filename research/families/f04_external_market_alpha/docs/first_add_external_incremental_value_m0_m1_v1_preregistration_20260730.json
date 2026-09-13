@@ -1,0 +1,144 @@
+{
+  "schema_version": "first_add_external_incremental_value.preregistration.v1",
+  "identity": "first_add_external_incremental_value_m0_m1_v1",
+  "status": "preregistered_blocked_on_30_distinct_valid_receive_time_utc_days",
+  "created_at_utc": "2026-07-30T00:00:00Z",
+  "canonical_spec_sha256": "2c45c37aed50c62a7331cfe30630ab08cb1af1d343d4ca524414f11333f6c59c",
+  "scope": "Prediction-only incremental audit of whether AWS Tokyo receive-time external state identifies negative first-add decision-to-campaign-terminal value beyond campaign state and local causal microstructure.",
+  "upstream": {
+    "f10_identity": "first_add_decision_to_terminal_loss_diagnostic_v1",
+    "f10_trace_schema": "first_add_decision_to_terminal_trace.v1",
+    "f05_identity": "decision_visible_negative_fill_value_evidence_m0_v1_1",
+    "f05_result": "development_prediction_unsupported_both_sides",
+    "receive_time_ledger": "${NARROWGATE_RETIRED_DATA_ROOT}/receive_time_tape/capture_ledger.v1.jsonl"
+  },
+  "estimand": {
+    "target": "campaign_terminal_equity_usdc_minus_first_add_decision_equity_usdc",
+    "column": "decision_to_campaign_terminal_value_usdc",
+    "unit": "USDC_per_first_add_decision",
+    "denominator": "one_first_actual_exposure_increasing_add_fill_generating_order_decision_per_campaign",
+    "future_direction_or_markout_target_forbidden": true,
+    "fill_conditioned_target_substitution_forbidden": true,
+    "action_uplift_claim_forbidden": true
+  },
+  "capture_admission": {
+    "minimum_distinct_valid_utc_days": 30,
+    "minimum_requested_or_observed_duration_s": 3500,
+    "one_statistical_day_per_utc_day": true,
+    "duplicate_same_utc_day_windows_do_not_increase_day_count": true,
+    "exactly_seven_unique_gzip_tapes": true,
+    "remote_and_local_gzip_sha256_integrity": true,
+    "strategy_hash_unchanged": true,
+    "recording_disabled_after_window": true,
+    "zero_recorder_queue_drops": true,
+    "event_count_agreement_when_available": true,
+    "capture_interval_and_feature_clock_required": true,
+    "insufficient_side_or_panel_rows_defers_evaluation_without_changing_thresholds": true
+  },
+  "chronology": {
+    "ordered_unit": "distinct_valid_utc_capture_day",
+    "initial_train_days": 20,
+    "embargo_days": 1,
+    "chronological_test_days": 5,
+    "late_panel_days": 4,
+    "minimum_total_days": 30,
+    "threshold_or_feature_selection_on_test_or_late_forbidden": true,
+    "exact_day_lists_and_all_input_hashes_frozen_before_target_read": true
+  },
+  "panels": {
+    "grade_a_primary": "native local sequence, receive-time source, feature-ready, exact lifecycle, and campaign-terminal contracts all pass",
+    "grade_b_sensitivity": "valid gap-censored receive-time rows retained only as a separately reported sensitivity panel",
+    "grade_a_grade_b_pooling_forbidden": true,
+    "buy_sell_separate": true,
+    "pooled_side_rescue_forbidden": true,
+    "m0_m1_and_all_loo_profiles_must_score_identical_rows": true,
+    "late_panel_denominator_must_be_identical_across_profiles": true
+  },
+  "models": {
+    "estimator": "standardized_ridge_direct_usdc",
+    "ridge_alpha": 1.0,
+    "hyperparameter_search": false,
+    "m0": {
+      "name": "campaign_state_plus_local_causal_microstructure",
+      "campaign_state_contract": "decision_visible_F05_v1_1",
+      "local_microstructure_contract": "decision_visible_F05_v1_1",
+      "binance_reference_bridge_in_primary_m0": false,
+      "external_venue_features": false
+    },
+    "m1": {
+      "name": "m0_plus_external_aws_receive_time_state",
+      "external_venues": [
+        "bitget",
+        "bybit",
+        "okx"
+      ],
+      "spot_and_perpetual_kept_separate_before_consensus": true,
+      "feature_abi": "global_flow.v1",
+      "frozen_horizons_ms": [
+        10,
+        25,
+        50,
+        100,
+        250,
+        500
+      ],
+      "horizons_are_live_abi_engineering_support_not_outcome_selected": true,
+      "local_receive_timestamp_required": true,
+      "feature_ready_timestamp_required": true,
+      "feature_ready_after_decision_forbidden": true
+    }
+  },
+  "leave_one_venue_out": {
+    "profiles": {
+      "full": [
+        "bitget",
+        "bybit",
+        "okx"
+      ],
+      "leave_bitget_out": [
+        "bybit",
+        "okx"
+      ],
+      "leave_bybit_out": [
+        "bitget",
+        "okx"
+      ],
+      "leave_okx_out": [
+        "bitget",
+        "bybit"
+      ]
+    },
+    "true_rebuild_from_raw_venue_tapes": true,
+    "subtracting_a_venue_from_full_consensus_forbidden": true,
+    "full_and_loo_common_row_denominator_required": true
+  },
+  "risk_subset": {
+    "definition": "M1 prediction at or below the side-specific outer-train q25",
+    "quantile": 0.25,
+    "threshold_fitted_inside_past_only_outer_train": true,
+    "test_or_late_reselection_forbidden": true
+  },
+  "inference_and_gates": {
+    "primary_proper_score": "squared_error_for_conditional_mean_usdc",
+    "cluster": "UTC_day_then_campaign",
+    "simultaneous_intervals": true,
+    "full_m1_proper_score_improvement_day_cluster_lcb": "strictly_above_zero",
+    "full_m1_high_risk_value_simultaneous_ucb_usdc": "strictly_below_zero",
+    "each_true_loo_profile_must_preserve_proper_score_and_high_risk_direction": true,
+    "grade_b_sensitivity_must_not_reverse_primary_direction": true,
+    "late_panel_direction_must_not_reverse_after_thresholds_are_frozen": true,
+    "prediction_supported_side_requires_all_support_clock_denominator_and_statistical_gates": true,
+    "prediction_supported_sides_may_be_side_specific": true,
+    "ranking_score": null
+  },
+  "failure_conclusion": "If neither side passes, current first-add losses are broad but not selectively identifiable under the frozen local plus external receive-time evidence; move to baseline economic-structure redesign rather than another classifier or threshold search.",
+  "permissions": {
+    "outcome_read_before_capture_and_denominator_gate": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_registration": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "next_transition": "Only a passing side-specific prediction artifact may motivate preregistration of a genuinely new F09 external-adverse-state policy lever under lineage_randomized_outcome_contract_v2."
+}

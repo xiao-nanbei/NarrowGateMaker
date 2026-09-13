@@ -1,0 +1,89 @@
+{
+  "schema_version": "causal_v12_1s_training_contract.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "purpose": "freeze_one_second_training_mechanics_before_panel_materialization_or_outcome_reads",
+  "inference_cadence_ms": 1000,
+  "candidate_cadence_set_ms": [
+    1000
+  ],
+  "label_contract_identity": "causal_v12_13_head_label_contract_v3_preserved",
+  "label_horizon_change_in_scope": false,
+  "inherited_train_only_membership": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_expanded_source_aware_semantics_v6_train_spec_20260802.json",
+    "sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328"
+  },
+  "head_maximum_future_dependency_s": {
+    "dir_10s": 20,
+    "ret_10s": 20,
+    "vol_10s": 10,
+    "dir_30s": 60,
+    "ret_30s": 60,
+    "vol_30s": 30,
+    "dir_60s": 120,
+    "ret_60s": 120,
+    "vol_60s": 60,
+    "tox_bid_5s": 10,
+    "tox_ask_5s": 10,
+    "tox_bid_10s": 20,
+    "tox_ask_10s": 20
+  },
+  "base_sample_weight": {
+    "formula": "exp(-lambda * days_ago / 30.44)",
+    "lambda": 0.1,
+    "reference_date": "2026-07-23",
+    "source": "causal_v12_feature_manifest_sha256_5409a398"
+  },
+  "overlapping_label_weighting": {
+    "method": "average_reciprocal_concurrency_within_utc_day",
+    "interval": "[decision_ts,decision_ts+maximum_future_dependency_s)",
+    "base_weight_combination": "multiply_then_preserve_valid_day_weight_sum",
+    "invalid_or_censored_label_weight": 0.0,
+    "cadence_ns": 1000000000,
+    "normalization_scope": "utc_day_x_head"
+  },
+  "chronological_training_fold": {
+    "selection_method": "inner_chronological_early_stopping_then_full_refit",
+    "fit_days": [
+      "2025-08-02", "2025-08-03", "2025-08-04", "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-09", "2025-08-10", "2025-08-11", "2025-08-12", "2025-08-13", "2025-08-14", "2025-08-15", "2025-08-16", "2025-08-17", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-24", "2025-08-25", "2025-08-26", "2025-08-27", "2025-09-01", "2025-09-06", "2025-09-07", "2025-09-12", "2025-09-13", "2025-09-14", "2025-09-15", "2025-09-18", "2025-09-19", "2025-09-20", "2025-09-21", "2025-09-22", "2025-09-23", "2025-09-28", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-20", "2025-10-24", "2025-10-27", "2025-10-28", "2025-10-29", "2025-11-02", "2025-11-09"
+    ],
+    "embargo_days": [
+      "2025-11-23"
+    ],
+    "selection_days": [
+      "2025-11-27", "2025-11-28", "2025-11-29", "2025-11-30", "2025-12-07", "2025-12-13", "2025-12-14", "2025-12-21", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-27", "2025-12-28"
+    ],
+    "refit_days": [
+      "2025-08-02", "2025-08-03", "2025-08-04", "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-09", "2025-08-10", "2025-08-11", "2025-08-12", "2025-08-13", "2025-08-14", "2025-08-15", "2025-08-16", "2025-08-17", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-24", "2025-08-25", "2025-08-26", "2025-08-27", "2025-09-01", "2025-09-06", "2025-09-07", "2025-09-12", "2025-09-13", "2025-09-14", "2025-09-15", "2025-09-18", "2025-09-19", "2025-09-20", "2025-09-21", "2025-09-22", "2025-09-23", "2025-09-28", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-20", "2025-10-24", "2025-10-27", "2025-10-28", "2025-10-29", "2025-11-02", "2025-11-09", "2025-11-23", "2025-11-27", "2025-11-28", "2025-11-29", "2025-11-30", "2025-12-07", "2025-12-13", "2025-12-14", "2025-12-21", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-27", "2025-12-28"
+    ],
+    "hyperparameter_tuning_enabled": false,
+    "normalizer_fit_scope": "fit_days_only_then_refit_on_all_66_days_after_selection",
+    "calibrator": "none_in_this_identity",
+    "external_2026_panels_diagnostic_only": true
+  },
+  "required_execution_artifacts": {
+    "one_second_feature_panel_manifest": null,
+    "one_second_python_cpp_parity_contract": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cpp_feature_parity_v1_implementation_20260805.json",
+      "sha256": "7fd59ae3589c645e67e702a2a9fb627eae10504149bb067305376843ace6ad4a"
+    },
+    "one_second_label_generator_identity": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_label_generator_v1_design_20260805.json",
+      "sha256": "e5ea3105a660af91ce1480f8931c28301f4809a595a655ce30a73311af0727e7"
+    },
+    "one_second_source_manifest": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_feature_source_manifest_v1_20260805.json",
+      "sha256": "ffe575b7cd6bcecc4f286a6bf31c5b50107a4148516a6202dc54fb328e2d8aef"
+    },
+    "training_implementation_sha256": null,
+    "model_output_identity": null
+  },
+  "authority_boundaries": {
+    "economic_outcomes_read": false,
+    "prediction_outcomes_read": false,
+    "model_training_executed": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

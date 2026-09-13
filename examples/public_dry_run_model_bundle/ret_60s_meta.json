@@ -1,0 +1,16 @@
+{
+  "calendar_timestamp_semantics": "preserve_datetime_physical_unit_ms_us_ns_before_epoch_conversion",
+  "feature_cols": [
+    "close"
+  ],
+  "feature_dag_id": "live_10s_signal_cutoff.v1",
+  "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+  "feature_manifest_sha256": "ffc85a81b177825f43455f346dab8c9926a699c8f7f8e34a2ce9188861eeadd2",
+  "feature_semantics_version": 6,
+  "feature_variant": "public_dry_run_fixture",
+  "label_semantics_version": 3,
+  "label_window_semantics": "left_closed_right_open_[t,t+h)",
+  "promotion_authority": "public_dry_run_only",
+  "source_profile": "synthetic_fixture",
+  "training_experiment_id": "public_dry_run_model_bundle_v1"
+}

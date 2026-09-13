@@ -1,0 +1,115 @@
+{
+  "audit_date": "2026-07-28",
+  "audit_implementation": {
+    "path": "research_06_placement_fill_cif/audit/ordered_common_support_contract_audit.py",
+    "sha256": "771af665291edb1554595ad4fc9dfdeb2958350e9879b18da07a00e4e8f0dd93",
+    "size_bytes": 11901
+  },
+  "clock_reaudit": {
+    "affected_cache_cohorts_found": 399,
+    "all_affected_cohorts_use_unequal_realized_clocks": true,
+    "apparent_violation_rows": 1042,
+    "interpretation": "The ordered hazard was integrated over action-specific realized exposure. This is an implementation-contract failure, not evidence that the LightGBM distance monotonicity constraint failed.",
+    "realized_exposure_clock": {
+      "all_common": false,
+      "complete_groups": 399,
+      "spread_ms": {
+        "maximum": 9693.0,
+        "median": 3713.0,
+        "minimum": 6.0,
+        "p10": 356.0,
+        "p90": 7595.0
+      },
+      "tolerance_ms": 0.0,
+      "violating_groups": 399
+    },
+    "report_violation_rows": 1042,
+    "unique_affected_cohorts": 399
+  },
+  "decision": "erratum_recorded_family_remains_closed_on_development",
+  "downstream_identity_audit": {
+    "artifacts_absent": true,
+    "path_matches": {
+      "placement_action_value_surface_v1": [],
+      "placement_quote_action_uplift_v1": []
+    },
+    "searched_family_ids": [
+      "placement_action_value_surface_v1",
+      "placement_quote_action_uplift_v1"
+    ]
+  },
+  "family_id": "ordered_common_support_fill_surface_v1",
+  "frozen_inputs": {
+    "development_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/ordered_common_support_fill_surface_v1_development_20260728/report.json",
+      "sha256": "66262578a72c8afcb8307c502a4906b91555e329a3789ce401b8a98404af537d",
+      "size_bytes": 105218
+    },
+    "implementation": {
+      "path": "research_06_placement_fill_cif/audit/ordered_common_support_fill_surface.py",
+      "sha256": "a2ce825c0f8ea70ca03a817cf3e81194a6621c511ecb353437ca900b80a5adbd",
+      "size_bytes": 37905
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1",
+      "size_bytes": 20673
+    },
+    "spec": {
+      "path": "research_06_placement_fill_cif/docs/ordered_common_support_fill_surface_v1_spec_20260728.json",
+      "sha256": "c42146e2505cb8b567a2e653fb8a97f39169e6f5778d72781bf5660e9556b6e7",
+      "size_bytes": 7721
+    }
+  },
+  "hard_gate_reconciliation": {
+    "action_curves_passed": 18,
+    "action_curves_total": 18,
+    "activation_calibration_passed": 11,
+    "activation_calibration_total": 18,
+    "independent_closure_reasons": [
+      "common_lifecycle_clock_implementation_contract_failed",
+      "activation_and_support_absolute_calibration_failed",
+      "pending_fill_economic_uncertainty_bound_failed"
+    ],
+    "pending_economic_bounds_passed": 0,
+    "pending_economic_bounds_total": 36,
+    "pending_posterior_predictive_passed": 36,
+    "pending_posterior_predictive_total": 36,
+    "support_calibration_passed": 9,
+    "support_calibration_total": 18,
+    "transport_probability_bounds_passed": 18,
+    "transport_probability_bounds_total": 18
+  },
+  "permissions": {
+    "action_experiment_authorized": false,
+    "action_uplift_supported": false,
+    "constrained_not_significantly_worse": true,
+    "economic_resolution_supported": false,
+    "live_deployment_authorized": false,
+    "monotonicity_contract_valid": false,
+    "pending_nuisance_bound_supported": false,
+    "prediction_supported": false,
+    "sealed_holdout_read": false,
+    "transport_supported": false,
+    "validation_read": false
+  },
+  "schema_version": "ordered_common_support_contract_audit.v1",
+  "test_coverage_erratum": {
+    "existing_test_scope": "equal prediction clocks and monotone hazard output",
+    "future_contract_helper": "research_06_placement_fill_cif.audit.paired_lifecycle_contract.assert_common_prediction_clock",
+    "missing_in_frozen_v1": "end-to-end assertion that the evaluator uses one cohort-common ex-ante scheduled request clock"
+  },
+  "training_weight_erratum": {
+    "correct_claim": "counterfactual action replication factors sum to one while interval exposure weighting remains intact",
+    "implementation_formula": "interval_exposure_seconds / 3",
+    "incorrect_literal_claim": "each cohort's numeric interval weights sum to one"
+  },
+  "unconstrained_comparison_erratum": {
+    "frozen_noninferiority_margin_present": false,
+    "future_noninferiority_contract": "UCB95(L_ordered - L_unconstrained) <= epsilon_L, with epsilon_L frozen before outcomes",
+    "invalid_claim": "the ordered model was proven non-inferior",
+    "rows_total": 18,
+    "rows_without_detected_significant_harm": 18,
+    "valid_claim": "no statistically detected harm under the frozen diagnostic"
+  }
+}

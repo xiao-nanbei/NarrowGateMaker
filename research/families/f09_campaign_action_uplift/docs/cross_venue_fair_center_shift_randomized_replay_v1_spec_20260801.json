@@ -1,0 +1,412 @@
+{
+  "schema_version": "cross_venue_fair_center_shift_randomized_replay.v1",
+  "family_id": "cross_venue_fair_center_shift_randomized_replay_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-01T13:00:00Z",
+  "status": "frozen_before_formal_development_outcome_read",
+  "canonical_spec_identity_sha256": "10c1ef4755d0a360dc96c93a8c979b75357508dccfc610715c500c71aaf4f008",
+  "scope": "Development-only campaign-randomized full-path replay of one fixed cross-venue fair-price quote-center action. The candidate shifts the complete bid/ask pair by the causally available F04 fair-center displacement while preserving the baseline pair spread and all other strategy mechanics. This identity does not train a selector, search a multiplier or threshold, read Validation or holdout, claim AWS receive-time transport, authorize live action, or alter q90.",
+  "research_identity_boundary": {
+    "F04_prediction_identity": "cross_venue_causal_fair_price_v1 produces evidence and live shadow coordinates only",
+    "F09_action_identity": "cross_venue_fair_center_shift_randomized_replay_v1 alone evaluates the quote-center action",
+    "historical_input_grade": "right-edge one-second individual-trade bars are historical sensitivity inputs, not AWS Tokyo BBO transport evidence",
+    "existing_first_add_external_identity": "separate and unchanged; this action is not the preregistered first-add M0/M1 study"
+  },
+  "base_full_path_contract": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+    "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
+    "reuse_scope": "corrected wall-time cooldown, native snapshot/delta queue, empirical P3, frozen latency path, loss cooldown, sync stress, blockers, campaign lifecycle, and daily fresh-start semantics"
+  },
+  "lineage_outcome_foundation": {
+    "path": "research/families/f09_campaign_action_uplift/docs/lineage_randomized_outcome_contract_v2.json",
+    "sha256": "bd95adae59e4fa1fee982b29dc960c233bb7e468bc2f844d656f42a4527503cd"
+  },
+  "fair_price_evidence_identity": {
+    "path": "research/families/f04_external_market_alpha/docs/cross_venue_causal_fair_price_v1_spec_20260801.json",
+    "sha256": "2049eadd79e0ef452c9e288b3a811844c959ba06982ead6470db9133ebc1e2f6",
+    "reuse_boundary": "Only the causally ordered fair-price coordinate, frozen estimator configuration, common support, and historical sensitivity caches are reused. F04 grants no action or live authority."
+  },
+  "operational_config_identity": {
+    "path": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.cross_venue_fair_center_shift_v1_20260801.yaml",
+    "sha256": "fe2a650f3bac7c9bdcccfa028d31ab63c3810ca918cd1fdc0951f229809fe415",
+    "snapshot_policy": "immutable copy of the current corrected private baseline created before formal Development outcome read",
+    "required_semantics": {
+      "ml_enabled": false,
+      "fill_cooldown_s": 85.0,
+      "consecutive_reset": "opposite_fill_only",
+      "reducing_cooldown_s": 0.0,
+      "max_consecutive_losses": 3,
+      "loss_cooldown_s": 30.0,
+      "markout_side_asymmetry_sign": 1.0,
+      "buy_q90_enabled_in_source": true
+    },
+    "q90_replay_override": "disabled identically in control and candidate after source semantics validation",
+    "fair_price_live_shadow_field": "present in the source snapshot but does not mutate historical replay quotes; the F09 candidate path is injected explicitly"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "grade_a_days": [
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-06-03",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-13",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-26"
+    ],
+    "grade_b_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-14",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "grade_b_is_sensitivity_only": true,
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ]
+  },
+  "behavior_policy": {
+    "assignment_unit": "one prospective campaign lineage beginning while flat at the first causally supported nonzero fair-center displacement",
+    "assignment_time": "before the opener quote pair and every downstream cancel ACK queue fill inventory and campaign path",
+    "randomization_design": "independent_PRF_Bernoulli_stratified_by_UTC_day_and_ex_ante_fair_lead_direction",
+    "random_seed": 2026080107,
+    "probabilities": {
+      "local_quote_center": 0.5,
+      "cross_venue_fair_quote_center": 0.5
+    },
+    "side_definition": "BUY when the ex-ante causally visible fair-center shift is positive and SELL when it is negative; never use the post-treatment opener fill side",
+    "persistence": "one assignment per campaign through campaign terminal with no rerandomization",
+    "no_fill_path": "lineage terminates by explicit no-fill day-end censor with complete accounting",
+    "path_dependent_future_campaigns": "new campaign identities are randomized from their own pre-assignment UID and are not force-paired across diverged paths"
+  },
+  "actions": {
+    "control": {
+      "id": "local_quote_center",
+      "definition": "current corrected q90-OFF local reservation-price center and baseline pair spread"
+    },
+    "candidate": {
+      "id": "cross_venue_fair_quote_center",
+      "max_state_age_ms": 2000.0,
+      "formula": "baseline_reservation_price_plus_online_gain_times_external_fair_minus_local_mid",
+      "pair_projection": "shift bid and ask together by one identical integer-tick displacement",
+      "pair_spread": "exactly preserved after tick projection",
+      "GTX": "candidate bid must remain below best ask and candidate ask above best bid; projection clamps inward shift without crossing",
+      "invalid_or_unsupported_state": "exact baseline local quote pair",
+      "candidate_multiplier_or_grid": "forbidden"
+    },
+    "unchanged_in_both_arms": [
+      "total pair spread",
+      "order size",
+      "inventory skew and limit",
+      "fill cooldown",
+      "reducing logic",
+      "loss cooldown",
+      "sync stress",
+      "queue and latency path",
+      "empirical P3",
+      "maker-only order type"
+    ],
+    "q90": "off_identically_in_both_arms",
+    "IOC_or_taker": "forbidden"
+  },
+  "action_registration": {
+    "foundation_contract_id": "lineage_randomized_outcome_contract_v2",
+    "action_family_id": "cross_venue_fair_center_shift_randomized_replay_v1",
+    "primary_estimand": "decision_to_campaign_terminal_value_usdc",
+    "stratification_keys": [
+      "UTC_day",
+      "side"
+    ],
+    "trace_schema_version": "narrowgate_lineage_randomized_trace.v2",
+    "mechanism_extension_schema": "none",
+    "producer_identity": {
+      "models/backtest_tick.py": "24410cd2698be991012ece5c8b4f91e98273ef9e467d955035ac36d4ae88cda0",
+      "research/families/f09_campaign_action_uplift/audit/cross_venue_fair_center_shift.py": "806c8975b191dab9ece8837f4aad3f12c6ba032f13d5dd56c6610a64a16c2a3a",
+      "research/families/f09_campaign_action_uplift/audit/cross_venue_fair_center_shift_randomized_replay.py": "42ab76a77abdfe5bf7150bcd48ece94be1b999b2d2361ecc1d00dd309ee47540",
+      "research/families/f09_campaign_action_uplift/audit/lineage_randomized_outcome_contract.py": "089c715896a0f5d2633e5c33361c86bea4bc8650153c40080119cf52dcf1fce9"
+    },
+    "randomization_seed": 2026080107,
+    "action_semantics": {
+      "baseline": "local quote center",
+      "candidate": "causal two-of-three cross-venue fair-price center with baseline spread preserved"
+    },
+    "assignment_before_downstream_path": true,
+    "downstream_assignment_policy": "persist_to_campaign_terminal_no_rerandomization",
+    "maximum_assignments_per_campaign": 1,
+    "covariate_adjustment": {
+      "enabled": false,
+      "mode": "none",
+      "covariates": [],
+      "frozen_before_outcome_read": true
+    }
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "full_candidate_path_regenerated": true,
+    "native_snapshot_delta_queue": true,
+    "queue_mode": "strict_exact_level",
+    "shared_market_path": true,
+    "shared_latency_random_path": true,
+    "initial_state": "daily_fresh_start",
+    "window_cache_location": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "fair_price_cache_location": "${NARROWGATE_CACHE_ROOT}/replay_dag/cross_venue_fair_price_trade_1s_v1",
+    "frozen_evidence_location": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_fair_center_shift_randomized_replay_v1_20260801",
+    "trace_campaigns_max_per_day": 20000,
+    "consecutive_loss_cooldown_path_dependent": true,
+    "sync_degrade": "frozen_deterministic_stress",
+    "q90_action": "off_both_arms",
+    "full_cpp_tick_replay_authority": false,
+    "historical_trade_bar_transport_supported": false,
+    "AWS_exact_receive_time_required_for_offline_development": false,
+    "AWS_exact_receive_time_required_for_live_transport": true
+  },
+  "reward_contract": {
+    "primary": "decision_to_campaign_terminal_value_usdc",
+    "identity": "campaign_terminal_equity_usdc_minus_assignment_equity_usdc",
+    "unit": "USDC_per_campaign_assignment",
+    "pre_assignment_campaign_pnl": "balance_diagnostic_only_not_outcome",
+    "maker_signed_markout_or_spread_double_count": "forbidden",
+    "campaign_terminal_value_assigned_once": true,
+    "queue_latency_and_churn_effect": "embedded in regenerated full-path terminal reward",
+    "USDC_per_day_estimator": "day_level_Horvitz_Thompson_total_policy_difference_under_exact_half_propensity",
+    "secondary": [
+      "USDC_per_day",
+      "BUY and SELL ex-ante lead-direction contrasts",
+      "fill and quote-activity retention",
+      "q10 and CVaR10",
+      "queue reset and replace counts"
+    ]
+  },
+  "scorecard_profile": {
+    "schema_version": "narrowgate_score_profile.v1",
+    "profile_id": "action_alpha_v1",
+    "profile_sha256": "2c1d739632a918f2dd83d0c19143e0ff0cc9aecedfc79a549441d1732bb42fd9"
+  },
+  "family_gates": {
+    "classification": "judgmental engineering and economic gates frozen before formal Development outcomes",
+    "actual_action_change_rate_lcb_min": 0.05,
+    "minimum_activity_retention": 0.85,
+    "side_nonharm_margin_usdc_per_assignment": 0.005,
+    "tail_nonharm_margin_usdc_per_assignment": 0.005,
+    "policy_value_lcb_usdc_per_day_must_exceed": 0.0,
+    "canonical_action_alpha_total_fill_retention": 0.85,
+    "canonical_scorecard_must_pass": true,
+    "ranking_score_only_when_all_hard_gates_pass": true
+  },
+  "leave_one_venue_out_gates": {
+    "classification": "true action-level LOO on one shared common-support denominator",
+    "reward_point_estimate_each_variant_must_exceed": 0.0,
+    "policy_value_point_estimate_each_variant_must_exceed": 0.0,
+    "minimum_fill_retention": 0.85
+  },
+  "grade_b_sensitivity_gates": {
+    "classification": "pre-frozen transport sensitivity; Grade B never enters the primary scorecard",
+    "minimum_reward_point_estimate": 0.0,
+    "minimum_policy_value_point_estimate": 0.0,
+    "minimum_fill_retention": 0.85
+  },
+  "bootstrap": {
+    "cluster": "UTC_day",
+    "draws": 5000,
+    "interval": "two_sided_95_percent",
+    "seed": 2026080108
+  },
+  "fair_price_source_identity": {
+    "cache_universe_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/manifest.json",
+      "sha256": "3e3365028e551233cdc6fc99321449cdcc003cdf6bf68190d405d52794bae41a",
+      "canonical_manifest_sha256": "4df37cbc18e492a2f4971ac70ec42f9a8d8edd60eb54c918cef34a58b3452629"
+    },
+    "cache_variants": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/cache_variants.csv",
+      "sha256": "f787328924b58a4811695bde7d2659edd63956196d7acc4cd41cf13bde77dfc4",
+      "rows": 160
+    },
+    "common_support": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/common_support.csv",
+      "sha256": "767dc60bd600da10146ce344257c91958100ad470f22f6bbe6abc04129a0d025",
+      "common_valid_fraction": 0.896466724537037,
+      "minimum_daily_common_valid_fraction": 0.667349537037037
+    }
+  },
+  "source_identity": {
+    "market_manifest_canonical_sha256": "27787b4aa129563c3d5bf173ef7705e44a511462de0c5989a8b1db7e8b457227",
+    "market_manifest_rows": 1222,
+    "market_manifest_bytes": 11625657192,
+    "formal_full_run_requires_rehash": true,
+    "path_relocation_contract": "legacy frozen MarketData paths are resolved through data_paths.relocate_marketdata_path without changing source bytes"
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "42ab76a77abdfe5bf7150bcd48ece94be1b999b2d2361ecc1d00dd309ee47540",
+    "source_sha256": {
+      "data/normalized_l2_registry.py": "c9865f87cf3a12f3ac7f38c21a5790a02d6b4d6657ecbc0508c308c4946da1b3",
+      "data_paths.py": "82bbad33f69847937cb10a4240e507d3c0ed078ebdfebd73cfb3b985dd3fb86c",
+      "models/audit/experiment_scorecard.py": "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6",
+      "models/backtest_config.py": "863c0007d691423d26236983443e264c148fbecf9fe68788723933db9833573a",
+      "models/backtest_tick.py": "24410cd2698be991012ece5c8b4f91e98273ef9e467d955035ac36d4ae88cda0",
+      "models/book_source_contract.py": "6cc2d0897a18dae1e417728ee522ff9cbb308bd8796ae244395dec51481cfcd9",
+      "models/data_windows.py": "ea0734cdff4db8e4cb6d4a144a7bd1b6f3ddae65745bab2d11f0288642d42899",
+      "models/exchange_book_replay.py": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177",
+      "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "models/tick_data_types.py": "2a5b00fcf59fcbff976163a0a5ef5baf6db0e30877c58fe0a077ce83e353cacc",
+      "research/families/f04_external_market_alpha/audit/cross_venue_causal_fair_price.py": "4b81ebf4b9ccb2a4667455569af547060f10e6babba89c8cc2754b625b5aebe7",
+      "research/families/f09_campaign_action_uplift/audit/cross_venue_fair_center_shift.py": "806c8975b191dab9ece8837f4aad3f12c6ba032f13d5dd56c6610a64a16c2a3a",
+      "research/families/f09_campaign_action_uplift/audit/cross_venue_fair_center_shift_randomized_replay.py": "42ab76a77abdfe5bf7150bcd48ece94be1b999b2d2361ecc1d00dd309ee47540",
+      "research/families/f09_campaign_action_uplift/audit/lineage_randomized_outcome_contract.py": "089c715896a0f5d2633e5c33361c86bea4bc8650153c40080119cf52dcf1fce9",
+      "research/families/f09_campaign_action_uplift/audit/post_cooldown_incremental_inventory_budget_feasibility.py": "cc483b7119bf38e656a90608856ace8a28ff2cc23b136967a7ce7f62fa97ef3f",
+      "research/families/f09_campaign_action_uplift/audit/randomized_action_contrast.py": "379a72d7f120d1342808703752f6a9ccac4c68e7a8e3c1db844b765ab04a9607",
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_full_path_preflight.py": "3709a0e7624f48d44409d168aa6ed5ca83a50fb19fd5e453ae4e1e5edf16f11d",
+      "strategy/campaign_repair.py": "fbb10d21df3c234ddc2bc97518d8048ee2b4b5e07563c1a3a5eed35c8919fb15",
+      "strategy/cross_venue_fair_price.py": "fd72138572382eff3d02f749a1272598a0cf0c0d8b9b80c24d2fd389da45ecaa",
+      "strategy/fill_cooldown.py": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+      "strategy/policy_guards.py": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+      "strategy/quote_core.py": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+      "strategy/replay_controls.py": "c39e34de0f800c1ec011e9e5dd6534db2908ac2e6609e7e88e59a48f1eba8366",
+      "strategy/state_conditioned_quote_policy.py": "219ca178c652986e23d8987f56ad5dcee58ea14ea4eaceff0a1655c2e605f624",
+      "tests/test_cross_venue_fair_center_shift.py": "3e8ca823e3a1a2ae114e09552535b1e9228e2ce5d57c6f37b35153596c9a72a3",
+      "tests/test_cross_venue_fair_center_shift_randomized_replay.py": "7af68d196a6a50dcee170fbf7c0334a8649e671f60f680a500578c4d453e5b81",
+      "tests/test_cross_venue_fair_price.py": "287ee583018126f78db4190d53d7b560c31178578482f2a33fb747a4ad73d789",
+      "tests/test_feature_dag.py": "2db3dcc6295ca3c3c1d4e5fcddcd62b40bf9548368ca488d3be4ee209a3ea22b",
+      "tests/test_lineage_randomized_outcome_contract_v2.py": "96c1453d7eeeb16ff8a3e48377934ec0320a58650e8060969cb6a1088fb8c10d"
+    }
+  },
+  "test_identity": {
+    "junit_xml": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_fair_center_shift_randomized_replay_v1_20260801/inputs/action_contract_tests.xml",
+      "sha256": "8d052bef3dbab845cc5536ef72adc85000e36f1c368b0e5d166d6af38a2f0706"
+    },
+    "tests": 63,
+    "failures": 0,
+    "errors": 0,
+    "required_test_names": [
+      "test_all_venue_grade_a_positive_panel_passes_alpha_scorecard",
+      "test_authoritative_replay_emits_complete_native_v2_lineage_trace",
+      "test_config_freezes_q90_off_wall_clock_and_python_authority",
+      "test_control_keeps_pair_while_candidate_moves_whole_pair",
+      "test_cross_venue_graph_keeps_visibility_and_past_state_before_shadow",
+      "test_estimator_is_past_only_and_requires_basis_and_gain_warmup",
+      "test_full_path_assignment_precedes_path_and_censors_without_fill",
+      "test_full_path_requires_q90_off_and_python_authority",
+      "test_future_action_must_freeze_adjustment_and_day_side_strata",
+      "test_historical_cursor_is_backward_only_and_transport_unsupported",
+      "test_loo_variants_share_one_hash_verified_visibility_mask",
+      "test_panel_requires_all_variants_days_and_exact_half_propensity",
+      "test_projection_moves_whole_pair_and_preserves_gtx_and_spread",
+      "test_side_harm_cannot_be_rescued_by_pooled_positive_reward"
+    ]
+  },
+  "storage_gate": {
+    "absolute_minimum_free_gib": 50.0,
+    "reserve_free_gib": 60.0,
+    "output_multiple": 2.5,
+    "estimated_new_output_gib": 2.0,
+    "external_evidence_root": "${NARROWGATE_DATA_ROOT}/reports",
+    "internal_cache_root": "${NARROWGATE_CACHE_ROOT}"
+  },
+  "permissions": {
+    "development_randomized_replay_allowed": true,
+    "development_outcome_read": true,
+    "randomized_action_identity_created": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "full_cpp_tick_replay_authority": false,
+    "historical_trade_bar_live_transport_authority": false
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": "causal_v12_1s_prediction_overlay_live_postprocess.v2",
+  "identity": "causal_v12_1s_prediction_overlay_live_postprocess_v2",
+  "last_materially_modified": "2026-08-05",
+  "status": "implemented_contract_tested_native_economics_not_run",
+  "postprocess": {
+    "classification_heads": "clip_raw_prediction_to_closed_interval_0_1",
+    "return_heads": "identity",
+    "volatility_heads": "max_raw_prediction_with_zero"
+  },
+  "authority_source": {
+    "path": "strategy/signal.py",
+    "sha256": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f"
+  },
+  "implementation": {
+    "native_binding_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_2026_native_overlay_binding.py",
+    "native_binding_sha256": "3405eecc4275a0cf238b88880624a1dfc3c4b08f33ee91ac8f2d47dd2ef41651",
+    "overlay_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_prediction_overlay.py",
+    "overlay_sha256": "a9b33117fed00f95eceeb576d6ea436ca781d670bf1576b16e7cb15098c11c55"
+  },
+  "verification": {
+    "focused_tests": "49 passed",
+    "ruff": "passed"
+  },
+  "permissions": {
+    "action_authorized": false,
+    "economic_outcomes_read": false,
+    "live_authorized": false,
+    "prediction_authorized": false
+  }
+}

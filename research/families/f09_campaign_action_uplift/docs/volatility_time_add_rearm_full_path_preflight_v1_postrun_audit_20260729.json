@@ -1,0 +1,120 @@
+{
+  "schema_version": "volatility_time_add_rearm_full_path_preflight_postrun_audit.v1",
+  "family_id": "volatility_time_add_rearm_full_path_preflight_v1",
+  "created_at_utc": "2026-07-29T05:10:26Z",
+  "scope": "Independent Development-only mechanics and artifact audit; no reward, PnL, markout, Validation, or holdout",
+  "source_evidence": {
+    "spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+      "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5"
+    },
+    "report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/report.json",
+      "sha256": "d4c47dfcc04dcc29db94e0117612f3af2950a7b18c157aded5aa198f6aa5252a",
+      "payload_sha256": "cdd1bb90ec7603c6950fbd99902df1253f154bbaa23b4fdbaeb1bbfb6a5344c6"
+    },
+    "manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/manifest.json",
+      "sha256": "1e62f81345b731203c73b53bc8b88ce522427193d685097b3a53270075a2b840"
+    },
+    "market_source_manifest_canonical_sha256": "8f375ff7afa566a960f59c98c5496cd4cd01749d94f113306e65130a9c5b9396",
+    "market_source_rows": 1222,
+    "all_manifest_artifact_hashes_verified": true,
+    "report_payload_hash_verified": true,
+    "spec_hash_verified": true,
+    "contract_tests": {
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "359ff011e12e9963ea5d3b745fbaa73962f3526ab77068bbbc20e16a49c6caac"
+    }
+  },
+  "development_support": {
+    "days": 40,
+    "mechanical_episodes": 9317,
+    "BUY": {
+      "episodes": 5490,
+      "unmasked_action_effective_episodes": 3994,
+      "rate": 0.727504553734062,
+      "day_cluster_bootstrap_lcb95": 0.6527946029681826,
+      "day_cluster_bootstrap_ucb95": 0.7925682632929929,
+      "support_days": 40,
+      "earlier_ready": {
+        "episodes": 3711,
+        "unmasked": 3626
+      },
+      "later_ready": {
+        "episodes": 1779,
+        "unmasked": 368
+      },
+      "timing_censored_before_candidate_ready": 964,
+      "regenerated_operational_path_diff_episodes": 5102
+    },
+    "SELL": {
+      "episodes": 3827,
+      "unmasked_action_effective_episodes": 2183,
+      "rate": 0.5704206950614058,
+      "day_cluster_bootstrap_lcb95": 0.4958975608610235,
+      "day_cluster_bootstrap_ucb95": 0.6405218368070966,
+      "support_days": 40,
+      "earlier_ready": {
+        "episodes": 1860,
+        "unmasked": 1771
+      },
+      "later_ready": {
+        "episodes": 1967,
+        "unmasked": 412
+      },
+      "timing_censored_before_candidate_ready": 1335,
+      "regenerated_operational_path_diff_episodes": 3428
+    }
+  },
+  "path_regeneration_gate": {
+    "independently_audited_after_frozen_run": true,
+    "passed": true,
+    "days_with_bidirectional_order_and_fill_path_differences": 40,
+    "minimum_candidate_only_order_outcomes_per_day": 7702,
+    "minimum_control_only_order_outcomes_per_day": 8679,
+    "minimum_candidate_only_fill_events_per_day": 254,
+    "minimum_control_only_fill_events_per_day": 296,
+    "candidate_only_order_outcomes_total": 601501,
+    "control_only_order_outcomes_total": 605111,
+    "candidate_only_fill_events_total": 36926,
+    "control_only_fill_events_total": 36266
+  },
+  "path_dependent_controls": {
+    "BUY_q90": {
+      "control_cancel_request_ack_reentry": [107, 107, 106],
+      "candidate_cancel_request_ack_reentry": [100, 100, 100],
+      "cpp_parity_supported": false
+    },
+    "consecutive_loss_cooldown_triggers": {
+      "control": 939,
+      "candidate": 923
+    },
+    "sync_stress_events": {
+      "control": 160,
+      "candidate": 160,
+      "promotion_evidence": false
+    },
+    "daily_fresh_start_days": 40,
+    "cross_day_state_carried_days": 0
+  },
+  "audit_errata": [
+    "The frozen runner emitted path-difference evidence but did not include candidate_path_must_regenerate_order_and_fill_outcomes in _decision_from_support(); this audit applies that pre-registered hard gate independently and it passes on all 40 days.",
+    "control_reproduced means the frozen explicit-wall/default contract test passed under the bound config identity; the formal run did not add a third per-day legacy-control arm.",
+    "The predecessor 69.8% and 61.6% rates remain mechanical timing diagnostics and are not action-effective rates."
+  ],
+  "permissions": {
+    "reward_or_pnl_read": false,
+    "markout_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "decision": "allow_native_cpp_buy_q90_parity_work_only",
+  "next_requirement": "Implement native C++ snapshot/delta BUY q90 scoring and event-level cancel-request, ACK-race, queue-reset, recovery, and re-entry parity before registering any randomized variance-time action identity."
+}

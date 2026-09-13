@@ -1,0 +1,5006 @@
+{
+  "cache_files_deleted": 0,
+  "cache_files_modified": 0,
+  "cache_root": "${NARROWGATE_CACHE_ROOT}/window_cache",
+  "days": {
+    "2025-08-02": 1,
+    "2025-08-03": 1,
+    "2025-08-04": 1,
+    "2025-08-05": 1,
+    "2025-08-06": 1,
+    "2025-08-07": 1,
+    "2025-08-08": 1,
+    "2025-08-09": 1,
+    "2025-08-10": 1,
+    "2025-08-11": 1,
+    "2025-08-12": 1,
+    "2025-08-13": 1,
+    "2025-08-14": 1,
+    "2025-08-15": 1,
+    "2025-08-16": 1,
+    "2025-08-17": 1,
+    "2025-08-18": 1,
+    "2025-08-19": 1,
+    "2025-08-20": 1,
+    "2025-08-21": 1,
+    "2025-08-24": 1,
+    "2025-08-25": 1,
+    "2025-08-26": 1,
+    "2025-08-27": 1,
+    "2025-09-01": 1,
+    "2025-09-06": 1,
+    "2025-09-07": 1,
+    "2025-09-12": 1,
+    "2025-09-13": 1,
+    "2025-09-14": 1,
+    "2025-09-15": 1,
+    "2025-09-18": 1,
+    "2025-09-19": 1,
+    "2025-09-20": 1,
+    "2025-09-21": 1,
+    "2025-09-22": 1,
+    "2025-09-23": 1,
+    "2025-09-28": 1,
+    "2025-09-29": 1,
+    "2025-09-30": 1,
+    "2025-10-01": 1,
+    "2025-10-06": 1,
+    "2025-10-07": 1,
+    "2025-10-08": 1,
+    "2025-10-09": 1,
+    "2025-10-20": 1,
+    "2025-10-24": 1,
+    "2025-10-27": 1,
+    "2025-10-28": 1,
+    "2025-10-29": 1,
+    "2025-11-02": 1,
+    "2025-11-09": 1,
+    "2025-11-23": 1,
+    "2025-11-27": 1,
+    "2025-11-28": 1,
+    "2025-11-29": 1,
+    "2025-11-30": 1,
+    "2025-12-07": 1,
+    "2025-12-13": 1,
+    "2025-12-14": 1,
+    "2025-12-21": 1,
+    "2025-12-24": 1,
+    "2025-12-25": 1,
+    "2025-12-26": 1,
+    "2025-12-27": 1,
+    "2025-12-28": 1,
+    "2025-12-31": 1,
+    "2026-04-13": 2,
+    "2026-04-17": 5,
+    "2026-04-18": 5,
+    "2026-04-19": 5,
+    "2026-04-20": 6,
+    "2026-04-22": 6,
+    "2026-04-23": 6,
+    "2026-04-30": 1,
+    "2026-05-01": 6,
+    "2026-05-02": 6,
+    "2026-05-03": 6,
+    "2026-05-04": 5,
+    "2026-05-05": 5,
+    "2026-05-06": 4,
+    "2026-05-07": 1,
+    "2026-05-08": 1,
+    "2026-05-11": 1,
+    "2026-05-12": 1,
+    "2026-05-13": 4,
+    "2026-05-15": 2,
+    "2026-05-16": 1,
+    "2026-05-29": 3,
+    "2026-05-30": 3,
+    "2026-05-31": 3,
+    "2026-06-02": 4,
+    "2026-06-03": 5,
+    "2026-06-05": 4,
+    "2026-06-06": 5,
+    "2026-06-07": 5,
+    "2026-06-08": 5,
+    "2026-06-09": 5,
+    "2026-06-10": 4,
+    "2026-06-11": 3,
+    "2026-06-12": 3,
+    "2026-06-13": 4,
+    "2026-06-14": 3,
+    "2026-06-15": 4,
+    "2026-06-16": 4,
+    "2026-06-17": 4,
+    "2026-06-18": 4,
+    "2026-06-19": 4,
+    "2026-06-20": 4,
+    "2026-06-21": 5,
+    "2026-06-22": 4,
+    "2026-06-23": 4,
+    "2026-06-24": 3,
+    "2026-06-25": 3,
+    "2026-06-26": 4,
+    "2026-06-29": 1,
+    "2026-07-03": 1,
+    "2026-07-04": 1,
+    "2026-07-05": 1,
+    "2026-07-06": 1,
+    "2026-07-07": 1,
+    "2026-07-08": 1,
+    "2026-07-09": 1,
+    "2026-07-10": 1,
+    "2026-07-16": 1,
+    "2026-07-17": 1,
+    "2026-07-18": 1,
+    "2026-07-19": 1,
+    "2026-07-20": 1,
+    "2026-07-22": 1,
+    "2026-07-23": 1,
+    "2026-07-25": 1
+  },
+  "files": [
+    {
+      "basename": "btcusdc_2025-08-02_tick_window_v13_ffee228a39e9420b.pkl",
+      "cache_key_prefix": "ffee228a39e9420b",
+      "day": "2025-08-02",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470007567444345,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-02_tick_window_v13_ffee228a39e9420b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1196773651,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-03_tick_window_v13_bc15b05d6bd00586.pkl",
+      "cache_key_prefix": "bc15b05d6bd00586",
+      "day": "2025-08-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470007496260447,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-03_tick_window_v13_bc15b05d6bd00586.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1185416509,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-04_tick_window_v13_aab8b9d04b92152a.pkl",
+      "cache_key_prefix": "aab8b9d04b92152a",
+      "day": "2025-08-04",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470008902721973,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-04_tick_window_v13_aab8b9d04b92152a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1185411464,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-05_tick_window_v13_3df8d5ee46a65b3b.pkl",
+      "cache_key_prefix": "3df8d5ee46a65b3b",
+      "day": "2025-08-05",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470009051029964,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-05_tick_window_v13_3df8d5ee46a65b3b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1189178583,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-06_tick_window_v13_3e827b701f5b9ec0.pkl",
+      "cache_key_prefix": "3e827b701f5b9ec0",
+      "day": "2025-08-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470010144311333,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-06_tick_window_v13_3e827b701f5b9ec0.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1185672141,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-07_tick_window_v13_e8227014aa0419ce.pkl",
+      "cache_key_prefix": "e8227014aa0419ce",
+      "day": "2025-08-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470010398025569,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-07_tick_window_v13_e8227014aa0419ce.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1187187541,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-08_tick_window_v13_66772daa3879dfe5.pkl",
+      "cache_key_prefix": "66772daa3879dfe5",
+      "day": "2025-08-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470011654436483,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-08_tick_window_v13_66772daa3879dfe5.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1187476510,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-09_tick_window_v13_83e7b36b21a7ee92.pkl",
+      "cache_key_prefix": "83e7b36b21a7ee92",
+      "day": "2025-08-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470090175563025,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-09_tick_window_v13_83e7b36b21a7ee92.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1182415856,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-10_tick_window_v13_a6c60c9a0dc47739.pkl",
+      "cache_key_prefix": "a6c60c9a0dc47739",
+      "day": "2025-08-10",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470092220048759,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-10_tick_window_v13_a6c60c9a0dc47739.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1187243302,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-11_tick_window_v13_ee5af11de74da6da.pkl",
+      "cache_key_prefix": "ee5af11de74da6da",
+      "day": "2025-08-11",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470093201745228,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-11_tick_window_v13_ee5af11de74da6da.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1202477044,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-12_tick_window_v13_7afe1449d9e8de56.pkl",
+      "cache_key_prefix": "7afe1449d9e8de56",
+      "day": "2025-08-12",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470094186667066,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-12_tick_window_v13_7afe1449d9e8de56.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1199858653,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-13_tick_window_v13_5ed352e5a1e0c9d8.pkl",
+      "cache_key_prefix": "5ed352e5a1e0c9d8",
+      "day": "2025-08-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470095258780478,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-13_tick_window_v13_5ed352e5a1e0c9d8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1204340283,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-14_tick_window_v13_435a296384ee0dd7.pkl",
+      "cache_key_prefix": "435a296384ee0dd7",
+      "day": "2025-08-14",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470096427742695,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-14_tick_window_v13_435a296384ee0dd7.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1210742229,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-15_tick_window_v13_9c2c408e9885e53d.pkl",
+      "cache_key_prefix": "9c2c408e9885e53d",
+      "day": "2025-08-15",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470097327215040,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-15_tick_window_v13_9c2c408e9885e53d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1198660964,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-16_tick_window_v13_fab273bc4038ea9a.pkl",
+      "cache_key_prefix": "fab273bc4038ea9a",
+      "day": "2025-08-16",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470097931172191,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-16_tick_window_v13_fab273bc4038ea9a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1182494529,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-17_tick_window_v13_8871c9775c15fef4.pkl",
+      "cache_key_prefix": "8871c9775c15fef4",
+      "day": "2025-08-17",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470098773161444,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-17_tick_window_v13_8871c9775c15fef4.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1180038935,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-18_tick_window_v13_d7d59a52245c77f2.pkl",
+      "cache_key_prefix": "d7d59a52245c77f2",
+      "day": "2025-08-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470099700012401,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-18_tick_window_v13_d7d59a52245c77f2.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1196898432,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-19_tick_window_v13_e50bd6e1daed27c8.pkl",
+      "cache_key_prefix": "e50bd6e1daed27c8",
+      "day": "2025-08-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470100660265705,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-19_tick_window_v13_e50bd6e1daed27c8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1200643811,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-20_tick_window_v13_ab0a0406f3dd9fc5.pkl",
+      "cache_key_prefix": "ab0a0406f3dd9fc5",
+      "day": "2025-08-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470101575449810,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-20_tick_window_v13_ab0a0406f3dd9fc5.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1196394199,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-21_tick_window_v13_c37de5d315567fed.pkl",
+      "cache_key_prefix": "c37de5d315567fed",
+      "day": "2025-08-21",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470102436594274,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-21_tick_window_v13_c37de5d315567fed.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1192950967,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-24_tick_window_v13_012708951a6f0df8.pkl",
+      "cache_key_prefix": "012708951a6f0df8",
+      "day": "2025-08-24",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470103428806889,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-24_tick_window_v13_012708951a6f0df8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1185095478,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-25_tick_window_v13_24da3d23a21ea819.pkl",
+      "cache_key_prefix": "24da3d23a21ea819",
+      "day": "2025-08-25",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470104552957904,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-25_tick_window_v13_24da3d23a21ea819.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1202186428,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-26_tick_window_v13_0b8916d6068e4137.pkl",
+      "cache_key_prefix": "0b8916d6068e4137",
+      "day": "2025-08-26",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470105503066146,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-26_tick_window_v13_0b8916d6068e4137.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1202263779,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-08-27_tick_window_v13_9c4a627711f7aa78.pkl",
+      "cache_key_prefix": "9c4a627711f7aa78",
+      "day": "2025-08-27",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470106394126008,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-08-27_tick_window_v13_9c4a627711f7aa78.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1197073987,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-01_tick_window_v13_5bae104017909a09.pkl",
+      "cache_key_prefix": "5bae104017909a09",
+      "day": "2025-09-01",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470107706787683,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-01_tick_window_v13_5bae104017909a09.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1181427000,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-06_tick_window_v13_34fc35de1c6580fa.pkl",
+      "cache_key_prefix": "34fc35de1c6580fa",
+      "day": "2025-09-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470108163840257,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-06_tick_window_v13_34fc35de1c6580fa.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1170952439,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-07_tick_window_v13_1bb232f646719c89.pkl",
+      "cache_key_prefix": "1bb232f646719c89",
+      "day": "2025-09-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470108982418932,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-07_tick_window_v13_1bb232f646719c89.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1160886476,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-12_tick_window_v13_9c54163daee29d8d.pkl",
+      "cache_key_prefix": "9c54163daee29d8d",
+      "day": "2025-09-12",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470110172229189,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-12_tick_window_v13_9c54163daee29d8d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1190028842,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-13_tick_window_v13_c01a243a89167521.pkl",
+      "cache_key_prefix": "c01a243a89167521",
+      "day": "2025-09-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470110859388881,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-13_tick_window_v13_c01a243a89167521.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1178091402,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-14_tick_window_v13_9ede831cd84402a7.pkl",
+      "cache_key_prefix": "9ede831cd84402a7",
+      "day": "2025-09-14",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470111377589791,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-14_tick_window_v13_9ede831cd84402a7.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1170622016,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-15_tick_window_v13_9bc7317e46c2d926.pkl",
+      "cache_key_prefix": "9bc7317e46c2d926",
+      "day": "2025-09-15",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470112468686081,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-15_tick_window_v13_9bc7317e46c2d926.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1183936444,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-18_tick_window_v13_8f092c64ba516d30.pkl",
+      "cache_key_prefix": "8f092c64ba516d30",
+      "day": "2025-09-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470113301603144,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-18_tick_window_v13_8f092c64ba516d30.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1190626089,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-19_tick_window_v13_4063063a1694a138.pkl",
+      "cache_key_prefix": "4063063a1694a138",
+      "day": "2025-09-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470114067494592,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-19_tick_window_v13_4063063a1694a138.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1182812763,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-20_tick_window_v13_fcab21b574c26bd8.pkl",
+      "cache_key_prefix": "fcab21b574c26bd8",
+      "day": "2025-09-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470114490070986,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-20_tick_window_v13_fcab21b574c26bd8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1154128818,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-21_tick_window_v13_8bd05ba22db96cce.pkl",
+      "cache_key_prefix": "8bd05ba22db96cce",
+      "day": "2025-09-21",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470115322872216,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-21_tick_window_v13_8bd05ba22db96cce.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1136920000,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-22_tick_window_v13_1c68a22cf0fa513b.pkl",
+      "cache_key_prefix": "1c68a22cf0fa513b",
+      "day": "2025-09-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470116261010398,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-22_tick_window_v13_1c68a22cf0fa513b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1172823326,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-23_tick_window_v13_81d71d9a41345cc3.pkl",
+      "cache_key_prefix": "81d71d9a41345cc3",
+      "day": "2025-09-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470117097915786,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-23_tick_window_v13_81d71d9a41345cc3.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1187023389,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-28_tick_window_v13_57a200ce7c0cf565.pkl",
+      "cache_key_prefix": "57a200ce7c0cf565",
+      "day": "2025-09-28",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470117762772524,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-28_tick_window_v13_57a200ce7c0cf565.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1136449433,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-29_tick_window_v13_42c913793b507727.pkl",
+      "cache_key_prefix": "42c913793b507727",
+      "day": "2025-09-29",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470118695797925,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-29_tick_window_v13_42c913793b507727.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1164936936,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-09-30_tick_window_v13_c40225bc48357e2d.pkl",
+      "cache_key_prefix": "c40225bc48357e2d",
+      "day": "2025-09-30",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470119583885418,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-09-30_tick_window_v13_c40225bc48357e2d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1190681105,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-01_tick_window_v13_6834352dd8f0645b.pkl",
+      "cache_key_prefix": "6834352dd8f0645b",
+      "day": "2025-10-01",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470120428818958,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-01_tick_window_v13_6834352dd8f0645b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1193319572,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-06_tick_window_v13_bd535e129463e8dc.pkl",
+      "cache_key_prefix": "bd535e129463e8dc",
+      "day": "2025-10-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470121953707493,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-06_tick_window_v13_bd535e129463e8dc.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1204400699,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-07_tick_window_v13_3748233377d09499.pkl",
+      "cache_key_prefix": "3748233377d09499",
+      "day": "2025-10-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470122894489547,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-07_tick_window_v13_3748233377d09499.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1210609015,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-08_tick_window_v13_f3256454a1e76778.pkl",
+      "cache_key_prefix": "f3256454a1e76778",
+      "day": "2025-10-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470123809120944,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-08_tick_window_v13_f3256454a1e76778.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1204929622,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-09_tick_window_v13_78eaf6dac2534c60.pkl",
+      "cache_key_prefix": "78eaf6dac2534c60",
+      "day": "2025-10-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470124648205994,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-09_tick_window_v13_78eaf6dac2534c60.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1197339310,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-20_tick_window_v13_1b36166eb30e4364.pkl",
+      "cache_key_prefix": "1b36166eb30e4364",
+      "day": "2025-10-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470126082697214,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-20_tick_window_v13_1b36166eb30e4364.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1200091104,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-24_tick_window_v13_2acd0756217380d4.pkl",
+      "cache_key_prefix": "2acd0756217380d4",
+      "day": "2025-10-24",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470126974480490,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-24_tick_window_v13_2acd0756217380d4.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1200343212,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-27_tick_window_v13_2e67709879b9eca0.pkl",
+      "cache_key_prefix": "2e67709879b9eca0",
+      "day": "2025-10-27",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470128249049743,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-27_tick_window_v13_2e67709879b9eca0.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1197255073,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-28_tick_window_v13_cf1e7b80f7a797f7.pkl",
+      "cache_key_prefix": "cf1e7b80f7a797f7",
+      "day": "2025-10-28",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470129234885621,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-28_tick_window_v13_cf1e7b80f7a797f7.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1207083758,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-10-29_tick_window_v13_c33e89f5fca53334.pkl",
+      "cache_key_prefix": "c33e89f5fca53334",
+      "day": "2025-10-29",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470130117656709,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-10-29_tick_window_v13_c33e89f5fca53334.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1207918235,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-02_tick_window_v13_108d6ad997c6e3a2.pkl",
+      "cache_key_prefix": "108d6ad997c6e3a2",
+      "day": "2025-11-02",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470131241637849,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-02_tick_window_v13_108d6ad997c6e3a2.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1194931648,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-09_tick_window_v13_15f909f049bd7443.pkl",
+      "cache_key_prefix": "15f909f049bd7443",
+      "day": "2025-11-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470132758382027,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-09_tick_window_v13_15f909f049bd7443.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1209141390,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-23_tick_window_v13_daefe84a0f5219b1.pkl",
+      "cache_key_prefix": "daefe84a0f5219b1",
+      "day": "2025-11-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470134032556695,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-23_tick_window_v13_daefe84a0f5219b1.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1217773280,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-27_tick_window_v13_e4e5ed2c7b2167f4.pkl",
+      "cache_key_prefix": "e4e5ed2c7b2167f4",
+      "day": "2025-11-27",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470135203392658,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-27_tick_window_v13_e4e5ed2c7b2167f4.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1207527794,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-28_tick_window_v13_8acab8764117d056.pkl",
+      "cache_key_prefix": "8acab8764117d056",
+      "day": "2025-11-28",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470136107526784,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-28_tick_window_v13_8acab8764117d056.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1213036597,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-29_tick_window_v13_ee9c6bddbed936aa.pkl",
+      "cache_key_prefix": "ee9c6bddbed936aa",
+      "day": "2025-11-29",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470136714212223,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-29_tick_window_v13_ee9c6bddbed936aa.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1196671550,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-11-30_tick_window_v13_67913c39617a1dd0.pkl",
+      "cache_key_prefix": "67913c39617a1dd0",
+      "day": "2025-11-30",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470137928105430,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-11-30_tick_window_v13_67913c39617a1dd0.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1195239802,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-07_tick_window_v13_42c3c093a844d30b.pkl",
+      "cache_key_prefix": "42c3c093a844d30b",
+      "day": "2025-12-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470138842459953,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-07_tick_window_v13_42c3c093a844d30b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1205860010,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-13_tick_window_v13_b52d01c81f3346d7.pkl",
+      "cache_key_prefix": "b52d01c81f3346d7",
+      "day": "2025-12-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470139954776201,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-13_tick_window_v13_b52d01c81f3346d7.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1175403018,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-14_tick_window_v13_a931ec8c3f9c2752.pkl",
+      "cache_key_prefix": "a931ec8c3f9c2752",
+      "day": "2025-12-14",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470140504125797,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-14_tick_window_v13_a931ec8c3f9c2752.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1184247735,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-21_tick_window_v13_0e092ee0eb8d0123.pkl",
+      "cache_key_prefix": "0e092ee0eb8d0123",
+      "day": "2025-12-21",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470141767875945,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-21_tick_window_v13_0e092ee0eb8d0123.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1164710613,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-24_tick_window_v13_60fc3868d9698bb9.pkl",
+      "cache_key_prefix": "60fc3868d9698bb9",
+      "day": "2025-12-24",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470142666979665,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-24_tick_window_v13_60fc3868d9698bb9.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1199559262,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-25_tick_window_v13_e019a6e988b147ef.pkl",
+      "cache_key_prefix": "e019a6e988b147ef",
+      "day": "2025-12-25",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470143382652508,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-25_tick_window_v13_e019a6e988b147ef.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1183080467,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-26_tick_window_v13_2b297c03e10d56e8.pkl",
+      "cache_key_prefix": "2b297c03e10d56e8",
+      "day": "2025-12-26",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470144771888486,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-26_tick_window_v13_2b297c03e10d56e8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1197522353,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-27_tick_window_v13_5d09c0a9b282f0b6.pkl",
+      "cache_key_prefix": "5d09c0a9b282f0b6",
+      "day": "2025-12-27",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470145222029491,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-27_tick_window_v13_5d09c0a9b282f0b6.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1168091780,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-28_tick_window_v13_387f5b67e30b4511.pkl",
+      "cache_key_prefix": "387f5b67e30b4511",
+      "day": "2025-12-28",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470146168676823,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-28_tick_window_v13_387f5b67e30b4511.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1149667152,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2025-12-31_tick_window_v13_582fcdc85c74235f.pkl",
+      "cache_key_prefix": "582fcdc85c74235f",
+      "day": "2025-12-31",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785470147233314084,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2025-12-31_tick_window_v13_582fcdc85c74235f.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1197136499,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-13_tick_window_v10_ce0898c9c191b375.pkl",
+      "cache_key_prefix": "ce0898c9c191b375",
+      "day": "2026-04-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785200110363317963,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-13_tick_window_v10_ce0898c9c191b375.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 629398870,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-13_tick_window_v13_01684d63e39bc93d.pkl",
+      "cache_key_prefix": "01684d63e39bc93d",
+      "day": "2026-04-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471692917156990,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-13_tick_window_v13_01684d63e39bc93d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1198470230,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-17_tick_window_v10_d2fca42635b3aa83.pkl",
+      "cache_key_prefix": "d2fca42635b3aa83",
+      "day": "2026-04-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785205822658922361,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-17_tick_window_v10_d2fca42635b3aa83.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1217389370,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-17_tick_window_v12_1acf0698c50e3ba0.pkl",
+      "cache_key_prefix": "1acf0698c50e3ba0",
+      "day": "2026-04-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785304360923293867,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-17_tick_window_v12_1acf0698c50e3ba0.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1204149607,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-17_tick_window_v12_b1522e84afebf489.pkl",
+      "cache_key_prefix": "b1522e84afebf489",
+      "day": "2026-04-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274607702822162,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-17_tick_window_v12_b1522e84afebf489.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 634583252,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-17_tick_window_v12_fef1efbe04d95018.pkl",
+      "cache_key_prefix": "fef1efbe04d95018",
+      "day": "2026-04-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785450193363937510,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-17_tick_window_v12_fef1efbe04d95018.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1204149607,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-17_tick_window_v13_4d256347f4b3f2e6.pkl",
+      "cache_key_prefix": "4d256347f4b3f2e6",
+      "day": "2026-04-17",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785531695399057361,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-17_tick_window_v13_4d256347f4b3f2e6.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1204149812,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-18_tick_window_v10_6f6d99c6573be094.pkl",
+      "cache_key_prefix": "6f6d99c6573be094",
+      "day": "2026-04-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785205820999084435,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-18_tick_window_v10_6f6d99c6573be094.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1196717075,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-18_tick_window_v12_1c6e122092dff419.pkl",
+      "cache_key_prefix": "1c6e122092dff419",
+      "day": "2026-04-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274890498620877,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-18_tick_window_v12_1c6e122092dff419.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 608821069,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-18_tick_window_v12_8f7bc878c55db8ed.pkl",
+      "cache_key_prefix": "8f7bc878c55db8ed",
+      "day": "2026-04-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785453217537852667,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-18_tick_window_v12_8f7bc878c55db8ed.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1183477312,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-18_tick_window_v12_df449823c15b6b5c.pkl",
+      "cache_key_prefix": "df449823c15b6b5c",
+      "day": "2026-04-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312484313888755,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-18_tick_window_v12_df449823c15b6b5c.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1183477312,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-18_tick_window_v13_89e0f46b784419a8.pkl",
+      "cache_key_prefix": "89e0f46b784419a8",
+      "day": "2026-04-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785532602381808813,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-18_tick_window_v13_89e0f46b784419a8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1183477517,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-19_tick_window_v10_e0d8118b1a7e2b5e.pkl",
+      "cache_key_prefix": "e0d8118b1a7e2b5e",
+      "day": "2026-04-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785205821552216329,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-19_tick_window_v10_e0d8118b1a7e2b5e.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1198177115,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-19_tick_window_v12_731f446de42fe700.pkl",
+      "cache_key_prefix": "731f446de42fe700",
+      "day": "2026-04-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785453667908373924,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-19_tick_window_v12_731f446de42fe700.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1184937352,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-19_tick_window_v12_bc89b5df7c1ddc1f.pkl",
+      "cache_key_prefix": "bc89b5df7c1ddc1f",
+      "day": "2026-04-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274891525615204,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-19_tick_window_v12_bc89b5df7c1ddc1f.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 617011781,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-19_tick_window_v12_c24b1a2a36e97aa8.pkl",
+      "cache_key_prefix": "c24b1a2a36e97aa8",
+      "day": "2026-04-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312485596242525,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-19_tick_window_v12_c24b1a2a36e97aa8.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1184937352,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-19_tick_window_v13_46affab2e7c64428.pkl",
+      "cache_key_prefix": "46affab2e7c64428",
+      "day": "2026-04-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785532602787231563,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-19_tick_window_v13_46affab2e7c64428.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1184937557,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v10_8281af97099f0013.pkl",
+      "cache_key_prefix": "8281af97099f0013",
+      "day": "2026-04-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206269060990477,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v10_8281af97099f0013.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1209494439,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v12_02c953fb91e60772.pkl",
+      "cache_key_prefix": "02c953fb91e60772",
+      "day": "2026-04-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785452714174685227,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v12_02c953fb91e60772.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1196254676,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v12_76fc9d0dd60b31b3.pkl",
+      "cache_key_prefix": "76fc9d0dd60b31b3",
+      "day": "2026-04-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312487421822313,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v12_76fc9d0dd60b31b3.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1196254676,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v12_ee0cc7a987a2c133.pkl",
+      "cache_key_prefix": "ee0cc7a987a2c133",
+      "day": "2026-04-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274892326486202,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v12_ee0cc7a987a2c133.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 627250353,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v13_0686f89cb6735b1a.pkl",
+      "cache_key_prefix": "0686f89cb6735b1a",
+      "day": "2026-04-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785532805829994553,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v13_0686f89cb6735b1a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1196254881,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-20_tick_window_v13_b2fc11dfa51aea65.pkl",
+      "cache_key_prefix": "b2fc11dfa51aea65",
+      "day": "2026-04-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471692968150667,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-20_tick_window_v13_b2fc11dfa51aea65.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1207971430,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v10_6820f23953bb8937.pkl",
+      "cache_key_prefix": "6820f23953bb8937",
+      "day": "2026-04-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206287705741224,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v10_6820f23953bb8937.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1227121830,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v12_436769fb8bdb4868.pkl",
+      "cache_key_prefix": "436769fb8bdb4868",
+      "day": "2026-04-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785454181232276208,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v12_436769fb8bdb4868.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1213882067,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v12_d6929dd387d48bcf.pkl",
+      "cache_key_prefix": "d6929dd387d48bcf",
+      "day": "2026-04-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312488368503825,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v12_d6929dd387d48bcf.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1213882067,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v12_db0530bfc6df538a.pkl",
+      "cache_key_prefix": "db0530bfc6df538a",
+      "day": "2026-04-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274893805431692,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v12_db0530bfc6df538a.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 645476992,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v13_b150a3d7bf0430a7.pkl",
+      "cache_key_prefix": "b150a3d7bf0430a7",
+      "day": "2026-04-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785532808366035190,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v13_b150a3d7bf0430a7.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1213882272,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-22_tick_window_v13_ea09cb5d6f0a35aa.pkl",
+      "cache_key_prefix": "ea09cb5d6f0a35aa",
+      "day": "2026-04-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471694801847756,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-22_tick_window_v13_ea09cb5d6f0a35aa.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1225598821,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v10_8df4cbd979190f69.pkl",
+      "cache_key_prefix": "8df4cbd979190f69",
+      "day": "2026-04-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206331191192825,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v10_8df4cbd979190f69.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1227231684,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v12_aaafe4788a17d800.pkl",
+      "cache_key_prefix": "aaafe4788a17d800",
+      "day": "2026-04-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785454363331746553,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v12_aaafe4788a17d800.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1213991921,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v12_e5af2ed5e761b244.pkl",
+      "cache_key_prefix": "e5af2ed5e761b244",
+      "day": "2026-04-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312487842248845,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v12_e5af2ed5e761b244.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1213991921,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v12_f00bf77ff77710f8.pkl",
+      "cache_key_prefix": "f00bf77ff77710f8",
+      "day": "2026-04-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274893176175035,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v12_f00bf77ff77710f8.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 637023966,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v13_6af2863d73b03d95.pkl",
+      "cache_key_prefix": "6af2863d73b03d95",
+      "day": "2026-04-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533109783345908,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v13_6af2863d73b03d95.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1213992126,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-23_tick_window_v13_bf247fbceb9a2559.pkl",
+      "cache_key_prefix": "bf247fbceb9a2559",
+      "day": "2026-04-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471695947574265,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-23_tick_window_v13_bf247fbceb9a2559.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1225710030,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-04-30_tick_window_v10_0e1a18c0ee1e94e1.pkl",
+      "cache_key_prefix": "0e1a18c0ee1e94e1",
+      "day": "2026-04-30",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206387440654022,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-04-30_tick_window_v10_0e1a18c0ee1e94e1.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 623502333,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v10_61611d537e0da5bd.pkl",
+      "cache_key_prefix": "61611d537e0da5bd",
+      "day": "2026-05-01",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206895535800280,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v10_61611d537e0da5bd.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1215616443,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v12_026a130808f46bb9.pkl",
+      "cache_key_prefix": "026a130808f46bb9",
+      "day": "2026-05-01",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785454810554595521,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v12_026a130808f46bb9.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1202376680,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v12_3cc7e74e934df79e.pkl",
+      "cache_key_prefix": "3cc7e74e934df79e",
+      "day": "2026-05-01",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312487092010902,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v12_3cc7e74e934df79e.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1202376680,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v12_69218b4fcf860cff.pkl",
+      "cache_key_prefix": "69218b4fcf860cff",
+      "day": "2026-05-01",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274905678244756,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v12_69218b4fcf860cff.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 630441445,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v13_35f9b12361384951.pkl",
+      "cache_key_prefix": "35f9b12361384951",
+      "day": "2026-05-01",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471697199487203,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v13_35f9b12361384951.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1214093434,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-01_tick_window_v13_5a8cb2841f865613.pkl",
+      "cache_key_prefix": "5a8cb2841f865613",
+      "day": "2026-05-01",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533144485407897,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-01_tick_window_v13_5a8cb2841f865613.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1202376885,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v10_ec03510155ee7dad.pkl",
+      "cache_key_prefix": "ec03510155ee7dad",
+      "day": "2026-05-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785206975620533859,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v10_ec03510155ee7dad.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1188235077,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v12_3d99bb15bee7a731.pkl",
+      "cache_key_prefix": "3d99bb15bee7a731",
+      "day": "2026-05-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785454975937723095,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v12_3d99bb15bee7a731.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1174995314,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v12_e86f0c7bc141486e.pkl",
+      "cache_key_prefix": "e86f0c7bc141486e",
+      "day": "2026-05-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274908484148700,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v12_e86f0c7bc141486e.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 598116799,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v12_ece24cdd57564b12.pkl",
+      "cache_key_prefix": "ece24cdd57564b12",
+      "day": "2026-05-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312483834011172,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v12_ece24cdd57564b12.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1174995314,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v13_5d256cec2c9831d6.pkl",
+      "cache_key_prefix": "5d256cec2c9831d6",
+      "day": "2026-05-02",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471697650358982,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v13_5d256cec2c9831d6.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1186713423,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-02_tick_window_v13_7e4da52915577f6f.pkl",
+      "cache_key_prefix": "7e4da52915577f6f",
+      "day": "2026-05-02",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533199624518712,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-02_tick_window_v13_7e4da52915577f6f.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1174995519,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v10_2dc05737887617b9.pkl",
+      "cache_key_prefix": "2dc05737887617b9",
+      "day": "2026-05-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207024448721781,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v10_2dc05737887617b9.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1177577395,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v12_0f1780797bc0efcc.pkl",
+      "cache_key_prefix": "0f1780797bc0efcc",
+      "day": "2026-05-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274910991481565,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v12_0f1780797bc0efcc.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 603313677,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v12_6fb23c84e8adec49.pkl",
+      "cache_key_prefix": "6fb23c84e8adec49",
+      "day": "2026-05-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312679230653146,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v12_6fb23c84e8adec49.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1164337632,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v12_f3bebebe1d5f2c83.pkl",
+      "cache_key_prefix": "f3bebebe1d5f2c83",
+      "day": "2026-05-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785455333584597689,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v12_f3bebebe1d5f2c83.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1164337632,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v13_1883eba94e972f00.pkl",
+      "cache_key_prefix": "1883eba94e972f00",
+      "day": "2026-05-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533445143276452,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v13_1883eba94e972f00.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1164337837,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-03_tick_window_v13_af6cf4e49400c545.pkl",
+      "cache_key_prefix": "af6cf4e49400c545",
+      "day": "2026-05-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471698777400326,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-03_tick_window_v13_af6cf4e49400c545.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1176055741,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-04_tick_window_v10_46b6bd57029b6dcf.pkl",
+      "cache_key_prefix": "46b6bd57029b6dcf",
+      "day": "2026-05-04",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207032703564795,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-04_tick_window_v10_46b6bd57029b6dcf.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1220416667,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-04_tick_window_v12_0097fbd39ddc10e3.pkl",
+      "cache_key_prefix": "0097fbd39ddc10e3",
+      "day": "2026-05-04",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785455404977114493,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-04_tick_window_v12_0097fbd39ddc10e3.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1207176904,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-04_tick_window_v12_adb0f60d3917b2c2.pkl",
+      "cache_key_prefix": "adb0f60d3917b2c2",
+      "day": "2026-05-04",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274916870331187,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-04_tick_window_v12_adb0f60d3917b2c2.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 646504293,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-04_tick_window_v13_011603575fc36ddd.pkl",
+      "cache_key_prefix": "011603575fc36ddd",
+      "day": "2026-05-04",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533455988775824,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-04_tick_window_v13_011603575fc36ddd.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1207177109,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-04_tick_window_v13_1fd9840e1c243ef0.pkl",
+      "cache_key_prefix": "1fd9840e1c243ef0",
+      "day": "2026-05-04",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471699950267232,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-04_tick_window_v13_1fd9840e1c243ef0.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218895013,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-05_tick_window_v10_6cfd2919ac2573f5.pkl",
+      "cache_key_prefix": "6cfd2919ac2573f5",
+      "day": "2026-05-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207479788707989,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-05_tick_window_v10_6cfd2919ac2573f5.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1234041834,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-05_tick_window_v12_cec801cd47edd6bd.pkl",
+      "cache_key_prefix": "cec801cd47edd6bd",
+      "day": "2026-05-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274918981769670,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-05_tick_window_v12_cec801cd47edd6bd.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 647206724,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-05_tick_window_v12_e8861c814229a8a9.pkl",
+      "cache_key_prefix": "e8861c814229a8a9",
+      "day": "2026-05-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785455759031434305,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-05_tick_window_v12_e8861c814229a8a9.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1220802071,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-05_tick_window_v13_76265ec0ac783cbd.pkl",
+      "cache_key_prefix": "76265ec0ac783cbd",
+      "day": "2026-05-05",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533464723611526,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-05_tick_window_v13_76265ec0ac783cbd.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1220802276,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-05_tick_window_v13_9b0a70efc35cb448.pkl",
+      "cache_key_prefix": "9b0a70efc35cb448",
+      "day": "2026-05-05",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471700943485834,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-05_tick_window_v13_9b0a70efc35cb448.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1232520180,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-06_tick_window_v10_abbfc7abe4658f61.pkl",
+      "cache_key_prefix": "abbfc7abe4658f61",
+      "day": "2026-05-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207503530379855,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-06_tick_window_v10_abbfc7abe4658f61.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1227566466,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-06_tick_window_v12_8d768cf5a24eb293.pkl",
+      "cache_key_prefix": "8d768cf5a24eb293",
+      "day": "2026-05-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274918802347396,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-06_tick_window_v12_8d768cf5a24eb293.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 639962892,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-06_tick_window_v12_fa0a5abaece3dbb7.pkl",
+      "cache_key_prefix": "fa0a5abaece3dbb7",
+      "day": "2026-05-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785456015840110203,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-06_tick_window_v12_fa0a5abaece3dbb7.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214328234,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-06_tick_window_v13_520c0a5d8d3c40cd.pkl",
+      "cache_key_prefix": "520c0a5d8d3c40cd",
+      "day": "2026-05-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533680761373758,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-06_tick_window_v13_520c0a5d8d3c40cd.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1214328439,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-07_tick_window_v11_dec55be83a7dc7f8.pkl",
+      "cache_key_prefix": "dec55be83a7dc7f8",
+      "day": "2026-05-07",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785209135389015505,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-07_tick_window_v11_dec55be83a7dc7f8.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214594561,
+      "symbol": "BTCUSDC",
+      "version": 11
+    },
+    {
+      "basename": "btcusdc_2026-05-08_tick_window_v13_df35ffb901a4c191.pkl",
+      "cache_key_prefix": "df35ffb901a4c191",
+      "day": "2026-05-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471702603591396,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-08_tick_window_v13_df35ffb901a4c191.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1223788039,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-11_tick_window_v13_15898a30b4c4f73d.pkl",
+      "cache_key_prefix": "15898a30b4c4f73d",
+      "day": "2026-05-11",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471704100224658,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-11_tick_window_v13_15898a30b4c4f73d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1222751910,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-12_tick_window_v10_9bd4762e9ae553c8.pkl",
+      "cache_key_prefix": "9bd4762e9ae553c8",
+      "day": "2026-05-12",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207549617892927,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-12_tick_window_v10_9bd4762e9ae553c8.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 644529260,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-13_tick_window_v10_341a02dd6ecfdecb.pkl",
+      "cache_key_prefix": "341a02dd6ecfdecb",
+      "day": "2026-05-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207713211698979,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-13_tick_window_v10_341a02dd6ecfdecb.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1242204177,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-13_tick_window_v12_384bf6f4d52e33b1.pkl",
+      "cache_key_prefix": "384bf6f4d52e33b1",
+      "day": "2026-05-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274929937889891,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-13_tick_window_v12_384bf6f4d52e33b1.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 648348683,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-13_tick_window_v12_b760a622fc564c12.pkl",
+      "cache_key_prefix": "b760a622fc564c12",
+      "day": "2026-05-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785456432659978892,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-13_tick_window_v12_b760a622fc564c12.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1228965945,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-13_tick_window_v13_d4c41c611b5b18de.pkl",
+      "cache_key_prefix": "d4c41c611b5b18de",
+      "day": "2026-05-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533797148493334,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-13_tick_window_v13_d4c41c611b5b18de.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1228966150,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-15_tick_window_v10_bce01eaf98dc9515.pkl",
+      "cache_key_prefix": "bce01eaf98dc9515",
+      "day": "2026-05-15",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785207977049496292,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-15_tick_window_v10_bce01eaf98dc9515.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 641137206,
+      "symbol": "BTCUSDC",
+      "version": 10
+    },
+    {
+      "basename": "btcusdc_2026-05-15_tick_window_v13_daa32ca3b4cb1746.pkl",
+      "cache_key_prefix": "daa32ca3b4cb1746",
+      "day": "2026-05-15",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471706138607580,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-15_tick_window_v13_daa32ca3b4cb1746.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1235025318,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-16_tick_window_v13_1d239634bb7a7ce2.pkl",
+      "cache_key_prefix": "1d239634bb7a7ce2",
+      "day": "2026-05-16",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471706994742532,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-16_tick_window_v13_1d239634bb7a7ce2.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1212995945,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-29_tick_window_v12_0b6a7c2cb91e369f.pkl",
+      "cache_key_prefix": "0b6a7c2cb91e369f",
+      "day": "2026-05-29",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785456693908456258,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-29_tick_window_v12_0b6a7c2cb91e369f.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1190018031,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-29_tick_window_v12_7a09804f6abbfe1c.pkl",
+      "cache_key_prefix": "7a09804f6abbfe1c",
+      "day": "2026-05-29",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274928637046625,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-29_tick_window_v12_7a09804f6abbfe1c.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 624100076,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-29_tick_window_v13_34fdfe23a77b9c03.pkl",
+      "cache_key_prefix": "34fdfe23a77b9c03",
+      "day": "2026-05-29",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785533830038405389,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-29_tick_window_v13_34fdfe23a77b9c03.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1190018236,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-30_tick_window_v12_b5bdb1f3f4020e10.pkl",
+      "cache_key_prefix": "b5bdb1f3f4020e10",
+      "day": "2026-05-30",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785457101458229260,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-30_tick_window_v12_b5bdb1f3f4020e10.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1175345869,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-30_tick_window_v12_fd738acb56a8e293.pkl",
+      "cache_key_prefix": "fd738acb56a8e293",
+      "day": "2026-05-30",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274929762930715,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-30_tick_window_v12_fd738acb56a8e293.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 603805642,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-30_tick_window_v13_39310394480f5b56.pkl",
+      "cache_key_prefix": "39310394480f5b56",
+      "day": "2026-05-30",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534069839624794,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-30_tick_window_v13_39310394480f5b56.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1175346074,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-05-31_tick_window_v12_393bc8c17b7e95ea.pkl",
+      "cache_key_prefix": "393bc8c17b7e95ea",
+      "day": "2026-05-31",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785457267605929897,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-31_tick_window_v12_393bc8c17b7e95ea.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1171334897,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-31_tick_window_v12_4db8b46e63cb7bea.pkl",
+      "cache_key_prefix": "4db8b46e63cb7bea",
+      "day": "2026-05-31",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274940389424083,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-31_tick_window_v12_4db8b46e63cb7bea.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 603343843,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-05-31_tick_window_v13_012f94b6a664c7de.pkl",
+      "cache_key_prefix": "012f94b6a664c7de",
+      "day": "2026-05-31",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534196851765317,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-05-31_tick_window_v13_012f94b6a664c7de.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1171335102,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-02_tick_window_v12_4fd8e978e7745fc6.pkl",
+      "cache_key_prefix": "4fd8e978e7745fc6",
+      "day": "2026-06-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274945566265971,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-02_tick_window_v12_4fd8e978e7745fc6.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 649242628,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-02_tick_window_v12_c1c2073d52590879.pkl",
+      "cache_key_prefix": "c1c2073d52590879",
+      "day": "2026-06-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312717994421154,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-02_tick_window_v12_c1c2073d52590879.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214835879,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-02_tick_window_v12_fdb4bb8b12f70aa0.pkl",
+      "cache_key_prefix": "fdb4bb8b12f70aa0",
+      "day": "2026-06-02",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785457524021882790,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-02_tick_window_v12_fdb4bb8b12f70aa0.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214835879,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-02_tick_window_v13_651ab74a80976816.pkl",
+      "cache_key_prefix": "651ab74a80976816",
+      "day": "2026-06-02",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534205936130508,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-02_tick_window_v13_651ab74a80976816.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1214836084,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-03_tick_window_v12_235b920f0114245d.pkl",
+      "cache_key_prefix": "235b920f0114245d",
+      "day": "2026-06-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274947094860483,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-03_tick_window_v12_235b920f0114245d.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 652434234,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-03_tick_window_v12_6667ff84a740b71a.pkl",
+      "cache_key_prefix": "6667ff84a740b71a",
+      "day": "2026-06-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312715222661397,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-03_tick_window_v12_6667ff84a740b71a.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1228345357,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-03_tick_window_v12_ed2f4af044488e65.pkl",
+      "cache_key_prefix": "ed2f4af044488e65",
+      "day": "2026-06-03",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785457650359547779,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-03_tick_window_v12_ed2f4af044488e65.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1228345357,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-03_tick_window_v13_170d971b15454fba.pkl",
+      "cache_key_prefix": "170d971b15454fba",
+      "day": "2026-06-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471709515647453,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-03_tick_window_v13_170d971b15454fba.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1240062111,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-03_tick_window_v13_e9c8e12b44b6b0f2.pkl",
+      "cache_key_prefix": "e9c8e12b44b6b0f2",
+      "day": "2026-06-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534307514769039,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-03_tick_window_v13_e9c8e12b44b6b0f2.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1228345562,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-05_tick_window_v12_1cee0be2cf793c09.pkl",
+      "cache_key_prefix": "1cee0be2cf793c09",
+      "day": "2026-06-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312722815746496,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-05_tick_window_v12_1cee0be2cf793c09.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1261615277,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-05_tick_window_v12_2b57c5ffe838e673.pkl",
+      "cache_key_prefix": "2b57c5ffe838e673",
+      "day": "2026-06-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785458154569258207,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-05_tick_window_v12_2b57c5ffe838e673.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1261615277,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-05_tick_window_v12_a1bc8612134b4a0e.pkl",
+      "cache_key_prefix": "a1bc8612134b4a0e",
+      "day": "2026-06-05",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274959066181655,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-05_tick_window_v12_a1bc8612134b4a0e.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 690615722,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-05_tick_window_v13_146b06e870de2996.pkl",
+      "cache_key_prefix": "146b06e870de2996",
+      "day": "2026-06-05",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534402118131500,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-05_tick_window_v13_146b06e870de2996.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1261615482,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-06_tick_window_v12_0eb5cf289683c708.pkl",
+      "cache_key_prefix": "0eb5cf289683c708",
+      "day": "2026-06-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785458391774881846,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-06_tick_window_v12_0eb5cf289683c708.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1223367957,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-06_tick_window_v12_5bdda1dacb4ec980.pkl",
+      "cache_key_prefix": "5bdda1dacb4ec980",
+      "day": "2026-06-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312717578885007,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-06_tick_window_v12_5bdda1dacb4ec980.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1223367957,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-06_tick_window_v12_e69169fb3d6237fd.pkl",
+      "cache_key_prefix": "e69169fb3d6237fd",
+      "day": "2026-06-06",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274952808827721,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-06_tick_window_v12_e69169fb3d6237fd.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 645706498,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-06_tick_window_v13_25976a27f53d01a6.pkl",
+      "cache_key_prefix": "25976a27f53d01a6",
+      "day": "2026-06-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534554172659754,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-06_tick_window_v13_25976a27f53d01a6.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1223368162,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-06_tick_window_v13_c0ed28e1e7edcb04.pkl",
+      "cache_key_prefix": "c0ed28e1e7edcb04",
+      "day": "2026-06-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471710634576565,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-06_tick_window_v13_c0ed28e1e7edcb04.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1235084711,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-07_tick_window_v12_1992e55c4967a648.pkl",
+      "cache_key_prefix": "1992e55c4967a648",
+      "day": "2026-06-07",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785459399972607750,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-07_tick_window_v12_1992e55c4967a648.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1224919425,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-07_tick_window_v12_2882be041e67a7a0.pkl",
+      "cache_key_prefix": "2882be041e67a7a0",
+      "day": "2026-06-07",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274956858717962,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-07_tick_window_v12_2882be041e67a7a0.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 645528462,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-07_tick_window_v12_84ef9155bf81a083.pkl",
+      "cache_key_prefix": "84ef9155bf81a083",
+      "day": "2026-06-07",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312718576720843,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-07_tick_window_v12_84ef9155bf81a083.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1224919425,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-07_tick_window_v13_2f5d9fb32d5b98fe.pkl",
+      "cache_key_prefix": "2f5d9fb32d5b98fe",
+      "day": "2026-06-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471711900250262,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-07_tick_window_v13_2f5d9fb32d5b98fe.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1236637534,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-07_tick_window_v13_a16a7b7660e58a5a.pkl",
+      "cache_key_prefix": "a16a7b7660e58a5a",
+      "day": "2026-06-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785534716263609810,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-07_tick_window_v13_a16a7b7660e58a5a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1224919630,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-08_tick_window_v12_2cf9cd6409012b5a.pkl",
+      "cache_key_prefix": "2cf9cd6409012b5a",
+      "day": "2026-06-08",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274964680270528,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-08_tick_window_v12_2cf9cd6409012b5a.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 650479320,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-08_tick_window_v12_33e6efbaec921c89.pkl",
+      "cache_key_prefix": "33e6efbaec921c89",
+      "day": "2026-06-08",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312718514385744,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-08_tick_window_v12_33e6efbaec921c89.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1230278395,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-08_tick_window_v12_d61b4eb8596edbfe.pkl",
+      "cache_key_prefix": "d61b4eb8596edbfe",
+      "day": "2026-06-08",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785459404554673705,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-08_tick_window_v12_d61b4eb8596edbfe.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1230278395,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-08_tick_window_v13_8e93d79979a23f4b.pkl",
+      "cache_key_prefix": "8e93d79979a23f4b",
+      "day": "2026-06-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535038539636822,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-08_tick_window_v13_8e93d79979a23f4b.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1230278600,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-08_tick_window_v13_e4ea18381e1f4ff4.pkl",
+      "cache_key_prefix": "e4ea18381e1f4ff4",
+      "day": "2026-06-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471713540604224,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-08_tick_window_v13_e4ea18381e1f4ff4.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1241996504,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-09_tick_window_v12_06e6a71eaf51dd86.pkl",
+      "cache_key_prefix": "06e6a71eaf51dd86",
+      "day": "2026-06-09",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274974919403594,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-09_tick_window_v12_06e6a71eaf51dd86.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 655925847,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-09_tick_window_v12_1c9d7a7b5c9ca470.pkl",
+      "cache_key_prefix": "1c9d7a7b5c9ca470",
+      "day": "2026-06-09",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785460233673987475,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-09_tick_window_v12_1c9d7a7b5c9ca470.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1237667146,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-09_tick_window_v12_32f81859b7935f71.pkl",
+      "cache_key_prefix": "32f81859b7935f71",
+      "day": "2026-06-09",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312720622545503,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-09_tick_window_v12_32f81859b7935f71.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1237667146,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-09_tick_window_v13_c6cf552bcd4fee7c.pkl",
+      "cache_key_prefix": "c6cf552bcd4fee7c",
+      "day": "2026-06-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535101461755504,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-09_tick_window_v13_c6cf552bcd4fee7c.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1237667351,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-09_tick_window_v13_c9cb6a0965050341.pkl",
+      "cache_key_prefix": "c9cb6a0965050341",
+      "day": "2026-06-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471714653306908,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-09_tick_window_v13_c9cb6a0965050341.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1249385255,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-10_tick_window_v12_61b24b51df8a87e4.pkl",
+      "cache_key_prefix": "61b24b51df8a87e4",
+      "day": "2026-06-10",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274977298267176,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-10_tick_window_v12_61b24b51df8a87e4.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 658495194,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-10_tick_window_v12_8daf13e7cd6bb7f0.pkl",
+      "cache_key_prefix": "8daf13e7cd6bb7f0",
+      "day": "2026-06-10",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785460303432118687,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-10_tick_window_v12_8daf13e7cd6bb7f0.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1239893837,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-10_tick_window_v12_c5c5024408856eb6.pkl",
+      "cache_key_prefix": "c5c5024408856eb6",
+      "day": "2026-06-10",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785312724984821601,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-10_tick_window_v12_c5c5024408856eb6.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1239893837,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-10_tick_window_v13_7e2244050d6fcd65.pkl",
+      "cache_key_prefix": "7e2244050d6fcd65",
+      "day": "2026-06-10",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535426417939560,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-10_tick_window_v13_7e2244050d6fcd65.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1239894042,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-11_tick_window_v12_2518cad4705cee9f.pkl",
+      "cache_key_prefix": "2518cad4705cee9f",
+      "day": "2026-06-11",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274980639415892,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-11_tick_window_v12_2518cad4705cee9f.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 645868944,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-11_tick_window_v12_4ab8933b7e68c3f1.pkl",
+      "cache_key_prefix": "4ab8933b7e68c3f1",
+      "day": "2026-06-11",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785461246776020603,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-11_tick_window_v12_4ab8933b7e68c3f1.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1227312339,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-11_tick_window_v13_0c6c394da578dc19.pkl",
+      "cache_key_prefix": "0c6c394da578dc19",
+      "day": "2026-06-11",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535519191194325,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-11_tick_window_v13_0c6c394da578dc19.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1227312544,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-12_tick_window_v12_ba79c0f8c2dea23a.pkl",
+      "cache_key_prefix": "ba79c0f8c2dea23a",
+      "day": "2026-06-12",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274982892094009,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-12_tick_window_v12_ba79c0f8c2dea23a.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 634685128,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-12_tick_window_v12_ecdbf2a663065f03.pkl",
+      "cache_key_prefix": "ecdbf2a663065f03",
+      "day": "2026-06-12",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785461310878811159,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-12_tick_window_v12_ecdbf2a663065f03.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214317707,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-12_tick_window_v13_41c4cc47935cfce8.pkl",
+      "cache_key_prefix": "41c4cc47935cfce8",
+      "day": "2026-06-12",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535551993989556,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-12_tick_window_v13_41c4cc47935cfce8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1214317912,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-13_tick_window_v12_497b90f0c38b12cc.pkl",
+      "cache_key_prefix": "497b90f0c38b12cc",
+      "day": "2026-06-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274989379761250,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-13_tick_window_v12_497b90f0c38b12cc.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 611757866,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-13_tick_window_v12_a53cc59831e12094.pkl",
+      "cache_key_prefix": "a53cc59831e12094",
+      "day": "2026-06-13",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785462042116714051,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-13_tick_window_v12_a53cc59831e12094.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1188773229,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-13_tick_window_v13_9ca52118523d588f.pkl",
+      "cache_key_prefix": "9ca52118523d588f",
+      "day": "2026-06-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471715710328893,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-13_tick_window_v13_9ca52118523d588f.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1200489983,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-13_tick_window_v13_c610b3b3a5fa9e19.pkl",
+      "cache_key_prefix": "c610b3b3a5fa9e19",
+      "day": "2026-06-13",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535860569234712,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-13_tick_window_v13_c610b3b3a5fa9e19.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1188773434,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-14_tick_window_v12_033f1426906a57fa.pkl",
+      "cache_key_prefix": "033f1426906a57fa",
+      "day": "2026-06-14",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785462047796549801,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-14_tick_window_v12_033f1426906a57fa.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1189055636,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-14_tick_window_v12_7b7951a1717b9710.pkl",
+      "cache_key_prefix": "7b7951a1717b9710",
+      "day": "2026-06-14",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274989965821766,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-14_tick_window_v12_7b7951a1717b9710.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 617568289,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-14_tick_window_v13_e218a69a7ee420aa.pkl",
+      "cache_key_prefix": "e218a69a7ee420aa",
+      "day": "2026-06-14",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535921504832261,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-14_tick_window_v13_e218a69a7ee420aa.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1189055841,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-15_tick_window_v12_07272790478ffbe6.pkl",
+      "cache_key_prefix": "07272790478ffbe6",
+      "day": "2026-06-15",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785462557340185093,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-15_tick_window_v12_07272790478ffbe6.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1203518976,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-15_tick_window_v12_d4945d59ae8d6c33.pkl",
+      "cache_key_prefix": "d4945d59ae8d6c33",
+      "day": "2026-06-15",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275002782687707,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-15_tick_window_v12_d4945d59ae8d6c33.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 631503933,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-15_tick_window_v13_165e8c11ee7656db.pkl",
+      "cache_key_prefix": "165e8c11ee7656db",
+      "day": "2026-06-15",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471716937357251,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-15_tick_window_v13_165e8c11ee7656db.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1215235730,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-15_tick_window_v13_470acdd33619b6d3.pkl",
+      "cache_key_prefix": "470acdd33619b6d3",
+      "day": "2026-06-15",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785535925099862641,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-15_tick_window_v13_470acdd33619b6d3.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1203519181,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-16_tick_window_v12_8449f267581435ee.pkl",
+      "cache_key_prefix": "8449f267581435ee",
+      "day": "2026-06-16",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275005994711364,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-16_tick_window_v12_8449f267581435ee.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 627877496,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-16_tick_window_v12_e913ca5e1493cc81.pkl",
+      "cache_key_prefix": "e913ca5e1493cc81",
+      "day": "2026-06-16",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785462603995330789,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-16_tick_window_v12_e913ca5e1493cc81.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1207052646,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-16_tick_window_v13_8ad846f1046f339f.pkl",
+      "cache_key_prefix": "8ad846f1046f339f",
+      "day": "2026-06-16",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536170488531737,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-16_tick_window_v13_8ad846f1046f339f.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1207052851,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-16_tick_window_v13_c1fa7409cc166be3.pkl",
+      "cache_key_prefix": "c1fa7409cc166be3",
+      "day": "2026-06-16",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471717840917142,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-16_tick_window_v13_c1fa7409cc166be3.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218769400,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-17_tick_window_v12_5e129d3bcb029e8f.pkl",
+      "cache_key_prefix": "5e129d3bcb029e8f",
+      "day": "2026-06-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785463205779690929,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-17_tick_window_v12_5e129d3bcb029e8f.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1218172245,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-17_tick_window_v12_d0d4fdcfd04cc9a6.pkl",
+      "cache_key_prefix": "d0d4fdcfd04cc9a6",
+      "day": "2026-06-17",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275008747450789,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-17_tick_window_v12_d0d4fdcfd04cc9a6.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 640102562,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-17_tick_window_v13_1d601f8440bbd5cd.pkl",
+      "cache_key_prefix": "1d601f8440bbd5cd",
+      "day": "2026-06-17",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536204917438843,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-17_tick_window_v13_1d601f8440bbd5cd.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1218172450,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-17_tick_window_v13_3975e82ae7162b24.pkl",
+      "cache_key_prefix": "3975e82ae7162b24",
+      "day": "2026-06-17",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471718912661245,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-17_tick_window_v13_3975e82ae7162b24.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1229890354,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-18_tick_window_v12_2897a0be5a2df70a.pkl",
+      "cache_key_prefix": "2897a0be5a2df70a",
+      "day": "2026-06-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785463265190551482,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-18_tick_window_v12_2897a0be5a2df70a.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1214016736,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-18_tick_window_v12_a2d29b86d7e1dd06.pkl",
+      "cache_key_prefix": "a2d29b86d7e1dd06",
+      "day": "2026-06-18",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275009421293218,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-18_tick_window_v12_a2d29b86d7e1dd06.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 635315021,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-18_tick_window_v13_62eb3b4f699df1ad.pkl",
+      "cache_key_prefix": "62eb3b4f699df1ad",
+      "day": "2026-06-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471720241880755,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-18_tick_window_v13_62eb3b4f699df1ad.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1225734845,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-18_tick_window_v13_d7342e67b38b1d9a.pkl",
+      "cache_key_prefix": "d7342e67b38b1d9a",
+      "day": "2026-06-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536253091478896,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-18_tick_window_v13_d7342e67b38b1d9a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1214016941,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-19_tick_window_v12_332989b159a2ae3b.pkl",
+      "cache_key_prefix": "332989b159a2ae3b",
+      "day": "2026-06-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785463986762353577,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-19_tick_window_v12_332989b159a2ae3b.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1203818062,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-19_tick_window_v12_bc1e903111a67994.pkl",
+      "cache_key_prefix": "bc1e903111a67994",
+      "day": "2026-06-19",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275012474115060,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-19_tick_window_v12_bc1e903111a67994.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 625225115,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-19_tick_window_v13_8de049ba6fd6d53d.pkl",
+      "cache_key_prefix": "8de049ba6fd6d53d",
+      "day": "2026-06-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536460086995485,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-19_tick_window_v13_8de049ba6fd6d53d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1203818267,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-19_tick_window_v13_a4484d7f410a9160.pkl",
+      "cache_key_prefix": "a4484d7f410a9160",
+      "day": "2026-06-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471724022457979,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-19_tick_window_v13_a4484d7f410a9160.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1215536171,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-20_tick_window_v12_1657e5ba68bf572d.pkl",
+      "cache_key_prefix": "1657e5ba68bf572d",
+      "day": "2026-06-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785464069528142648,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-20_tick_window_v12_1657e5ba68bf572d.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1194760264,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-20_tick_window_v12_9bef84f511730cd9.pkl",
+      "cache_key_prefix": "9bef84f511730cd9",
+      "day": "2026-06-20",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275012703894798,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-20_tick_window_v12_9bef84f511730cd9.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 618222309,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-20_tick_window_v13_86a4ea16e98cf77d.pkl",
+      "cache_key_prefix": "86a4ea16e98cf77d",
+      "day": "2026-06-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536514689756367,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-20_tick_window_v13_86a4ea16e98cf77d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1194760469,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-20_tick_window_v13_aa404e0742ae0a77.pkl",
+      "cache_key_prefix": "aa404e0742ae0a77",
+      "day": "2026-06-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471726526392096,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-20_tick_window_v13_aa404e0742ae0a77.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1206478373,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-21_tick_window_v12_1cb254a3d1f9bd57.pkl",
+      "cache_key_prefix": "1cb254a3d1f9bd57",
+      "day": "2026-06-21",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785305367609271927,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-21_tick_window_v12_1cb254a3d1f9bd57.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1188272722,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-21_tick_window_v12_266e3742ec187d9c.pkl",
+      "cache_key_prefix": "266e3742ec187d9c",
+      "day": "2026-06-21",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275027308772673,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-21_tick_window_v12_266e3742ec187d9c.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 614376031,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-21_tick_window_v12_f19af0e35ed0ae28.pkl",
+      "cache_key_prefix": "f19af0e35ed0ae28",
+      "day": "2026-06-21",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785464726396967406,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-21_tick_window_v12_f19af0e35ed0ae28.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1188272722,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-21_tick_window_v13_9f896b96b29f555e.pkl",
+      "cache_key_prefix": "9f896b96b29f555e",
+      "day": "2026-06-21",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471730336062744,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-21_tick_window_v13_9f896b96b29f555e.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1199990831,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-21_tick_window_v13_d2d43f648fdcd03a.pkl",
+      "cache_key_prefix": "d2d43f648fdcd03a",
+      "day": "2026-06-21",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536564321517980,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-21_tick_window_v13_d2d43f648fdcd03a.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1188272927,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-22_tick_window_v12_0b3bfa6150f0382d.pkl",
+      "cache_key_prefix": "0b3bfa6150f0382d",
+      "day": "2026-06-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275032287917822,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-22_tick_window_v12_0b3bfa6150f0382d.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 634786717,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-22_tick_window_v12_44717b5a180b4890.pkl",
+      "cache_key_prefix": "44717b5a180b4890",
+      "day": "2026-06-22",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785464733167497436,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-22_tick_window_v12_44717b5a180b4890.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1207147792,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-22_tick_window_v13_9a09ca80d62b182c.pkl",
+      "cache_key_prefix": "9a09ca80d62b182c",
+      "day": "2026-06-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536720327982699,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-22_tick_window_v13_9a09ca80d62b182c.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1207147997,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-22_tick_window_v13_a4915647281b51d3.pkl",
+      "cache_key_prefix": "a4915647281b51d3",
+      "day": "2026-06-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471733102615791,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-22_tick_window_v13_a4915647281b51d3.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218865901,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-23_tick_window_v12_2f674b02dea300e5.pkl",
+      "cache_key_prefix": "2f674b02dea300e5",
+      "day": "2026-06-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275036319958421,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-23_tick_window_v12_2f674b02dea300e5.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 633395312,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-23_tick_window_v12_82307116b28d74d3.pkl",
+      "cache_key_prefix": "82307116b28d74d3",
+      "day": "2026-06-23",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785465284551407643,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-23_tick_window_v12_82307116b28d74d3.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1211447427,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-23_tick_window_v13_229413592b74c6d5.pkl",
+      "cache_key_prefix": "229413592b74c6d5",
+      "day": "2026-06-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471735422577608,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-23_tick_window_v13_229413592b74c6d5.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1223165536,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-23_tick_window_v13_d86648fe5d00b730.pkl",
+      "cache_key_prefix": "d86648fe5d00b730",
+      "day": "2026-06-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536740959762691,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-23_tick_window_v13_d86648fe5d00b730.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1211447632,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-24_tick_window_v12_90e44cac7ee40f79.pkl",
+      "cache_key_prefix": "90e44cac7ee40f79",
+      "day": "2026-06-24",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275038694523692,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-24_tick_window_v12_90e44cac7ee40f79.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 644274708,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-24_tick_window_v12_fac907f302daa772.pkl",
+      "cache_key_prefix": "fac907f302daa772",
+      "day": "2026-06-24",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785465401857369353,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-24_tick_window_v12_fac907f302daa772.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1222922759,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-24_tick_window_v13_6e94625d7b5ebbf2.pkl",
+      "cache_key_prefix": "6e94625d7b5ebbf2",
+      "day": "2026-06-24",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536778680738326,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-24_tick_window_v13_6e94625d7b5ebbf2.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1222922964,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-25_tick_window_v12_50466186b829a1ed.pkl",
+      "cache_key_prefix": "50466186b829a1ed",
+      "day": "2026-06-25",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785465961492749895,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-25_tick_window_v12_50466186b829a1ed.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1228828504,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-25_tick_window_v12_d83ee23486e2dddd.pkl",
+      "cache_key_prefix": "d83ee23486e2dddd",
+      "day": "2026-06-25",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785275041162770565,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-25_tick_window_v12_d83ee23486e2dddd.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 651591605,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-25_tick_window_v13_fcfa0691164b1e03.pkl",
+      "cache_key_prefix": "fcfa0691164b1e03",
+      "day": "2026-06-25",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785536978658513019,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-25_tick_window_v13_fcfa0691164b1e03.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1228828709,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-26_tick_window_v12_03c4d4d3541c0316.pkl",
+      "cache_key_prefix": "03c4d4d3541c0316",
+      "day": "2026-06-26",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785274838170118129,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-26_tick_window_v12_03c4d4d3541c0316.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 659370635,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-26_tick_window_v12_35f1c486446fbf0b.pkl",
+      "cache_key_prefix": "35f1c486446fbf0b",
+      "day": "2026-06-26",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785466181714396656,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-26_tick_window_v12_35f1c486446fbf0b.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1238774953,
+      "symbol": "BTCUSDC",
+      "version": 12
+    },
+    {
+      "basename": "btcusdc_2026-06-26_tick_window_v13_0184f31888c08574.pkl",
+      "cache_key_prefix": "0184f31888c08574",
+      "day": "2026-06-26",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785537019111632473,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-26_tick_window_v13_0184f31888c08574.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_20260803/development/input_cache_manifest.json"
+        }
+      ],
+      "size_bytes": 1238775158,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-26_tick_window_v13_94645d5e36ccba18.pkl",
+      "cache_key_prefix": "94645d5e36ccba18",
+      "day": "2026-06-26",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471740737671782,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-26_tick_window_v13_94645d5e36ccba18.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1250490352,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-06-29_tick_window_v13_5ba20dae1573281f.pkl",
+      "cache_key_prefix": "5ba20dae1573281f",
+      "day": "2026-06-29",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471743309392542,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-06-29_tick_window_v13_5ba20dae1573281f.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1235801978,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-03_tick_window_v13_18ed28bf49bae2a8.pkl",
+      "cache_key_prefix": "18ed28bf49bae2a8",
+      "day": "2026-07-03",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471747109193466,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-03_tick_window_v13_18ed28bf49bae2a8.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1214728665,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-04_tick_window_v13_e5d2b45fe4dbb109.pkl",
+      "cache_key_prefix": "e5d2b45fe4dbb109",
+      "day": "2026-07-04",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471751180236566,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-04_tick_window_v13_e5d2b45fe4dbb109.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1204229986,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-05_tick_window_v13_19155cc1abb2f735.pkl",
+      "cache_key_prefix": "19155cc1abb2f735",
+      "day": "2026-07-05",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471753497815763,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-05_tick_window_v13_19155cc1abb2f735.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1201908344,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-06_tick_window_v13_9bcd4c9de1dcacdb.pkl",
+      "cache_key_prefix": "9bcd4c9de1dcacdb",
+      "day": "2026-07-06",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471757940430415,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-06_tick_window_v13_9bcd4c9de1dcacdb.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1227444375,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-07_tick_window_v13_6ea6568dd5957355.pkl",
+      "cache_key_prefix": "6ea6568dd5957355",
+      "day": "2026-07-07",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471759148469532,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-07_tick_window_v13_6ea6568dd5957355.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1231128795,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-08_tick_window_v13_facedc737286c481.pkl",
+      "cache_key_prefix": "facedc737286c481",
+      "day": "2026-07-08",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471766901094556,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-08_tick_window_v13_facedc737286c481.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1231191133,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-09_tick_window_v13_c707a3423290ff34.pkl",
+      "cache_key_prefix": "c707a3423290ff34",
+      "day": "2026-07-09",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471766893828614,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-09_tick_window_v13_c707a3423290ff34.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1228620528,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-10_tick_window_v13_d902ee394689cf97.pkl",
+      "cache_key_prefix": "d902ee394689cf97",
+      "day": "2026-07-10",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471773239294918,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-10_tick_window_v13_d902ee394689cf97.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218370540,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-16_tick_window_v13_f70243b2617cbbba.pkl",
+      "cache_key_prefix": "f70243b2617cbbba",
+      "day": "2026-07-16",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471773739221468,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-16_tick_window_v13_f70243b2617cbbba.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1209540355,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-17_tick_window_v13_f3628939a9820c41.pkl",
+      "cache_key_prefix": "f3628939a9820c41",
+      "day": "2026-07-17",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471781135734714,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-17_tick_window_v13_f3628939a9820c41.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218962570,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-18_tick_window_v13_15579f7e0e6531cb.pkl",
+      "cache_key_prefix": "15579f7e0e6531cb",
+      "day": "2026-07-18",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471781108691692,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-18_tick_window_v13_15579f7e0e6531cb.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1198620889,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-19_tick_window_v13_9149af1ad1aaa1c1.pkl",
+      "cache_key_prefix": "9149af1ad1aaa1c1",
+      "day": "2026-07-19",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471785108943480,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-19_tick_window_v13_9149af1ad1aaa1c1.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1196387377,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-20_tick_window_v13_b5dd2029725bff3d.pkl",
+      "cache_key_prefix": "b5dd2029725bff3d",
+      "day": "2026-07-20",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471788575735918,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-20_tick_window_v13_b5dd2029725bff3d.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1218021741,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-22_tick_window_v13_c358be57081a0477.pkl",
+      "cache_key_prefix": "c358be57081a0477",
+      "day": "2026-07-22",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471792502381321,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-22_tick_window_v13_c358be57081a0477.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1215957701,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-23_tick_window_v13_0220566073939c4e.pkl",
+      "cache_key_prefix": "0220566073939c4e",
+      "day": "2026-07-23",
+      "frozen_reference": true,
+      "governance_status": "preserve_frozen_reference",
+      "mtime_ns": 1785471794064671983,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-23_tick_window_v13_0220566073939c4e.pkl",
+      "reference_classes": [
+        "frozen_or_evidence"
+      ],
+      "references": [
+        {
+          "class": "frozen_or_evidence",
+          "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_native_45d_causal_v11_ml_v13/manifest.json"
+        }
+      ],
+      "size_bytes": 1219270187,
+      "symbol": "BTCUSDC",
+      "version": 13
+    },
+    {
+      "basename": "btcusdc_2026-07-25_tick_window_v13_e4c6e8b75c9e885e.pkl",
+      "cache_key_prefix": "e4c6e8b75c9e885e",
+      "day": "2026-07-25",
+      "frozen_reference": false,
+      "governance_status": "unreferenced_candidate_requires_user_approval",
+      "mtime_ns": 1785520605832414414,
+      "path": "${NARROWGATE_CACHE_ROOT}/window_cache/btcusdc_2026-07-25_tick_window_v13_e4c6e8b75c9e885e.pkl",
+      "reference_classes": [],
+      "references": [],
+      "size_bytes": 1172379999,
+      "symbol": "BTCUSDC",
+      "version": 13
+    }
+  ],
+  "mode": "read_only_zero_write",
+  "pickle_payloads_opened": 0,
+  "schema_version": "narrowgate.legacy_window_cache_reference_audit.v1",
+  "summary": {
+    "days_with_variants": 42,
+    "distinct_days": 132,
+    "extra_same_day_variants": 137,
+    "file_count": 269,
+    "frozen_or_evidence_referenced_files": 152,
+    "max_variants_per_day": 6,
+    "size_bytes": 299148299756,
+    "text_referenced_files": 152
+  },
+  "versions": {
+    "v10": {
+      "distinct_days": 17,
+      "file_count": 17,
+      "size_bytes": 18320357241
+    },
+    "v11": {
+      "distinct_days": 1,
+      "file_count": 1,
+      "size_bytes": 1214594561
+    },
+    "v12": {
+      "distinct_days": 40,
+      "file_count": 98,
+      "size_bytes": 95542749401
+    },
+    "v13": {
+      "distinct_days": 129,
+      "file_count": 153,
+      "size_bytes": 184070598553
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_exploratory_oof_v1",
+  "date": "2026-08-10",
+  "research_stage": "development_exploratory_candidate_outer_oof",
+  "source_identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "source_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.json",
+    "sha256": "9f8c5abce4817b029d943648a46ab115d6ce7ac7f758b1326a48d75fa446e8ce"
+  },
+  "source_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_execution_training_amendment_v3_20260810.json",
+    "sha256": "1eddb16c9ab70d50bcdcdfc2757d905fd97b1f4fe5348f19280a7f2dc5b512d7"
+  },
+  "source_admission": {
+    "root": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810",
+    "manifest_path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810/admission_manifest.json",
+    "manifest_sha256": "a203efbf985848b7b24486a9e36ac18286e22dc22c057ad73b2d23f561c775cb",
+    "opportunities": 8600,
+    "arm_rows": 68800,
+    "joint_censored_opportunities": 171,
+    "training_eligible_opportunities": 8429
+  },
+  "frozen_search_space": {
+    "ema_pairs": 45,
+    "atomic_predicates": 360,
+    "duration_arms_per_side": 8,
+    "max_literals_per_clause": [1, 2, 3, 4, 6],
+    "max_clauses": [2, 4, 8],
+    "beam_width": 256,
+    "outer_folds": 4,
+    "inner_folds_per_outer": 3,
+    "bootstrap_samples": 500,
+    "confidence": 0.95
+  },
+  "selection_semantics": {
+    "exploratory_candidate_policy": "best_support_valid_nonbaseline_rule_must_enter_untouched_outer_oof_even_if_inner_or_refit_lcb_is_nonpositive",
+    "all_control_is_exploratory_complexity_candidate": false,
+    "pre_outer_oof_positive_lcb_required": false,
+    "deployable_policy_decision": "apply_side_specific_outer_oof_lcb_and_risk_gates_only_after_outer_oof_scoring",
+    "outer_outcomes_used_for_discovery_or_selection": false
+  },
+  "parallel_execution_semantics": {
+    "unit": "side_x_outer_fold",
+    "independent_units": 8,
+    "maximum_local_workers": 4,
+    "worker_limit_reason": "24_GB_host_memory_with_observed_3_to_3p6_GB_peak_per_fold",
+    "inner_fold_and_outer_refit_order_within_unit": "serial_deterministic",
+    "fold_checkpoint": "atomic_hash_bound_and_resumable",
+    "progress_manifest": "updated_after_each_completed_fold",
+    "chronological_evidence_changed_by_parallel_schedule": false
+  },
+  "crossover_missing_semantics": {
+    "development_opportunities_with_any_missing_crossover": 0,
+    "not_last_cross_favorable_requires_observed_cross": true,
+    "prospective_missing_state": "fail_closed"
+  },
+  "censoring_semantics": {
+    "whole_opportunity_censor_exclusion": true,
+    "arm_level_complete_case_filtering": false,
+    "censor_time_marks_are_terminal_labels": false,
+    "successor_requires_explicit_denominator_reporting": true
+  },
+  "implementation_bindings": {
+    "learner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_rule_learner.py",
+      "sha256": "2db8b7d80dbe3604a97b519b2a5f06ec9c95fc70b89d72e8da6b41613b770cf9"
+    },
+    "runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_exploratory_oof.py",
+      "sha256": "9a8c5977c0c94eeccda21be40e1e96b335aa485ed899a603b2070c28c0d30a2e"
+    },
+    "training_loader": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_training.py",
+      "sha256": "d25c2bf564d9eb73da07cf624bb49ebb48ccc63a3b2be5e47c108c5553f206e6",
+      "archive_relocation_semantics": "explicit_original_execution_root_to_hash_verified_orico_admission_root_only"
+    },
+    "python_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "12b7e9c58e9dd2528124258500ad9b60743058898d3b85a4c11d7657c538b387"
+    },
+    "study_parity": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_study.py",
+      "sha256": "33ad3c70a04da2fe94daba36e15c8530affc40ff25e3c31eeaebb71cf3a11468"
+    }
+  },
+  "data_reads": {
+    "development": true,
+    "validation": false,
+    "sealed_holdout": false
+  },
+  "permissions": {
+    "action_authorized": false,
+    "live_authorized": false,
+    "f09_registration_authorized": false
+  }
+}

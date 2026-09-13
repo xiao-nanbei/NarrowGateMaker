@@ -1,0 +1,71 @@
+{
+  "schema_version": "narrowgate_causal_model_replay_spec.v1",
+  "experiment_id": "causal_v8_through_20260725_20260727",
+  "status": "frozen_before_model_fit_and_test_outcomes",
+  "purpose": "rebuild the executable 13-head candidate through 2026-07-25 and compare ML ON with the identical corrected ML-OFF baseline",
+  "source_identity": {
+    "feature_root": "${NARROWGATE_RETIRED_DATA_ROOT}/features_btcusdc_causal_v8_through_20260725",
+    "feature_manifest_sha256": "40d9243d08b3459391117c57cfc148ead311cdbe64065109c1d506f981899528",
+    "feature_daily_manifest_sha256": "9ca91ee974db17e16e4e0daba89ced793a4b97a651a9b31e22aaedcddf0f33be",
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_20260727",
+    "normalized_l2_manifest_sha256": "88ff8faeef9976a10b1cf03e887e624e3cce5abb3d17de1b7920a58bb0de1275",
+    "normalized_l2_daily_quality_sha256": "e2aa9122b26cdb229fd739a626eec4ba58db5b876e1af1b4bde785e3e308131e",
+    "taker_tempo_daily_manifest_sha256": "3dd0098bb80795b15e7cc2556b4937cddefb0cf1acad1a47c77b93dd703ef5ee",
+    "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "feature_config_sha256": "96c4b6ea08087f6d35cec25f14d9e228c8e15a70c4d024b02005c38ba40fb920",
+    "formal_config_sha256": "1fdeb5b99ef4be46cc5b565015d9881b45a2fa5cf89c4019d4d6f9e977525fb0"
+  },
+  "feature_contract": {
+    "feature_semantics_version": 5,
+    "feature_bucket_ms": 10000,
+    "feature_ready_offset_ms": 10000,
+    "label_window": "left_closed_right_open_[t,t+h)",
+    "microstructure_5s": "true_trailing_five_seconds",
+    "calendar_timestamp": "physical_datetime_unit_preserved_before_epoch_conversion",
+    "heads": 13
+  },
+  "split": {
+    "train": "106 good days through 2026-06-28",
+    "embargo_1": ["2026-06-29"],
+    "validation": "20 good days from 2026-06-30 through 2026-07-19; model fitting and early stopping only",
+    "embargo_2": ["2026-07-20"],
+    "test": ["2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25"],
+    "formal_replay_test": ["2026-07-21", "2026-07-22", "2026-07-23", "2026-07-25"],
+    "diagnostic_only_test": {
+      "2026-07-24": "normalized L2 coverage is 97.8925%, below the frozen 99% formal threshold"
+    }
+  },
+  "candidate": {
+    "model_id": "lightgbm_13_head_causal_v8_through_20260725_v1",
+    "model_root": "models/saved_btcusdc_causal_v8_through_20260725_20260727",
+    "source_profile": "all",
+    "action_difference": "only ml_enabled changes between paired arms",
+    "buy_fill_selection_action": false,
+    "dynamic_fill_hazard_action": false,
+    "external_direct_policy": false
+  },
+  "baseline": {
+    "engine": "cpp formal replay with Python/C++ parity gate",
+    "initial_state": "fresh_start",
+    "execution_trades": "Binance USD-M individual trades",
+    "execution_book": "normalized 100ms L2 formal eligible only",
+    "queue": "queue-v3 q0.70 external calibration",
+    "latency": "aws_tokyo_ec2_2vcpu4g_20260712 fixed seeded distribution",
+    "p3": "empirical survival artifact"
+  },
+  "predeclared_deployment_gate": {
+    "formal_test_raw_pnl_delta": "> 0",
+    "formal_test_terminal_campaign_pnl_delta": ">= 0",
+    "formal_test_tail_campaign_delta": "<= 0",
+    "formal_test_fill_retention": ">= 0.85",
+    "formal_test_absolute_inventory_time_ratio": "<= 1.10",
+    "minimum_same_sign_days": "3 of 4 formal days for raw PnL",
+    "diagnostic_all_five_days": "reported but cannot override the formal result",
+    "promotion_if_passed": "small live trial of the 13-head candidate, followed by restart and preflight verification",
+    "promotion_if_failed": "remain ML OFF; do not tune on the five test days"
+  },
+  "excluded_from_deployment": {
+    "placement_fill_cif_v1": "prediction-only; failed its frozen absolute-calibration gate and has no executable action mapping",
+    "calibration_intercept_threshold_change": "v1 remains frozen; any economically derived tolerance belongs to a separately preregistered v2 family"
+  }
+}

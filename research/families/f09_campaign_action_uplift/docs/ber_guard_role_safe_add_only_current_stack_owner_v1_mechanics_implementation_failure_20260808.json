@@ -1,0 +1,37 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.mechanics_implementation_failure",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-08",
+  "status": "closed_execution_estimand_failure",
+  "day_read": "2026-04-17",
+  "policy_changed": false,
+  "failure": {
+    "common_requote_count_mismatch": 1,
+    "control_n_requotes": 14593,
+    "candidate_n_requotes": 14536,
+    "cross_arm_end_state_mismatch_count": 4,
+    "reason": "The frozen mechanics denominator incorrectly required equal full-path requote counts and compared BER state at different arm-specific terminal times. A price action may legitimately change fill, inventory, circuit-breaker, and replay continuation while the within-arm market-state implementation remains correct."
+  },
+  "passed_invariants": {
+    "python_cpp_fill_path_mismatch_count": 0,
+    "python_cpp_ber_state_mismatch_count": 0,
+    "candidate_source_mismatch_count": 0,
+    "candidate_cap_infeasible_count": 0,
+    "candidate_pair_change_count": 3612,
+    "candidate_bid_change_count": 2284,
+    "candidate_ask_change_count": 2282
+  },
+  "successor_boundary": {
+    "policy_is_unchanged": true,
+    "threshold_or_multiplier_search_allowed": false,
+    "one_day_economic_result_may_not_select_successor": true,
+    "cross_arm_terminal_state_equality_removed": true,
+    "candidate_rate_denominator": "candidate-arm canonical side quote decisions",
+    "control_and_candidate_requote_counts_reported_as_lifecycle_outcomes": true,
+    "within_arm_python_cpp_ber_state_and_fill_path_lockstep_remains_required": true
+  },
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "action_authorized": false,
+  "live_authorized": false
+}

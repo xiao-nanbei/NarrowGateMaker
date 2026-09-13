@@ -1,0 +1,101 @@
+{
+  "schema_version": "cross_venue_fair_center_shift_postrun_audit.v1",
+  "family_id": "cross_venue_fair_center_shift_randomized_replay_v1",
+  "implementation_revision": "v1.1_worker_local_atomic_checkpoints",
+  "panel_role": "development",
+  "decision": "close_cross_venue_fair_center_shift_on_development",
+  "canonical_spec_identity_sha256": "2738e1210a0d332ab967def073eccd9d93ad4a9c3c6f8428908bb5a0c4f94392",
+  "score_profile_sha256": "2c1d739632a918f2dd83d0c19143e0ff0cc9aecedfc79a549441d1732bb42fd9",
+  "support": {
+    "development_days": 40,
+    "grade_a_primary_days": 24,
+    "grade_b_sensitivity_days": 16,
+    "grade_a_rows": 9164,
+    "grade_a_candidate_rows": 4542,
+    "grade_a_control_rows": 4622,
+    "minimum_behavior_propensity": 0.5,
+    "overlap_violations": 0,
+    "unsupported_mass": 0.0,
+    "common_historical_valid_fraction": 0.896466724537037,
+    "minimum_daily_common_valid_fraction": 0.667349537037037
+  },
+  "grade_a_primary": {
+    "actual_action_change_rate": 1.0,
+    "activity_retention": 0.9235377470395733,
+    "fill_retention": 0.9700458959653984,
+    "reward_uplift_usdc_per_assignment": 0.001446428167882605,
+    "reward_lcb95": -0.0027324621466713575,
+    "reward_ucb95": 0.006052575525662253,
+    "reward_daily_positive_rate": 0.5416666666666666,
+    "policy_value_usdc_per_day": 0.6350784770000786,
+    "policy_value_lcb95_usdc_per_day": -1.0142962366915094,
+    "policy_value_ucb95_usdc_per_day": 2.39938705341663,
+    "buy_reward_uplift": 0.003324073534551433,
+    "sell_reward_uplift": -0.0004287703291499297,
+    "candidate_q10_usdc": -0.08238999999999379,
+    "control_q10_usdc": -0.0857699999999994,
+    "candidate_cvar10_usdc": -0.18990441207032988,
+    "control_cvar10_usdc": -0.2024575001468672
+  },
+  "grade_b_sensitivity": {
+    "reward_uplift_usdc_per_assignment": 0.004647315852272972,
+    "reward_lcb95": 0.0009152889156287801,
+    "reward_ucb95": 0.007512960681553725,
+    "policy_value_usdc_per_day": 1.9308365730000556,
+    "policy_value_lcb95_usdc_per_day": 0.34096260748758583,
+    "policy_value_ucb95_usdc_per_day": 3.4592440143248844,
+    "fill_retention": 0.9532529888311847,
+    "decision_authority": false
+  },
+  "leave_one_venue_out": {
+    "leave_bitget_out_reward_uplift": 0.0002744179502660333,
+    "leave_bitget_out_policy_value_usdc_per_day": 0.05237537399977773,
+    "leave_bybit_out_reward_uplift": -0.0006320678807363762,
+    "leave_bybit_out_policy_value_usdc_per_day": -0.1986311640001457,
+    "leave_okx_out_reward_uplift": 0.0008715835420959866,
+    "leave_okx_out_policy_value_usdc_per_day": 0.18708384699996117,
+    "direction_gate_passed": false,
+    "failures": [
+      "leave_bybit_out_reward_direction_nonpositive",
+      "leave_bybit_out_policy_value_direction_nonpositive"
+    ]
+  },
+  "scorecard": {
+    "candidate_class": "hard_gate_failed",
+    "promotion_status": "development_failed_family_closed",
+    "ranking_eligible": false,
+    "ranking_score": null,
+    "total_score": -0.02205882894070555,
+    "sha256": "6335d54e3031a91cec48061aec760fa557833504fd5d7752122c733c6e5b080f"
+  },
+  "artifacts": {
+    "report_sha256": "03e3379257f3668d7879827ab71b9b8501a6079e5092e7a45e6472d637b07f03",
+    "canonical_evidence_sha256": "33fe651d39f209410b8ea6501185750d747d68980146e3a3349c318873dd5efe",
+    "campaign_randomized_panel_sha256": "89616e07b3bbde113b915d4b7b7266ec3bced9a9b6c8ce7090673c6b799a7a22",
+    "campaign_event_journal_sha256": "51f62f67514acfa30148abcbcf63772b6526c9ccbad0760cb0bcc9bf2318cc41"
+  },
+  "tests": {
+    "passed": 64,
+    "failures": 0,
+    "errors": 0,
+    "junit_sha256": "7224d1ff76c97078a50b754e2c6eab72f744501e3c07388602849c3c46e8f0b6"
+  },
+  "checkpoint_integrity": {
+    "complete_day_checkpoints": 40,
+    "schema_version": "cross_venue_fair_center_day_checkpoint.v1",
+    "spec_file_sha256": "c2c08041638293eb4ed365d65f4acb76af26a710d9baed9a358c6ed3e08f9ebd",
+    "missing_row_artifacts": 0,
+    "missing_event_artifacts": 0,
+    "q90_evaluations": 0,
+    "invalid_sequence_messages": 0,
+    "source_gap_events": 0
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "historical_trade_bar_live_transport_authority": false,
+    "full_cpp_tick_replay_authority": false
+  }
+}

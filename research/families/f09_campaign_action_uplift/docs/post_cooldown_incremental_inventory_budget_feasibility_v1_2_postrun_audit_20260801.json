@@ -1,0 +1,64 @@
+{
+  "schema_version": "post_cooldown_incremental_inventory_budget_postrun_audit.v1",
+  "identity": "post_cooldown_incremental_inventory_budget_feasibility_v1_2",
+  "audited_at_utc": "2026-08-01T01:14:00Z",
+  "decision": "close_inventory_budget_mechanics_insufficient_sell_grid_resolution",
+  "spec": {
+    "path": "research/families/f09_campaign_action_uplift/docs/post_cooldown_incremental_inventory_budget_feasibility_v1_2_spec_20260801.json",
+    "sha256": "c1f1e7d1ea873a5b1a0896a3de3616c4453499ba045c76199e30bc0833e356fb"
+  },
+  "implementation": {
+    "path": "research/families/f09_campaign_action_uplift/audit/post_cooldown_incremental_inventory_budget_feasibility.py",
+    "sha256": "cc483b7119bf38e656a90608856ace8a28ff2cc23b136967a7ce7f62fa97ef3f"
+  },
+  "authoritative_output_root": "${NARROWGATE_DATA_ROOT}/reports/post_cooldown_incremental_inventory_budget_feasibility_v1_2_20260801/development",
+  "artifacts": {
+    "report.json": "1c0e438943bcf0e8352b12c5557b33570320210f0c8bab4e853d219f8a181e87",
+    "report.md": "369a3d7b4aeb69c5933e307bbb78f4e8dd57c80b95b56beb26b73b5855cfbf27",
+    "manifest.json": "74d745c4ca7485f08202c7b8df8f080ef5a49d5a3f7bdad087f720caef4256e5",
+    "market_source_manifest.json": "d18c90d3b80e051ef9ab0f7572d46dad8a949705cb889383849a0c2c3a45ba26",
+    "daily_mechanics.csv": "d01f686f4094250e26b095352823b6383444241a8a063304648928b524980e17",
+    "side_budget_mechanics.csv": "0b0b1b19b07e6e4c41b923fc18f27fe8e0cfb0344dbb558a2d20560251a6fe0f",
+    "control_inventory_budget_trace.parquet": "d71aae60d2e57f18c7dfebe4365cd588a4f1a25a5114844c6141d57d918913b3",
+    "candidate_inventory_budget_trace.parquet": "1754f98e1b3557fd3fa3abcd8382080bf955a7525d99aba72699747afc100864"
+  },
+  "verification": {
+    "formal_40_day_run": true,
+    "control_checkpoints": 40,
+    "candidate_checkpoints": 40,
+    "grade_a_primary_days": 24,
+    "grade_b_sensitivity_days": 16,
+    "grade_b_used_in_primary_decision": false,
+    "market_source_rehash_performed": true,
+    "market_source_rows": 1222,
+    "market_source_bytes": 11625657192,
+    "market_source_canonical_sha256": "27787b4aa129563c3d5bf173ef7705e44a511462de0c5989a8b1db7e8b457227",
+    "manifest_artifact_hashes_match": true,
+    "report_payload_hash_matches": true,
+    "q90_eval_and_action_counts_zero": true,
+    "budget_conservation_failures": 0,
+    "one_order_overshoots": 0,
+    "economics_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "primary_mechanics": {
+    "candidate_grid": {
+      "BUY": [1],
+      "SELL": [1]
+    },
+    "candidate_grid_supported": {
+      "BUY": false,
+      "SELL": false
+    },
+    "SELL_budget_1_action_change_rate": 0.8613622664255576,
+    "SELL_budget_1_fill_retention": 0.9889010342218112,
+    "SELL_budget_1_activity_retention": 0.9804942278837615,
+    "SELL_budget_1_mechanics_region_passed": false
+  },
+  "permissions": {
+    "randomized_action_identity_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

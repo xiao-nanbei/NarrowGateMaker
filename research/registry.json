@@ -1,0 +1,63 @@
+{
+  "schema": "narrowgate.research_family_registry.v2",
+  "as_of": "2026-08-29",
+  "scope": "public_family_index_only",
+  "operational_evidence_availability": "private_not_distributed",
+  "families": [
+    {
+      "id": "F01",
+      "directory": "research/families/f01_fixed_parameter_racing",
+      "package": "research.families.f01_fixed_parameter_racing"
+    },
+    {
+      "id": "F02",
+      "directory": "research/families/f02_empirical_p3_touch",
+      "package": "research.families.f02_empirical_p3_touch"
+    },
+    {
+      "id": "F03",
+      "directory": "research/families/f03_causal_13_head",
+      "package": "research.families.f03_causal_13_head"
+    },
+    {
+      "id": "F04",
+      "directory": "research/families/f04_external_market_alpha",
+      "package": "research.families.f04_external_market_alpha"
+    },
+    {
+      "id": "F05",
+      "directory": "research/families/f05_fill_quality_quote_ev",
+      "package": "research.families.f05_fill_quality_quote_ev"
+    },
+    {
+      "id": "F06",
+      "directory": "research/families/f06_placement_fill_cif",
+      "package": "research.families.f06_placement_fill_cif"
+    },
+    {
+      "id": "F07",
+      "directory": "research/families/f07_active_order_continuation",
+      "package": "research.families.f07_active_order_continuation"
+    },
+    {
+      "id": "F08",
+      "directory": "research/families/f08_side_taker_lifecycle",
+      "package": "research.families.f08_side_taker_lifecycle"
+    },
+    {
+      "id": "F09",
+      "directory": "research/families/f09_campaign_action_uplift",
+      "package": "research.families.f09_campaign_action_uplift"
+    },
+    {
+      "id": "F10",
+      "directory": "research/families/f10_live_replay_attribution",
+      "package": "research.families.f10_live_replay_attribution"
+    },
+    {
+      "id": "SYS",
+      "directory": "research/system_engineering",
+      "package": "research.system_engineering"
+    }
+  ]
+}

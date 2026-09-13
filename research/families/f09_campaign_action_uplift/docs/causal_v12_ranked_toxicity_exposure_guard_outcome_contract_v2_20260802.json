@@ -1,0 +1,107 @@
+{
+  "schema_version": "ranked_toxicity_exposure_guard_outcome_contract.v2",
+  "contract_id": "causal_v12_ranked_toxicity_exposure_guard_outcome_contract_v2",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "successor_frozen_before_mechanics_and_economic_outcome_read",
+  "canonical_contract_identity_sha256": "27d0734443acfa5279ba70be8cd46514d4d76bc483d68677e02e4d1f00ddde2d",
+  "scope": "Continuous-path successor for the independently registered BUY and SELL ranked-toxicity guards. It changes only future economic scoring and accounting semantics; actions, p90 thresholds, assignment, propensity, baseline, and mechanics gates remain frozen.",
+  "historical_v1_predecessor": {
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_outcome_contract_v1_20260802.json",
+    "sha256": "0ca5fdecef9dc2c2d72c339c23da77163c946559312a02a1811a4a4e2be6a0dd",
+    "canonical_contract_identity_sha256": "fc4ad90d097c478b1190b0a35e0fb4e053d816ef8af2dc749a00dcb1923345a6",
+    "immutable": true,
+    "historical_results_reinterpreted": false
+  },
+  "scorecard_registry": {
+    "path": "docs/experiment_scorecard_v2_continuous_path_profiles_20260802.json",
+    "sha256": "ef7752c6f6c51f5d7a6a62196975ffa200e46445650ce781c67b3c726b118ce7",
+    "canonical_spec_identity_sha256": "75a1ddee9e31ec021922eabc4fb679d69d1fddd056231d84c5e8945576ba0fff"
+  },
+  "scorecard_profile": {
+    "schema_version": "narrowgate_score_profile.v2",
+    "profile_id": "action_execution_selective_v3",
+    "profile_sha256": "1024e254b9e2b301e7621d2b1fa1986f210cdf5072da1e7cdc1e722f1efef13a"
+  },
+  "primary_reward": {
+    "estimand": "assignment_to_closed_campaign_terminal_value_usdc",
+    "foundation_contract": "lineage_randomized_outcome_contract_v2",
+    "assignment_time": "fixed before any treatment-dependent path divergence",
+    "pre_assignment_campaign_pnl": "covariate_and_balance_diagnostic_only",
+    "accounting_identity": "lineage_reward_plus_post_lineage_continuation_equals_assignment_to_closed_campaign_terminal_value_exactly",
+    "fees": "deduct exact causally convertible fees once; an unknown commission asset censors the affected economic record and may not be treated as USDC",
+    "maker_signed_markout_already_contains_execution_price": true,
+    "half_spread_must_not_be_added_again": true
+  },
+  "continuous_panel_value": {
+    "estimand": "full_panel_continuous_mtm_usdc",
+    "role": "secondary_economic_metric_and_accounting_check",
+    "UTC_day_role": "bootstrap_and_cluster_unit_only",
+    "cash_inventory_campaign_state_cross_UTC_midnight": "required",
+    "daily_identity": "realized_d + q_end * mid_end - q_start * mid_start",
+    "sum_of_daily_pnl_equals_continuous_panel_pnl": true,
+    "forced_day_end_liquidations": 0,
+    "day_end_state_resets": 0,
+    "day_end_campaign_terminals": 0,
+    "panel_final_inventory_mtm_required": true,
+    "absolute_tolerance_usdc": 1e-06
+  },
+  "diagnostic_only": [
+    "day_end_inventory_btc",
+    "day_end_open_campaign_mtm_usdc",
+    "censoring_avoidance",
+    "day_end_censoring_avoidance"
+  ],
+  "toxic_fill_estimand": {
+    "horizon_ms": 10000,
+    "epsilon_toxic_bps": 0.0,
+    "epsilon_provenance": "economic break-even boundary after known maker fees; not fitted to Development outcomes",
+    "future_price": "normalized_l2_100ms_v2 BBO mid from the first valid grid snapshot at or after fill_ts_plus_10000ms and no later than target_plus_100ms",
+    "missing_future_bbo": "retain the assigned decision; mark the unmatched filled quantity unlabeled and use the conservative censoring bound",
+    "BUY_markout_bps": "10000 * (future_bbo_mid - fill_price) / fill_price - known_maker_fee_bps",
+    "SELL_markout_bps": "10000 * (fill_price - future_bbo_mid) / fill_price - known_maker_fee_bps",
+    "toxic_definition": "net_maker_signed_markout_bps < -epsilon_toxic_bps",
+    "partial_fill_rule": "label every execution quantity separately before aggregating to its assigned decision",
+    "assigned_quantity_rule": "freeze assigned quantity at the randomized opportunity before downstream order and fill paths",
+    "fill_rate": "mean_over_decisions(filled_qty_btc / assigned_qty_btc)",
+    "toxic_fill_rate": "mean_over_decisions(toxic_filled_qty_btc / assigned_qty_btc)",
+    "conservative_censoring_bound": "candidate unlabeled fill quantity is toxic and baseline unlabeled fill quantity is non-toxic"
+  },
+  "side_separation": {
+    "BUY_and_SELL_are_distinct_action_identities": true,
+    "pooled_promotion_forbidden": true,
+    "other_side_remains_exact_operational_baseline": true
+  },
+  "future_economic_gates": {
+    "closed_campaign_value_LCB95_strictly_positive": true,
+    "conditional_net_value_LCB95_strictly_positive": true,
+    "toxic_reduction_surplus_LCB95_strictly_positive": true,
+    "toxic_share_log_ratio_LCB95_strictly_positive": true,
+    "negative_terminal_protection_LCB95_nonnegative": true,
+    "campaign_q10_protection_LCB95_nonnegative": true,
+    "campaign_CVaR10_protection_LCB95_nonnegative": true,
+    "campaign_MAE_avoidance_LCB95_nonnegative": true,
+    "maximum_inventory_avoidance_LCB95_nonnegative": true,
+    "inventory_time_avoidance_LCB95_nonnegative": true,
+    "result_cannot_be_explained_only_by_activity_collapse": true,
+    "ranking_score_nonnull_only_after_all_hard_gates": true
+  },
+  "unchanged_mechanics": {
+    "BUY_and_SELL_v1_action_semantics": true,
+    "side_specific_p90": true,
+    "strictly_past_only_thresholds": true,
+    "propensity_0_5_each_arm": true,
+    "random_seeds": true,
+    "q90_shadow_ON_action_OFF_in_both_arms": true,
+    "BUY_fill_selection_ON_in_both_arms": true,
+    "reducing_quotes_unchanged": true,
+    "full_path_zero_tolerance_gates": true
+  },
+  "permissions": {
+    "mechanics_read": false,
+    "development_economic_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
