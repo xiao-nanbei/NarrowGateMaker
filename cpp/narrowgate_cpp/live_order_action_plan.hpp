@@ -200,7 +200,7 @@ struct alignas(64) LiveFinalOrderBoundary {
     double ask_price;
     double best_bid;
     double best_ask;
-    double p3_delta_star;
+    double p3_distance_touch_product_argmax;
     double bid_existing_price;
     double ask_existing_price;
     std::uint8_t flags;

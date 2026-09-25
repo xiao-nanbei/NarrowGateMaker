@@ -92,7 +92,7 @@ def _zero_trade_state_fixture(usable, *, activation_ms=0):
                            "quantity": np.zeros(len(axis)), "is_buyer_maker": np.ones(len(axis))})
     data = HistoricalBBOData(axis, np.full(len(axis), 99.9), np.full(len(axis), 100.1),
         np.ones(len(axis)), np.ones(len(axis)), usable=np.asarray(usable, dtype=bool))
-    params = {"gamma": .01, "kappa": 1., "order_size": .001, "max_inventory": .01,
+    params = {"eta_inventory": (.01) * (1.0), "a_spread": .01, "risk_per_order": .01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "execution_intensity_slope": 1., "order_size": .001, "max_inventory": .01,
               "requote_interval": .1, "rq_min": .1, "rq_max": .1, "requote_clock": "fixed",
               "maker_fee": 0., "taker_fee": 0., "tick_size": .1, "lot_size": .001,
               "queue_base": 0., "queue_decay": 0., "maker_fill_prob": 1.,

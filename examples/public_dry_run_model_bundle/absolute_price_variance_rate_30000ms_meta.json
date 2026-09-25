@@ -3,18 +3,41 @@
   "feature_cols": [
     "close"
   ],
-  "feature_dag_id": "live_10s_signal_cutoff.v1",
-  "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
-  "feature_manifest_sha256": "ffc85a81b177825f43455f346dab8c9926a699c8f7f8e34a2ce9188861eeadd2",
-  "feature_semantics_version": 6,
+  "feature_contract_id": "data.execution_features.v1",
+  "feature_cutoff_semantics": "feature_ready_index",
+  "feature_timestamp_semantics": "feature_ready_index",
   "feature_variant": "public_dry_run_fixture",
+  "input_contract_id": "tardis_source_facts.v1",
+  "label_contract_id": "synthetic_fixture_no_research_labels",
   "label_semantics": "fixed_forward_h_absolute_price_variance",
   "label_semantics_version": 3,
   "label_window_semantics": "left_closed_right_open_[t,t+h)",
   "name": "absolute_price_variance_rate_30000ms",
+  "observation_contract_id": "data.observation.v1",
   "promotion_authority": "public_dry_run_only",
   "source_profile": "synthetic_fixture",
+  "split_manifest_id": "synthetic_fixture_no_research_split",
   "symbol": "BTCUSDC",
+  "train_only_selection": {
+    "external_panel_read_during_fit": false,
+    "feature_dag_sha256": "synthetic-fixture",
+    "feature_manifest_sha256": "synthetic-fixture",
+    "fit_days": [
+      "synthetic-not-a-market-day"
+    ],
+    "refit_days": [
+      "synthetic-not-a-market-day"
+    ],
+    "sample_weight_policy": {
+      "half_life_days": "inf"
+    },
+    "selection_days": [
+      "synthetic-not-a-market-day"
+    ],
+    "source_manifest_sha256": "synthetic-fixture",
+    "spec_sha256": "synthetic-fixture",
+    "train_source_identity_sha256": "synthetic-fixture"
+  },
   "training_experiment_id": "public_dry_run_model_bundle_v1",
   "volatility_unit_contract": {
     "base_asset": "BTC",

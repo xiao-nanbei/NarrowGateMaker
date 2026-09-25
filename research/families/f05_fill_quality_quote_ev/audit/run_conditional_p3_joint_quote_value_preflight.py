@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import data_root, relocate_marketdata_path
+from data_paths import data_root, resolve_portable_path
 from research.families.f02_empirical_p3_touch.audit.p3_touch_exact_distance_surface import (
     P3TouchExactDistanceSurface,
 )
@@ -64,7 +64,7 @@ def _identity(path: Path) -> dict[str, Any]:
 
 
 def _require_identity(raw: Mapping[str, Any], *, label: str) -> Path:
-    path = relocate_marketdata_path(str(raw.get("path", ""))).resolve()
+    path = resolve_portable_path(str(raw.get("path", ""))).resolve()
     actual = _identity(path)
     if actual["sha256"] != str(raw.get("sha256", "")):
         raise RuntimeError(f"{label} SHA256 changed: {path}")
@@ -165,7 +165,7 @@ def _load_day_rows(
         raise RuntimeError(f"resolution partition day mismatch: {partition}")
     source_path = _require_identity(manifest["source_panel"], label=f"{day} source panel")
     mechanics_raw = manifest["mechanics_cache"]
-    mechanics_path = relocate_marketdata_path(mechanics_raw["payload_path"]).resolve()
+    mechanics_path = resolve_portable_path(mechanics_raw["payload_path"]).resolve()
     if _sha256_file(mechanics_path) != str(mechanics_raw["payload_sha256"]):
         raise RuntimeError(f"{day} mechanics payload SHA256 changed")
 
@@ -366,7 +366,7 @@ def run(*, spec_path: Path, output_dir: Path) -> dict[str, Any]:
         tick_size=TICK_SIZE,
     )
 
-    resolution_root = relocate_marketdata_path(spec["resolution_partition_root"])
+    resolution_root = resolve_portable_path(spec["resolution_partition_root"])
     all_rows: list[dict[str, Any]] = []
     audits: list[dict[str, Any]] = []
     fallback_reasons: Counter[str] = Counter()

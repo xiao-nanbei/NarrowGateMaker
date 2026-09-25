@@ -37,7 +37,7 @@ def test_new_model_loader_and_inference_honor_mask_without_fitting(tmp_path, mon
             return [0.25]
 
     monkeypatch.setattr(lightgbm, "Booster", ControlledModel)
-    meta = dict(input_contract_id=INPUT, observation_contract_id=CONTRACT,
+    meta = dict(schema="narrowgate.semantic_model_bundle.v1", input_contract_id=INPUT, observation_contract_id=CONTRACT,
                 feature_contract_id=FEATURE_CONTRACT, symbol="BTCUSDC",
                 label_contract_id="synthetic-not-trained", split_manifest_id="synthetic-not-research", heads={})
     selection = {"spec_sha256": "spec", "feature_manifest_sha256": "panel", "feature_dag_sha256": "features",
@@ -52,6 +52,7 @@ def test_new_model_loader_and_inference_honor_mask_without_fitting(tmp_path, mon
         head_meta = {k: meta[k] for k in ("input_contract_id", "observation_contract_id", "feature_contract_id",
                                         "label_contract_id", "split_manifest_id")}
         head_meta.update(name=head, feature_cols=["mid"], train_only_selection=selection)
+        head_meta.update(feature_timestamp_semantics="feature_ready_index", feature_cutoff_semantics="feature_ready_index")
         head_meta.update(volatility_unit_contract=absolute_price_variance_unit_contract("BTCUSDC"),
                          label_semantics=ABSOLUTE_PRICE_VARIANCE_SEMANTICS)
         encoded = json.dumps(head_meta).encode()
@@ -173,7 +174,9 @@ def test_source_consumer_stream_and_signal_share_future_boundary(tmp_path):
     assert np.isnan(predictions[6]).all()
     # Exercise the maintained executor on controlled synthetic input only.
     from models.backtest_tick import simulate_public_inputs
-    params = dict(gamma=0.01, kappa=1.0, order_size=0.001, max_inventory=0.01,
+    params = dict(eta_inventory=0.01, a_spread=0.01, risk_per_order=0.01,
+        execution_intensity_slope=1.0, risk_horizon_s=1.0, inventory_reference_qty=1.0,
+        trade_intensity_acceleration_spread_mult=2.0, order_size=0.001, max_inventory=0.01,
         requote_interval=1.0, rq_min=1.0, rq_max=1.0, requote_clock="fixed",
         maker_fee=0.0, taker_fee=0.0, tick_size=0.1, lot_size=0.001,
         queue_base=0.0, queue_decay=0.0, maker_fill_prob=1.0, use_bar_pricing=True,

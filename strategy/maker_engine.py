@@ -983,7 +983,7 @@ def _resolve_model_dir(cfg) -> Optional[Path]:
 def _get_fill_model(model_dir: Optional[Path] = None):
     """Lazy-load TouchProbabilityModel from saved params."""
     global _fill_model, _fill_model_path, _fill_model_loaded
-    model_path = model_dir / "fill_prob_params.json" if model_dir else None
+    model_path = model_dir / "touch_probability.json" if model_dir else None
     if not _fill_model_loaded or model_path != _fill_model_path:
         try:
             from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
@@ -7699,8 +7699,8 @@ class MakerEngine:
         """
         cfg = self.cfg
         fill_model = _get_fill_model(self._model_dir)
-        p3_delta_star = 0.0
-        p3_kappa_eff = 0.0
+        p3_distance_touch_product_argmax = 0.0
+        p3_touch_log_probability_distance_slope = 0.0
         p3_identity = None
         if fill_model is not None:
             cache_key = (self._model_dir, id(fill_model))
@@ -7714,19 +7714,19 @@ class MakerEngine:
                     fill_model.semantic_identity(require_artifact_hash=True),
                 )
                 self._fill_model_quote_cache = cache
-            p3_delta_star = float(cache[1])
-            p3_kappa_eff = float(cache[2])
+            p3_distance_touch_product_argmax = float(cache[1])
+            p3_touch_log_probability_distance_slope = float(cache[2])
             p3_identity = dict(cache[3])
         if self._p3_artifact_sha256 is not None and (
             p3_identity is None or p3_identity["artifact_sha256"] != self._p3_artifact_sha256
         ):
             raise RuntimeError("loaded P3 differs from the deployment-bound artifact")
-        p3_kappa_eff_override = float(
-            getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
+        p3_touch_log_probability_distance_slope_override = float(
+            getattr(cfg.strategy, "p3_touch_log_probability_distance_slope_override", 0.0) or 0.0
         )
-        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+        if not math.isfinite(p3_touch_log_probability_distance_slope_override) or p3_touch_log_probability_distance_slope_override != 0.0:
             raise RuntimeError(
-                "nonzero p3_kappa_eff_override has no independently bound "
+                "nonzero p3_touch_log_probability_distance_slope_override has no independently bound "
                 "touch-curve identity and is forbidden"
             )
         ret_metadata = getattr(self.signal, "_model_metadata", {}).get("touch_conditioned_price_change_fraction_10000ms", {})
@@ -7740,8 +7740,8 @@ class MakerEngine:
         f03_ret_action_compatible = bool(f03_action_contract["compatible"])
         quote_cfg_key = (
             id(cfg),
-            p3_delta_star,
-            p3_kappa_eff,
+            p3_distance_touch_product_argmax,
+            p3_touch_log_probability_distance_slope,
             str((p3_identity or {}).get("artifact_sha256", "")),
             f03_ret_action_horizon_s,
             f03_ret_action_compatible,
@@ -7752,8 +7752,8 @@ class MakerEngine:
                 quote_cfg_key,
                 quote_core_config_from_live_config(
                     cfg,
-                    p3_delta_star=p3_delta_star,
-                    p3_kappa_eff=p3_kappa_eff,
+                    p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+                    p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
                     p3_identity=p3_identity,
                     f03_ret_action_horizon_s=f03_ret_action_horizon_s,
                     f03_ret_action_compatible=f03_ret_action_compatible,
@@ -8058,10 +8058,10 @@ class MakerEngine:
         self._log_depth_execution_shadow(
             mid=mid, depth=depth_raw, pred=pred,
             kappa_base=self._last_quote_diagnostic_value(
-                "kappa_before_depth", cfg.strategy.kappa
+                "kappa_before_depth", cfg.strategy.execution_intensity_slope
             ),
             kappa_used=self._last_quote_diagnostic_value(
-                "kappa_used", cfg.strategy.kappa
+                "kappa_used", cfg.strategy.execution_intensity_slope
             ),
             bid_price=bid_price, ask_price=ask_price,
             asym=self._last_quote_diagnostic_value("asym", 0.0),
@@ -8829,17 +8829,17 @@ class MakerEngine:
                     False,
                 )
             )
-            p3_delta_star = float(
+            p3_distance_touch_product_argmax = float(
                 self._last_quote_diagnostic_value(
-                    "p3_touch_delta_star",
+                    "p3_distance_touch_product_argmax",
                     0.0,
                 )
                 or 0.0
             )
             p3_active = bool(
                 p3_enabled
-                and math.isfinite(p3_delta_star)
-                and p3_delta_star > 0.0
+                and math.isfinite(p3_distance_touch_product_argmax)
+                and p3_distance_touch_product_argmax > 0.0
             )
             native_final_plan = native_order_action_planner.compute_final(
                 inventory=float(q),
@@ -8874,7 +8874,7 @@ class MakerEngine:
                 best_bid=float(best_bid),
                 best_ask=float(best_ask),
                 p3_side_bbo_floor_enabled=p3_active,
-                p3_delta_star=(p3_delta_star if p3_active else 0.0),
+                p3_distance_touch_product_argmax=(p3_distance_touch_product_argmax if p3_active else 0.0),
             )
             bid_price = float(native_final_plan.bid_price)
             ask_price = float(native_final_plan.ask_price)
@@ -11051,7 +11051,7 @@ class MakerEngine:
             )
         )
         delta_star = float(
-            self._last_quote_diagnostic_value("p3_touch_delta_star", 0.0)
+            self._last_quote_diagnostic_value("p3_distance_touch_product_argmax", 0.0)
             or 0.0
         )
         active = bool(enabled and math.isfinite(delta_star) and delta_star > 0.0)

@@ -175,7 +175,7 @@ def test_configured_actions_reach_real_executor(bundle):
     from research.families.f06_placement_fill_cif.public_input import replay_placement_strategy
     from research.families.f07_active_order_continuation.public_input import replay_continuation_strategy
 
-    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., execution_intensity_slope=1., risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., order_size=.001, max_inventory=.01,
         requote_interval=.2, rq_min=.2, rq_max=.2, requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",
@@ -362,7 +362,7 @@ def test_fixed_parameter_runner_rejects_different_execution_assumptions(bundle):
 @pytest.mark.parametrize("with_funding", [False, True])
 def test_fixed_parameter_runner_repeats_independent_synthetic_accounts(bundle, economic, with_funding):
     from research.families.f01_fixed_parameter_racing.public_input import replay_parameter_candidates
-    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., execution_intensity_slope=1., risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., order_size=.001, max_inventory=.01,
         requote_interval=1., rq_min=1., rq_max=1., requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",
@@ -495,7 +495,7 @@ def test_reference_prediction_adapter_does_not_read_future_reference(bundle, tmp
                                    touch_side_adverse_probability_bid_10000ms=.1, touch_side_adverse_probability_ask_10000ms=.1)
 
     from research.families.f04_external_market_alpha.public_input import replay_reference_strategy
-    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., execution_intensity_slope=1., risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., order_size=.001, max_inventory=.01,
         requote_interval=1., rq_min=1., rq_max=1., requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",

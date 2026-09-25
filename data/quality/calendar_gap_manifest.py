@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 
 SCHEMA_VERSION = "calendar_continuity_manifest.v1"
 DAY_MS = 86_400_000
@@ -180,7 +180,7 @@ def load_day_sources(
             raise ValueError(f"calendar replay does not recognize Grade {grade}: {day}")
 
         l2_raw = _clean_text(getattr(row, "l2_source_path", "")) if row else ""
-        l2_path = str(relocate_marketdata_path(l2_raw)) if l2_raw else ""
+        l2_path = str(resolve_portable_path(l2_raw)) if l2_raw else ""
         result.append(
             DaySource(
                 day=day,

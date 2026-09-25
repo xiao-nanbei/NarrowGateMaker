@@ -34,14 +34,14 @@ IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR = (
 IMMUTABLE_BACKTEST_V12_CONFIG_SHA256 = (
     "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
 )
-LEGACY_ENV_DATA_ROOT = "MM_DATA_ROOT"
+
 PRIVATE_STORAGE_ROOTS_PATH = (
     Path(__file__).resolve().parent / "data/private/storage_roots.current.local.json"
 )
 PORTABLE_MARKETDATA_FALLBACK = Path.home() / "MarketData"
 DEFAULT_MARKETDATA_ROOT = PORTABLE_MARKETDATA_FALLBACK
-LEGACY_MARKETDATA_ROOT = Path.home() / "MarketData"
-FROZEN_LEGACY_MARKETDATA_ROOTS: tuple[Path, ...] = ()
+
+
 PROJECT_DATASET_NAME = "NarrowGate_BTCUSDC"
 NORMALIZED_L2_DATASET = "normalized_l2_100ms_v2"
 ROOT = Path(__file__).resolve().parent
@@ -56,6 +56,8 @@ def _private_storage_roots() -> dict[str, object]:
     payload = json.loads(PRIVATE_STORAGE_ROOTS_PATH.read_text(encoding="utf-8"))
     if payload.get("visibility") != "local_only_do_not_publish":
         raise RuntimeError("private storage-root pointer has invalid visibility")
+    if "legacy_marketdata_roots" in payload or "path_prefix_relocations" in payload:
+        raise ValueError("retired storage relocation configuration; migrate paths offline")
     return payload
 
 
@@ -69,17 +71,7 @@ def _private_path(name: str) -> Path | None:
     return path.resolve(strict=False)
 
 
-def legacy_marketdata_roots() -> tuple[Path, ...]:
-    """Return configured historical roots used only for path relocation."""
 
-    payload = _private_storage_roots()
-    values = payload.get("legacy_marketdata_roots", [])
-    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-        raise RuntimeError("legacy_marketdata_roots must be a list of absolute paths")
-    roots = tuple(Path(value).expanduser().resolve(strict=False) for value in values)
-    if any(not root.is_absolute() for root in roots):
-        raise RuntimeError("legacy market-data roots must be absolute")
-    return tuple(dict.fromkeys((LEGACY_MARKETDATA_ROOT, *FROZEN_LEGACY_MARKETDATA_ROOTS, *roots)))
 
 
 def marketdata_root() -> Path:
@@ -110,7 +102,9 @@ def default_external_data_root(root: Path | None = None) -> Path:
 
 def data_root(root: Path | None = None) -> Path:
     """Return generated products, independently from the raw-market root."""
-    env_root = os.environ.get(ENV_DATA_ROOT) or os.environ.get(LEGACY_ENV_DATA_ROOT)
+    if "MM_DATA_ROOT" in os.environ:
+        raise ValueError("retired MM_DATA_ROOT; configure NARROWGATE_DATA_ROOT explicitly")
+    env_root = os.environ.get(ENV_DATA_ROOT)
     if env_root:
         return Path(env_root).expanduser().resolve()
 
@@ -204,7 +198,7 @@ def cache_root(root: Path | None = None) -> Path:
 
 
 def window_cache_root(root: Path | None = None) -> Path:
-    """Return the tick-replay cache root, honoring its legacy override."""
+    """Return the tick-replay cache root, honoring its explicit override."""
 
     env_root = os.environ.get(ENV_TICK_WINDOW_CACHE_DIR)
     if env_root:
@@ -255,8 +249,6 @@ def resolve_portable_path(path: Path | str, *, root: Path | None = None) -> Path
         "NARROWGATE_MARKETDATA_ROOT": marketdata_root(),
         "NARROWGATE_DATA_ROOT": data_root(repository_root),
         "NARROWGATE_RAW_DATA_ROOT": raw_data_root(),
-        "NARROWGATE_RETIRED_MARKETDATA_ROOT": marketdata_root(),
-        "NARROWGATE_RETIRED_DATA_ROOT": data_root(repository_root),
         "NARROWGATE_CACHE_ROOT": cache_root(repository_root),
         "NARROWGATE_RESULTS_DIR": Path(
             os.environ.get(ENV_RESULTS_DIR, data_root(repository_root) / "backtest_results_btcusdc")
@@ -319,55 +311,7 @@ def immutable_backtest_v12_config_path(*, root: Path | None = None) -> Path:
     )
 
 
-def relocate_marketdata_path(path: Path | str) -> Path:
-    """Map a legacy ``~/MarketData`` provenance path onto the active volume.
 
-    Frozen experiment specifications retain their original path strings and
-    hashes. Consumers may call this helper at the filesystem boundary so a
-    storage relocation does not rewrite frozen evidence bytes.
-    """
-
-    candidate = resolve_portable_path(path)
-    relocations = _private_storage_roots().get("path_prefix_relocations", {})
-    if not isinstance(relocations, dict):
-        raise ValueError("path_prefix_relocations must be a mapping")
-    prefixes = []
-    for before, after in sorted(relocations.items(), key=lambda item: len(item[0]), reverse=True):
-        old, new = Path(before), Path(after)
-        if not old.is_absolute() or not new.is_absolute():
-            raise ValueError("Storage relocation prefixes must be absolute")
-        prefixes.append((old, new))
-
-    def configured_prefix(value: Path) -> Path:
-        for old, new in prefixes:
-            try:
-                return new / value.relative_to(old)
-            except ValueError:
-                continue
-        return value
-
-    mapped = configured_prefix(candidate)
-    if mapped != candidate:
-        return mapped
-    legacy_roots = legacy_marketdata_roots()
-    project_names = tuple(dict.fromkeys((PROJECT_DATASET_NAME, ROOT.name)))
-
-    for legacy_root in legacy_roots:
-        for project_name in project_names:
-            legacy_window_cache = legacy_root / project_name / "window_cache"
-            try:
-                cache_relative = candidate.relative_to(legacy_window_cache)
-            except ValueError:
-                continue
-            return window_cache_root(ROOT) / cache_relative
-
-    for legacy_root in legacy_roots:
-        try:
-            relative = candidate.relative_to(legacy_root)
-        except ValueError:
-            continue
-        return configured_prefix(marketdata_root() / relative)
-    return candidate
 
 
 def data_subdir(name: str, root: Path | None = None) -> Path:

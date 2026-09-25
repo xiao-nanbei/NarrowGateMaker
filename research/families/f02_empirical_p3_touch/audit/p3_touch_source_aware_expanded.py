@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[4]
 SPEC_SCHEMA_VERSION = "narrowgate_p3_touch_source_aware_expanded.v3.spec"
 DAY_MANIFEST_SCHEMA_VERSION = "narrowgate_p3_touch_day_manifest.v3"
 REPORT_SCHEMA_VERSION = "narrowgate_p3_touch_source_aware_expanded.v3"
-MODEL_SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v3"
+MODEL_SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v4"
 SIDES = ("BUY", "SELL")
 FIT_MODELS = ("2025_provider", "2026_train", "expanded")
 EVALUATION_MODELS = ("current_v2", *FIT_MODELS)
@@ -404,8 +404,8 @@ def _curve_identity(
     return curve, {
         "windows": int(values.size),
         "touch_at_best_rate": float(np.mean(values >= 0.0)),
-        "delta_star": float(delta_star),
-        "kappa_eff": float(model.touch_log_probability_distance_slope(delta_star)),
+        "distance_touch_product_argmax": float(delta_star),
+        "touch_log_probability_distance_slope": float(model.touch_log_probability_distance_slope(delta_star)),
         "probability_at_delta_star": float(model.prob(delta_star)),
     }
 
@@ -463,8 +463,8 @@ def _write_model(
     return {
         "path": str(path.resolve()),
         "sha256": sha256_file(path),
-        "delta_star": float(delta_star),
-        "kappa_eff": float(model.touch_log_probability_distance_slope(delta_star)),
+        "distance_touch_product_argmax": float(delta_star),
+        "touch_log_probability_distance_slope": float(model.touch_log_probability_distance_slope(delta_star)),
         "probability_at_delta_star": float(model.prob(delta_star)),
     }
 

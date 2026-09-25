@@ -282,6 +282,14 @@ def test_f04_fixed_pair_fits_real_lightgbm_and_reloads_without_selection(tmp_pat
         assert model.predict(np.ones((3, len(model.feature_cols)))).shape == (3,)
         assert thread_budgets == [2]
         assert receipt["arms"][arm]["fitted_rows"] == 400
+    manifest_path = fitted / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["arms"]["M0"]["target"] = "label_dir_10s"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="current touch-conditioned direction target"):
+        direction.DirectionModel(fitted, "M0", plan_path=contract_path)
+    manifest["arms"]["M0"]["target"] = direction.LABEL
+    manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(FileExistsError, match="exists"):
         direction.fit_direction_pair(contract_path, panel_root, fitted)
     panel.loc[0, "actual_outcome_end_ns"] = first_ns + 86_400_000_000_000

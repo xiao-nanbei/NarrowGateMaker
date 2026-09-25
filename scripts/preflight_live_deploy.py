@@ -110,7 +110,7 @@ def validate_deploy_config(
             raise ValueError(
                 f"strategy.{field_name} must be positive and finite when set"
             )
-    if bool(strategy.get("historical_p3_scalar_adapter_enabled", True)) and bool(
+    if bool(strategy.get("p3_pair_spread_projection_enabled", True)) and bool(
         strategy.get("p3_side_bbo_floor_enabled", False)
     ):
         raise ValueError(
@@ -269,31 +269,31 @@ def validate_deploy_config(
                 f"consumer={quote_horizon_s!r}s"
             )
 
-    p3_path = model_dir / "fill_prob_params.json"
+    p3_path = model_dir / "touch_probability.json"
     if not p3_path.is_file():
-        raise ValueError(f"deploy bundle is missing fill_prob_params.json: {p3_path}")
+        raise ValueError(f"deploy bundle is missing touch_probability.json: {p3_path}")
     p3_raw = p3_path.read_bytes()
     p3 = _as_mapping(json.loads(p3_raw), "P3 artifact")
     p3_model = TouchProbabilityModel.from_bytes(
         p3_raw, artifact_path=p3_path, require_live_compatible=True,
     )
     p3_identity = p3_model.semantic_identity(require_artifact_hash=True)
-    artifact_kappa = float(p3.get("kappa_eff", 0.0))
-    delta_star = float(p3.get("delta_star", 0.0))
+    artifact_kappa = float(p3.get("touch_log_probability_distance_slope", 0.0))
+    delta_star = float(p3.get("distance_touch_product_argmax", 0.0))
     if artifact_kappa <= 0.0 or delta_star <= 0.0:
         raise ValueError(
             "P3 artifact must contain positive kappa_eff and delta_star; "
             f"got kappa_eff={artifact_kappa}, delta_star={delta_star}"
         )
 
-    override = float(strategy.get("p3_kappa_eff_override", 0.0) or 0.0)
+    override = float(strategy.get("p3_touch_log_probability_distance_slope_override", 0.0) or 0.0)
     if not math.isfinite(override) or override < 0.0:
         raise ValueError(
-            "strategy.p3_kappa_eff_override must be finite and nonnegative"
+            "strategy.p3_touch_log_probability_distance_slope_override must be finite and nonnegative"
         )
     if override > 0.0:
         raise ValueError(
-            "nonzero strategy.p3_kappa_eff_override cannot inherit the P3 "
+            "nonzero strategy.p3_touch_log_probability_distance_slope_override cannot inherit the P3 "
             "artifact identity; live deployment requires an independently "
             "hash-bound override identity"
         )
@@ -502,7 +502,7 @@ def validate_deploy_config(
         "p3_side": str(p3_identity["side"]),
         "p3_queue_included": bool(p3_identity["queue_included"]),
         "p3_artifact_sha256": str(p3_identity["artifact_sha256"]),
-        "delta_star": delta_star,
+        "distance_touch_product_argmax": delta_star,
         "artifact_kappa_eff": artifact_kappa,
         "override": override,
         "touch_log_probability_distance_slope": override if override > 0.0 else artifact_kappa,
@@ -531,8 +531,8 @@ def validate_deploy_config(
                 "execution_intensity_slope"
             ),
             "risk_horizon_s": strategy.get("risk_horizon_s"),
-            "historical_p3_scalar_adapter_enabled": bool(
-                strategy.get("historical_p3_scalar_adapter_enabled", True)
+            "p3_pair_spread_projection_enabled": bool(
+                strategy.get("p3_pair_spread_projection_enabled", True)
             ),
             "p3_side_bbo_floor_enabled": bool(
                 strategy.get("p3_side_bbo_floor_enabled", False)

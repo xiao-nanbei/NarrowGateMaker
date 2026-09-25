@@ -7,118 +7,13 @@
   "files": [
     {
       "bytes": 3128,
-      "path": "touch_conditioned_up_probability_10000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1052,
-      "path": "touch_conditioned_up_probability_10000ms_meta.json",
-      "sha256": "dfd48651f8a5dd8a803b227294301de2daa34cc0a39d485c8236ff1e9f56cc35"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_conditioned_up_probability_30000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1052,
-      "path": "touch_conditioned_up_probability_30000ms_meta.json",
-      "sha256": "01599308fad8c6a38cd163599e340a075baac2e3c09c0c28dfb43ff669de959b"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_conditioned_up_probability_60000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1052,
-      "path": "touch_conditioned_up_probability_60000ms_meta.json",
-      "sha256": "9c55543def41afbc0c75c19e651cd1929c8089d0c08fb2eaf2d413b43eddc9b7"
-    },
-    {
-      "bytes": 525,
-      "path": "fill_prob_params.json",
-      "sha256": "d26863a0cb0b62365784085bc589a9afe281d10e6e15352420b13c3ca050ba27"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_conditioned_price_change_fraction_10000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1059,
-      "path": "touch_conditioned_price_change_fraction_10000ms_meta.json",
-      "sha256": "06fe2e42e7f85d2657c4581ba0d50f1ae59b2c31a11d8c69911560292fe37985"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_conditioned_price_change_fraction_30000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1059,
-      "path": "touch_conditioned_price_change_fraction_30000ms_meta.json",
-      "sha256": "b82c42a387c2059371af2ff98432a250126c713bb063c54537090c6c8d5249d2"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_conditioned_price_change_fraction_60000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1059,
-      "path": "touch_conditioned_price_change_fraction_60000ms_meta.json",
-      "sha256": "e9a2a0cb29a1cd6e1aa4640646714967b7a8d522e3cbac9d5ea24df4e8c9f05e"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_side_adverse_probability_ask_10000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1054,
-      "path": "touch_side_adverse_probability_ask_10000ms_meta.json",
-      "sha256": "a2dca71f05d887121d1d777c73e0c866fafe8aa42e015371bf244190d50ce277"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_side_adverse_probability_ask_5000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1053,
-      "path": "touch_side_adverse_probability_ask_5000ms_meta.json",
-      "sha256": "487be9d89022db297f4a01d41140a25ec620c77bc143fad9c297d1e36654f6a8"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_side_adverse_probability_bid_10000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1054,
-      "path": "touch_side_adverse_probability_bid_10000ms_meta.json",
-      "sha256": "ddd49f60283895e9bf277d075ad99400d9cd4599e551495485fc47f3e75467d2"
-    },
-    {
-      "bytes": 3128,
-      "path": "touch_side_adverse_probability_bid_5000ms.txt",
-      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
-    },
-    {
-      "bytes": 1053,
-      "path": "touch_side_adverse_probability_bid_5000ms_meta.json",
-      "sha256": "cb93528b75dbed6a54336af010c9a01f8e663fda05bb8f4bf2ab979d6ddf1d28"
-    },
-    {
-      "bytes": 3128,
       "path": "absolute_price_variance_rate_10000ms.txt",
       "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
     },
     {
-      "bytes": 1112,
+      "bytes": 1809,
       "path": "absolute_price_variance_rate_10000ms_meta.json",
-      "sha256": "3890e79687705b97d95b4c237ef2e3bed14b177ee514aab6f0cb6c3983a7b98d"
+      "sha256": "801382d366406d3679bc1962fa202b5d0bdb7a1518c91aab3b9691a222e7d7e8"
     },
     {
       "bytes": 3128,
@@ -126,9 +21,9 @@
       "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
     },
     {
-      "bytes": 1112,
+      "bytes": 1809,
       "path": "absolute_price_variance_rate_30000ms_meta.json",
-      "sha256": "4e65ec4b7af7dd63d8895ef29e74bed20c9b8f3d9e0675130983cc53a5853737"
+      "sha256": "69b83d311fae60d55ac075d838d6f7247d9872e6539d1c92150ee156a8c1924e"
     },
     {
       "bytes": 3128,
@@ -136,9 +31,119 @@
       "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
     },
     {
-      "bytes": 1112,
+      "bytes": 1809,
       "path": "absolute_price_variance_rate_60000ms_meta.json",
-      "sha256": "52a367c9f299371d852671c1eabd4997c8df8723988063517c354b59f411e10e"
+      "sha256": "e56ec45772c8d53fc71a60ff6a886073d1226b782b9b38575de0e6802c2d41c6"
+    },
+    {
+      "bytes": 5506,
+      "path": "public_input_model.json",
+      "sha256": "66acb7a29a1f3bcfb62ee85a966a93816938ca03c9d28a090cf917c98a2f6fc9"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_price_change_fraction_10000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1756,
+      "path": "touch_conditioned_price_change_fraction_10000ms_meta.json",
+      "sha256": "92abeff8bea608d075aa32f1b156d01b688af37e1fdb9ed744c4972b9cb62721"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_price_change_fraction_30000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1756,
+      "path": "touch_conditioned_price_change_fraction_30000ms_meta.json",
+      "sha256": "425de8d5510977319645e44b67069398909a86ca9ab2a6c7aec43c78fb6205f8"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_price_change_fraction_60000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1756,
+      "path": "touch_conditioned_price_change_fraction_60000ms_meta.json",
+      "sha256": "e9c9cfab76b5e0994b4ceb68ddbcf5544e300d6d92c08164a7477f7d9c9a2b34"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_up_probability_10000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1749,
+      "path": "touch_conditioned_up_probability_10000ms_meta.json",
+      "sha256": "181c0ab723c37f36e05c353ec0901f69fc00501df3c4a619083e4905652457a4"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_up_probability_30000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1749,
+      "path": "touch_conditioned_up_probability_30000ms_meta.json",
+      "sha256": "f0a4bf5396ee2aba5b227713813c4eeb473e3b0b8037f5d0d9e3bc009f03bee6"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_conditioned_up_probability_60000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1749,
+      "path": "touch_conditioned_up_probability_60000ms_meta.json",
+      "sha256": "0ff03a4b06c482ebe06563f07fac7cef380abc110e791788f9ebd53fb38aefed"
+    },
+    {
+      "bytes": 571,
+      "path": "touch_probability.json",
+      "sha256": "d3b8a906fc73aabbe51e336464d2b10f5c844703339b3c53f7978961f14c5aae"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_side_adverse_probability_ask_10000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1751,
+      "path": "touch_side_adverse_probability_ask_10000ms_meta.json",
+      "sha256": "49c791166dbc6e4537449cd45c50df10d550c9e9ce1c4c473cb2ce3888ba96cf"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_side_adverse_probability_ask_5000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1750,
+      "path": "touch_side_adverse_probability_ask_5000ms_meta.json",
+      "sha256": "058bae4af944ba985993eed2d6f50265d1c2aa0fb994274b7087e1b4ccb97409"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_side_adverse_probability_bid_10000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1751,
+      "path": "touch_side_adverse_probability_bid_10000ms_meta.json",
+      "sha256": "1b4575613aa6cac6e3bcf53bb7a20f747181dad6496f736a2fe4aadbc2a0d482"
+    },
+    {
+      "bytes": 3128,
+      "path": "touch_side_adverse_probability_bid_5000ms.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 1750,
+      "path": "touch_side_adverse_probability_bid_5000ms_meta.json",
+      "sha256": "718d6c89d1296df32dc208cee318b90b38db24f81495f291a3b07055bb9293d8"
     }
   ],
   "schema_version": "narrowgate_public_dry_run_model_bundle.v1",

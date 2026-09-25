@@ -74,19 +74,33 @@
       "depends_on": [
         "dual_market_features"
       ],
-      "implementation_status": "bounded_two_market_Tardis_reference_producer_and_paired_direction_model_economic_entries_implemented_pending_real_input_admission",
-      "execution_status": "reference_fact_transport_in_progress_no_real_F04_fit_or_economic_replay_completed",
+      "implementation_status": "bounded_two_market_Tardis_pair_completed_under_frozen_pre_migration_source; current_semantic_version_acceptance_pending",
+      "execution_status": "first_eight_day_fit_two_arm_development014_comparison_verified; both_arms_negative; family_open",
       "candidate_budget": {
         "frozen_first_batch_fit_utc_days": 8,
         "new_M0_M1_fit_calls_budgeted": 2,
-        "new_M0_M1_fit_calls_completed": 0,
+        "new_M0_M1_fit_calls_completed": 2,
         "paired_full_account_replays_budgeted": 2,
-        "paired_full_account_replays_completed": 0,
+        "paired_full_account_replays_completed": 2,
         "conditional_existing_F03_reference_replay_budgeted": 1,
         "additional_candidates_or_evaluation_accounts_budgeted": 0
       },
       "public_results": null,
-      "remaining_scope": "verify_all_bound_BTCUSDT_reference_facts_and_fit_labels_then_daylight_reference_bundles_paired_real_fits_and_one_common_account_M0_M1_complete_economics; existing_F03_reference_only_if_strict_comparability_fails"
+      "verified_first_batch": {
+        "availability": "private_not_distributed",
+        "source_commit": "e27e8f50a95c4d9b843c41e8358ee7141bc4efd7",
+        "comparison_artifact": "F04 frozen first-batch development014 comparison.json",
+        "comparison_sha256": "a2a91a2c7a03b4d1273564b7da1169333452eb7fd0f022b5dbb070a364e50fe8",
+        "M0_net_pnl_usdc": -14.915664464194533,
+        "M1_net_pnl_usdc": -10.683021109346399,
+        "M1_minus_M0_usdc": 4.232643354848134,
+        "verification": "original_frozen_reader_revalidated_trace_hashes_counts_no_truncation_common_environment_inventory_fees_and_accounting_decomposition; recomputed_comparison_exactly_equal; both_models_reloaded",
+        "new_fits_during_verification": 0,
+        "new_replays_during_verification": 0,
+        "not_current_migration_economic_acceptance": true,
+        "independent_accounts_not_continuous_return": true
+      },
+      "remaining_scope": "current_semantic_version_F04_assembly_acceptance_and_broader_family_research_remain; original_first_pair_has_zero_remaining_fit_or_replay_budget; no_repeat_or_retune; additional_F03_control_not_executed"
     },
     {
       "id": 5,

@@ -103,7 +103,7 @@ def _run_restored_order(*, queue_left=None, last_requote_ts_ms=9_500):
     if queue_left is not None:
         order["queue_left"] = queue_left
     params = {
-        "gamma": 0.01, "kappa": 1.0, "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "execution_intensity_slope": 1.0, "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0, "taker_fee": 0.0, "order_size": 0.001,
         "max_inventory": 0.02, "new_order_latency_ms": 10_000,
         "cancel_order_latency_ms": 100, "queue_base": 0.25, "queue_decay": 0.0,

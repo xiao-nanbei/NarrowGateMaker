@@ -23,7 +23,7 @@ import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 from research.families.f06_placement_fill_cif.audit import (
     placement_marginal_fill_value_feasibility as marginal_value,
 )
@@ -95,7 +95,7 @@ def _identity(path: Path) -> dict[str, Any]:
 
 def _require_identity(identity: Mapping[str, Any], *, label: str) -> Path:
     raw = Path(str(identity["path"])).expanduser()
-    path = relocate_marketdata_path(raw).resolve()
+    path = resolve_portable_path(raw).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"{label} missing: {path}")
     if sha256_file(path) != str(identity["sha256"]):

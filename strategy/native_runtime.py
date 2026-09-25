@@ -19,7 +19,7 @@ NATIVE_REPLACE_CONTINUATION_METHODS = (
     "take_ready", "finalize_decision", "drop_in_flight", "clear_all", "telemetry",
 )
 
-APPLICATION_INTERFACE_VERSION = 20260927
+APPLICATION_INTERFACE_VERSION = 20260928
 
 
 def load_native_module(*, optional: bool = False) -> Any:

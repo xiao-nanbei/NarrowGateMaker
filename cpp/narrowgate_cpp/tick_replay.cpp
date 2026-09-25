@@ -5944,25 +5944,25 @@ void TickReplayInput::validate() const {
         require_same_size(ml_ts_ms.size(), ml_tox_ask.size(), "ml_tox_ask");
     }
     const bool has_conditional_p3 =
-        !p3_ts_ms.empty() || !p3_delta_star.empty() || !p3_kappa_eff.empty();
+        !p3_ts_ms.empty() || !p3_distance_touch_product_argmax.empty() || !p3_touch_log_probability_distance_slope.empty();
     if (has_conditional_p3) {
         if (p3_ts_ms.empty()) {
             throw std::invalid_argument(
                 "conditional P3 values require non-empty p3_ts_ms"
             );
         }
-        require_same_size(p3_ts_ms.size(), p3_delta_star.size(), "p3_delta_star");
-        require_same_size(p3_ts_ms.size(), p3_kappa_eff.size(), "p3_kappa_eff");
+        require_same_size(p3_ts_ms.size(), p3_distance_touch_product_argmax.size(), "p3_distance_touch_product_argmax");
+        require_same_size(p3_ts_ms.size(), p3_touch_log_probability_distance_slope.size(), "p3_touch_log_probability_distance_slope");
         for (std::size_t i = 0; i < p3_ts_ms.size(); ++i) {
             if (i > 0 && p3_ts_ms.data()[i] <= p3_ts_ms.data()[i - 1]) {
                 throw std::invalid_argument(
                     "conditional P3 timestamps must be strictly increasing"
                 );
             }
-            if (!std::isfinite(p3_delta_star.data()[i]) ||
-                p3_delta_star.data()[i] <= 0.0 ||
-                !std::isfinite(p3_kappa_eff.data()[i]) ||
-                p3_kappa_eff.data()[i] <= 0.0) {
+            if (!std::isfinite(p3_distance_touch_product_argmax.data()[i]) ||
+                p3_distance_touch_product_argmax.data()[i] <= 0.0 ||
+                !std::isfinite(p3_touch_log_probability_distance_slope.data()[i]) ||
+                p3_touch_log_probability_distance_slope.data()[i] <= 0.0) {
                 throw std::invalid_argument(
                     "conditional P3 delta_star and kappa_eff must be finite and positive"
                 );
@@ -8861,8 +8861,8 @@ TickReplayResult simulate_tick_arrays(
 
         QuoteCoreConfig quote_cfg = params.quote;
         if (p3_ready) {
-            quote_cfg.p3_delta_star = input.p3_delta_star.data()[p3_idx];
-            quote_cfg.p3_kappa_eff = input.p3_kappa_eff.data()[p3_idx];
+            quote_cfg.p3_distance_touch_product_argmax = input.p3_distance_touch_product_argmax.data()[p3_idx];
+            quote_cfg.p3_touch_log_probability_distance_slope = input.p3_touch_log_probability_distance_slope.data()[p3_idx];
         }
         quote_cfg.order_size = order_size;
         quote_cfg.max_inventory = params.max_inventory;

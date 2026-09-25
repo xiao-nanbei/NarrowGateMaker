@@ -386,8 +386,8 @@ struct TickReplayInput {
     // static QuoteCoreConfig values until the first ready row, then holds the
     // latest row exactly like the 10-second ML prediction surface.
     ArrayView<std::int64_t> p3_ts_ms;
-    ArrayView<double> p3_delta_star;
-    ArrayView<double> p3_kappa_eff;
+    ArrayView<double> p3_distance_touch_product_argmax;
+    ArrayView<double> p3_touch_log_probability_distance_slope;
     // Per-ready-ML-row contribution from scorer features that are not
     // overwritten by the current quote context. Python compiles categorical
     // values and arbitrary Prediction.feature_dict fields once; C++ combines

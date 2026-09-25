@@ -39,6 +39,10 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
         if digest(path) != spec.get("metadata_sha256") or digest(root / f"{name}.txt") != spec.get("sha256"):
             raise ValueError("public model artifact identity mismatch")
         meta = json.loads(path.read_text())
+        if (meta.get("feature_timestamp_semantics") != "feature_ready_index"
+                or meta.get("feature_cutoff_semantics") != "feature_ready_index"
+                or "feature_bucket_ms" in meta):
+            raise ValueError("current model requires unambiguous feature_ready_index metadata; offline migration required")
         names = spec.get("feature_cols")
         if (not names or len(names) != len(set(names)) or not set(names) <= set(EXECUTION_FEATURE_NAMES)
                 or meta.get("feature_cols") != names or spec.get("missing_policy") != "native_nan"):
@@ -67,6 +71,14 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
     if len(schemas) != 1:
         raise ValueError("public model heads have different input schemas")
     if live:
+        fixture_path = root / "fixture_manifest.json"
+        if fixture_path.exists():
+            digest(fixture_path)
+            fixture = json.loads(fixture_path.read_text())
+            if fixture.get("synthetic") is True:
+                raise ValueError("synthetic model bundle cannot enter remote deployment")
+            if not isinstance(fixture.get("authority"), dict) or fixture["authority"].get("live") is not True:
+                raise ValueError("bundle fixture manifest requires authority.live=true")
         authorization_path = root / "live_input_authorization.json"
         digest(authorization_path)
         authorization = json.loads(authorization_path.read_text())
@@ -77,4 +89,7 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
                 or authorization.get("owner_authorized") is not True
                 or authorization.get("economic_promotion_claim") is not False):
             raise ValueError("explicit hash-bound live input authorization required")
+        p3_path = root / "touch_probability.json"
+        if p3_path.exists() and authorization.get("p3_sha256") != digest(p3_path):
+            raise ValueError("P3 hash mismatch in live input authorization")
     return metadata

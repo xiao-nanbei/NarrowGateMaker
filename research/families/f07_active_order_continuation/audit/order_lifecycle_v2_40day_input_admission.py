@@ -22,7 +22,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 from execution.order_lifecycle_journal_v2 import (
     ORDER_LIFECYCLE_JOURNAL_V2_COLUMNS,
     ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
@@ -346,7 +346,7 @@ def _resolve_path(value: object, *, base: Path) -> Path:
     raw = Path(_required_id(value, label="artifact path")).expanduser()
     if not raw.is_absolute():
         raw = base / raw
-    relocated = relocate_marketdata_path(raw)
+    relocated = resolve_portable_path(raw)
     return relocated.resolve()
 
 

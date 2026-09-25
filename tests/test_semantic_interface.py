@@ -55,7 +55,7 @@ def test_python_strategy_rejects_gamma():
 
 def test_python_quote_requires_explicit_coefficients():
     from strategy.quote_core import QuoteCoreConfig
-    required = dict(kappa=0.05, tick_size=0.1, lot_size=0.001,
+    required = dict(execution_intensity_slope=0.05, risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., tick_size=0.1, lot_size=0.001,
                     maker_fee=0.0, order_size=0.001, max_inventory=0.01)
     with pytest.raises(TypeError):
         QuoteCoreConfig(**required, gamma=0.046)

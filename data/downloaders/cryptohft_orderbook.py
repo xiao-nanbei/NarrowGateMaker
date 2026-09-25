@@ -59,11 +59,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from data_paths import (  # noqa: E402
-    PROJECT_DATASET_NAME,
     daily_market_path,
     marketdata_root,
     raw_data_root,
-    relocate_marketdata_path,
 )
 from market_fusion import normalize_symbol  # noqa: E402
 
@@ -1947,7 +1945,7 @@ class DailyOutputWriter:
 
 
 def daily_raw_for_hour(path: Path) -> Path:
-    """Resolve a legacy hour locator to its lossless daily container."""
+    """Locate a provider-hour slice only in its explicitly selected storage."""
     path = path.expanduser().resolve()
     symbol = path.name.removesuffix("_orderbook.parquet.zst")
     if "NARROWGATE_DAILY_ORDERBOOK_ROOT" in os.environ:
@@ -1957,26 +1955,7 @@ def daily_raw_for_hour(path: Path) -> Path:
     # no retired supplier directory or symlink is needed.
     adjacent = (path.parents[3] / path.parents[2].name / symbol / path.parents[1].name
                 / "incremental_book_L2.parquet")
-    if adjacent.is_file():
-        return adjacent
-    # A missing file under an explicit input root is missing, not permission
-    # to borrow the owner's global day. Only known supplier-era entry points
-    # (including their registered relocations) retain that migration bridge.
-    legacy_roots = (
-        marketdata_root() / "cryptohftdata",
-        marketdata_root() / PROJECT_DATASET_NAME / "datasets/raw/cryptohftdata",
-        _default_raw_root(),
-    )
-    mapped_root = relocate_marketdata_path(path.parents[3])
-    if path.parents[2].name == DEFAULT_EXCHANGE and any(
-        mapped_root == relocate_marketdata_path(root) for root in legacy_roots
-    ):
-        canonical = daily_market_path(path.parents[1].name, symbol, "incremental_book_L2")
-        if canonical.is_file():
-            return canonical
-    root = Path(os.environ.get("NARROWGATE_DAILY_ORDERBOOK_ROOT",
-                               str(path.parents[3].parent / "tardis_compatible")))
-    return root / path.parents[2].name / symbol / "incremental_book_L2" / f"{path.parents[1].name}.parquet"
+    return adjacent
 
 
 def raw_hour_storage_path(path: Path) -> Path:

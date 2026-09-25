@@ -343,12 +343,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -945,7 +945,6 @@ void bind_quote_core(py::module_& m) {
     config.def(py::init<>());
 
 #define BIND_QUOTE_CONFIG_FIELD(field) config.def_readwrite(#field, &QuoteCoreConfig::field)
-    BIND_QUOTE_CONFIG_FIELD(kappa);
     BIND_QUOTE_CONFIG_FIELD(tick_size);
     BIND_QUOTE_CONFIG_FIELD(lot_size);
     BIND_QUOTE_CONFIG_FIELD(maker_fee);
@@ -971,8 +970,8 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(liquidity_spread_scale_max);
     BIND_QUOTE_CONFIG_FIELD(vol_power);
     BIND_QUOTE_CONFIG_FIELD(kappa_ratio);
-    BIND_QUOTE_CONFIG_FIELD(p3_delta_star);
-    BIND_QUOTE_CONFIG_FIELD(p3_kappa_eff);
+    BIND_QUOTE_CONFIG_FIELD(p3_distance_touch_product_argmax);
+    BIND_QUOTE_CONFIG_FIELD(p3_touch_log_probability_distance_slope);
     BIND_QUOTE_CONFIG_FIELD(use_bar_pricing);
     BIND_QUOTE_CONFIG_FIELD(use_depth_weighted_mid_proxy);
     BIND_QUOTE_CONFIG_FIELD(use_depth_kappa);
@@ -980,7 +979,6 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(kappa_levels);
     BIND_QUOTE_CONFIG_FIELD(kappa_depth_baseline);
     BIND_QUOTE_CONFIG_FIELD(depth_kappa_ratio);
-    BIND_QUOTE_CONFIG_FIELD(ber_spread_mult);
     BIND_QUOTE_CONFIG_FIELD(markout_spread_scale);
     BIND_QUOTE_CONFIG_FIELD(markout_side_asymmetry_sign);
     BIND_QUOTE_CONFIG_FIELD(inventory_skew_strength);
@@ -1037,7 +1035,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(risk_per_order);
     BIND_QUOTE_CONFIG_FIELD(execution_intensity_slope);
     BIND_QUOTE_CONFIG_FIELD(risk_horizon_s);
-    BIND_QUOTE_CONFIG_FIELD(historical_p3_scalar_adapter_enabled);
+    BIND_QUOTE_CONFIG_FIELD(p3_pair_spread_projection_enabled);
     BIND_QUOTE_CONFIG_FIELD(p3_side_bbo_floor_enabled);
     BIND_QUOTE_CONFIG_FIELD(p3_identity_required);
     BIND_QUOTE_CONFIG_FIELD(p3_event_type);

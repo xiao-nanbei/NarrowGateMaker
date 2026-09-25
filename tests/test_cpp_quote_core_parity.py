@@ -674,7 +674,9 @@ def _cfg(**overrides):
         eta_inventory=0.01,
         a_spread=0.01,
         risk_per_order=0.01,
-        kappa=1.0,
+        execution_intensity_slope=1.0,
+        risk_horizon_s=1.0,
+        trade_intensity_acceleration_spread_mult=2.0,
         tick_size=0.1,
         lot_size=0.001,
         maker_fee=0.0,
@@ -715,7 +717,9 @@ def test_spread_cap_missing_field_defaults_fail_closed_in_python_and_cpp():
             "a_spread": 0.01,
             "risk_per_order": 0.01,
             "inventory_reference_qty": 1.0,
-            "kappa": 1.0,
+            "execution_intensity_slope": 1.0,
+            "risk_horizon_s": 1.0,
+            "trade_intensity_acceleration_spread_mult": 2.0,
             "maker_fee": 0.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
@@ -865,8 +869,8 @@ def test_cpp_quote_core_scalar_parity(monkeypatch):
         (
             _state(1, inventory=0.004),
             _cfg(
-                p3_delta_star=0.5,
-                p3_kappa_eff=0.1,
+                p3_distance_touch_product_argmax=0.5,
+                p3_touch_log_probability_distance_slope=0.1,
                 p3_side_bbo_floor_enabled=True,
                 p3_event_type="touch",
                 p3_horizon_s=10.0,
@@ -896,12 +900,12 @@ def test_cpp_quote_core_scalar_parity(monkeypatch):
 
 def test_cpp_p3_side_floor_constraint_flags_are_side_specific(monkeypatch):
     cfg = _cfg(
-        kappa=0.1,
+        execution_intensity_slope=0.1,
         ml_enabled=False,
         dynamic_cap_enabled=False,
         max_spread_bps=0.0,
         inventory_skew_strength=2.0,
-        p3_delta_star=0.1,
+        p3_distance_touch_product_argmax=0.1,
         p3_side_bbo_floor_enabled=True,
         p3_event_type="touch",
         p3_horizon_s=10.0,
@@ -998,6 +1002,7 @@ def test_cpp_quote_core_horizon_and_absolute_price_risk_contract(monkeypatch):
     )
     cfg = _cfg(
         quote_horizon_s=5.0,
+        risk_horizon_s=5.0,
         pnl_volatility_horizon_s=25.0,
         exit_urgency_strength=1.0,
         urgency_time_weight=0.0,
@@ -1293,7 +1298,7 @@ def test_deferred_live_quote_pod_reads_do_not_materialize(monkeypatch):
         "kappa_used",
         "asym",
         "p3_side_bbo_floor_enabled",
-        "p3_touch_delta_star",
+        "p3_distance_touch_product_argmax",
     ):
         _assert_recursive_exact(
             deferred.diagnostic_value(key), eager.diagnostics[key]
@@ -1511,7 +1516,10 @@ def test_direct_cpp_p3_projection_requires_complete_touch_identity() -> None:
     cpp_cfg = narrowgate_cpp.QuoteCoreConfig()
     cpp_cfg.eta_inventory = 0.01
     cpp_cfg.risk_per_order = 0.01
-    cpp_cfg.p3_delta_star = 0.5
+    cpp_cfg.execution_intensity_slope = 1.0
+    cpp_cfg.risk_horizon_s = 1.0
+    cpp_cfg.trade_intensity_acceleration_spread_mult = 2.0
+    cpp_cfg.p3_distance_touch_product_argmax = 0.5
     cpp_cfg.p3_side_bbo_floor_enabled = True
     cpp_state = qc._copy_attrs(
         _state(1), narrowgate_cpp.QuoteState(), qc._CPP_STATE_FIELDS
@@ -2195,9 +2203,9 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
             use_bar_pricing=False,
             use_depth_weighted_mid_proxy=True,
             use_depth_kappa=True,
-            historical_p3_scalar_adapter_enabled=True,
-            p3_delta_star=0.2,
-            p3_kappa_eff=0.7,
+            p3_pair_spread_projection_enabled=True,
+            p3_distance_touch_product_argmax=0.2,
+            p3_touch_log_probability_distance_slope=0.7,
             p3_event_type="touch",
             p3_horizon_s=10.0,
             p3_distance_origin="same_side_best_bid_or_ask_at_window_start",
@@ -2209,7 +2217,7 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
         _cfg(
             use_bar_pricing=False,
             use_depth_weighted_mid_proxy=True,
-            p3_delta_star=0.2,
+            p3_distance_touch_product_argmax=0.2,
             p3_side_bbo_floor_enabled=True,
             p3_event_type="touch",
             p3_horizon_s=10.0,
@@ -2517,8 +2525,8 @@ def test_fused_native_tick_lot_prefix_never_consumes_invalid_level():
         ({"risk_horizon_s": -1.0}, "risk_horizon_s must be positive and finite"),
         (
             {
-                "historical_p3_scalar_adapter_enabled": True,
-                "p3_delta_star": 0.1,
+                "p3_pair_spread_projection_enabled": True,
+                "p3_distance_touch_product_argmax": 0.1,
             },
             "active P3 projection requires the complete touch identity",
         ),

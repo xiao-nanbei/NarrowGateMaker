@@ -34,7 +34,7 @@ def delivery_identity(profile):
 def validate_calibration_consumer(p3, consumer, day, *, tick_size=0.1):
     from research.families.f03_causal_13_head.time_weighted_evaluation import TRAIN_DAYS
     meta = p3.get("metadata", {})
-    if (p3.get("schema_version") != "narrowgate_p3_touch_calibration.v3"
+    if (p3.get("schema_version") != "narrowgate_p3_touch_calibration.v4"
             or p3.get("model_type") != "empirical_survival"
             or meta.get("fit_days") != list(TRAIN_DAYS)
             or meta.get("distance_unit") != "USDC_per_BTC"
@@ -85,7 +85,7 @@ def training_identity(path):
     if not model_path.is_file() or hashlib.sha256(model_path.read_bytes()).hexdigest() != calibration.get("sha256"):
         raise ValueError("new P3 calibration identity mismatch")
     p3 = json.loads(model_path.read_text())
-    if (p3.get("schema_version") != "narrowgate_p3_touch_calibration.v3"
+    if (p3.get("schema_version") != "narrowgate_p3_touch_calibration.v4"
             or p3.get("model_type") != "empirical_survival"
             or p3.get("metadata", {}).get("fit_days") != list(TRAIN_DAYS)):
         raise ValueError("new P3 training support mismatch")
@@ -251,7 +251,7 @@ def build_label_day(bundle, *, day, config_path, output):
     model_root = Path(config["ml"]["model_dir"]).expanduser()
     if not model_root.is_absolute():
         model_root = ROOT / model_root
-    calibration_path = model_root / "fill_prob_params.json"
+    calibration_path = model_root / "touch_probability.json"
     validate_calibration_consumer(json.loads(calibration_path.read_text()), source.manifest, day,
                                  tick_size=config.get("tick_size"))
     source.source_paths()

@@ -9,7 +9,7 @@ from research.families.f02_empirical_p3_touch.touch_probability import TouchProb
 
 PUBLIC_P3 = (
     Path(__file__).resolve().parents[1]
-    / "examples/public_dry_run_model_bundle/fill_prob_params.json"
+    / "examples/public_dry_run_model_bundle/touch_probability.json"
 )
 
 
@@ -18,7 +18,7 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
         model_type="empirical_survival",
         delta_grid=[0.1, 1.0, 2.0, 4.0],
         probability_grid=[0.8, 0.5, 0.25, 0.05],
-        schema_version="narrowgate_p3_touch_calibration.v3",
+        schema_version="narrowgate_p3_touch_calibration.v4",
         metadata={
             "event_type": "touch",
             "horizon_s": 10.0,
@@ -26,7 +26,7 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
             "fit_days": ["2026-01-01"],
         },
     )
-    path = tmp_path / "fill_prob_params.json"
+    path = tmp_path / "touch_probability.json"
     model.save(path)
     original_read = Path.read_bytes
     raw = path.read_bytes()
@@ -50,7 +50,7 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
     assert reads == 1
     monkeypatch.setattr(Path, "read_bytes", original_read)
     path.write_bytes(raw)
-    assert loaded.schema_version == "narrowgate_p3_touch_calibration.v3"
+    assert loaded.schema_version == "narrowgate_p3_touch_calibration.v4"
     assert loaded.model_type == "empirical_survival"
     assert loaded.metadata["horizon_s"] == 10.0
     assert loaded.semantic_identity() == {
@@ -66,8 +66,8 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
     assert loaded.distance_touch_product_argmax() > 0.0
     assert loaded.touch_log_probability_distance_slope() > 0.0
     payload = json.loads(path.read_text())
-    assert payload["delta_star"] > 0.0
-    assert payload["kappa_eff"] > 0.0
+    assert payload["distance_touch_product_argmax"] > 0.0
+    assert payload["touch_log_probability_distance_slope"] > 0.0
     assert payload["metadata"]["event_type"] == "touch"
     assert payload["metadata"]["distance_origin"] == (
         "same_side_best_bid_or_ask_at_window_start"
@@ -77,11 +77,11 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
 
 
 def test_missing_touch_identity_is_rejected_without_rewriting(tmp_path):
-    path = tmp_path / "fill_prob_params.json"
+    path = tmp_path / "touch_probability.json"
     path.write_text(
         json.dumps(
             {
-                "schema_version": "narrowgate_p3_touch_calibration.v3",
+                "schema_version": "narrowgate_p3_touch_calibration.v4",
                 "model_type": "empirical_survival",
                 "delta_grid": [0.1, 1.0, 2.0],
                 "probability_grid": [0.8, 0.4, 0.1],
@@ -102,11 +102,11 @@ def test_missing_touch_identity_is_rejected_without_rewriting(tmp_path):
 
 
 def test_unversioned_su_artifact_is_rejected(tmp_path):
-    path = tmp_path / "fill_prob_params.json"
+    path = tmp_path / "touch_probability.json"
     path.write_text(json.dumps({"xi": 0.0, "lam": 1.0, "gamma": 0.0, "delta0": 1.0}))
     with pytest.raises(ValueError, match="unsupported P3 schema"):
         TouchProbabilityModel.load(path)
-    payload = json.loads(path.read_bytes()) | {"kappa_eff": 1.0, "delta_star": 1.0}
+    payload = json.loads(path.read_bytes()) | {"touch_log_probability_distance_slope": 1.0, "distance_touch_product_argmax": 1.0}
     with pytest.raises(ValueError, match="unsupported P3 schema"):
         TouchProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
 
@@ -124,7 +124,7 @@ def test_explicit_old_schema_is_rejected_even_with_complete_identity():
         TouchProbabilityModel.from_bytes(json.dumps(payload).encode())
 
 
-@pytest.mark.parametrize("field", ("kappa_eff", "delta_star"))
+@pytest.mark.parametrize("field", ("touch_log_probability_distance_slope", "distance_touch_product_argmax"))
 @pytest.mark.parametrize("value", (None, 0.0, -1.0, float("nan"), float("inf"), False, "invalid"))
 def test_live_p3_rejects_invalid_stored_scalars(field, value):
     payload = json.loads(PUBLIC_P3.read_bytes())

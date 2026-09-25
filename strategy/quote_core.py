@@ -34,7 +34,7 @@ QUOTE_CORE_UNIT_ABI_FIELDS = (
     "risk_per_order",
     "execution_intensity_slope",
     "risk_horizon_s",
-    "historical_p3_scalar_adapter_enabled",
+    "p3_pair_spread_projection_enabled",
     "p3_side_bbo_floor_enabled",
     "p3_identity_required",
     "p3_event_type",
@@ -228,7 +228,6 @@ class QuoteState:
 
 @dataclass(frozen=True)
 class QuoteCoreConfig:
-    kappa: float
     tick_size: float
     lot_size: float
     maker_fee: float
@@ -260,8 +259,8 @@ class QuoteCoreConfig:
     vol_power: float = 1.0
 
     kappa_ratio: float = 0.3
-    p3_delta_star: float = 0.0
-    p3_kappa_eff: float = 0.0
+    p3_distance_touch_product_argmax: float = 0.0
+    p3_touch_log_probability_distance_slope: float = 0.0
 
     use_bar_pricing: bool = True
     use_depth_weighted_mid_proxy: bool = False
@@ -271,7 +270,6 @@ class QuoteCoreConfig:
     kappa_depth_baseline: float = 50.0
     depth_kappa_ratio: float = 0.3
 
-    ber_spread_mult: float = 2.0
     markout_spread_scale: float = 0.0
     # -1 preserves the historical implementation; +1 favors the side with the
     # better maker-signed markout.  Keep explicit so the sign can be A/B tested.
@@ -377,7 +375,7 @@ class QuoteCoreConfig:
     # switch reproduces B0's pooled pair-floor/touch-slope adapter.  The side
     # switch applies the distance in its true same-side-BBO coordinates and is
     # a behavior-changing research candidate.  They are mutually exclusive.
-    historical_p3_scalar_adapter_enabled: bool = False
+    p3_pair_spread_projection_enabled: bool = False
     p3_side_bbo_floor_enabled: bool = False
 
     # Canonical name for the old BER multiplier.  The underlying state is a
@@ -391,29 +389,15 @@ class QuoteCoreConfig:
         eta_inventory = finite_positive_quote_coefficient("eta_inventory", self.eta_inventory)
         a_spread = finite_positive_quote_coefficient("a_spread", self.a_spread)
         risk_per_order = finite_positive_quote_coefficient("risk_per_order", self.risk_per_order)
-        execution_intensity_slope = (
-            finite_positive_quote_coefficient("kappa", self.kappa)
-            if self.execution_intensity_slope is None
-            else finite_positive_quote_coefficient(
-                "execution_intensity_slope", self.execution_intensity_slope
-            )
+        execution_intensity_slope = finite_positive_quote_coefficient(
+            "execution_intensity_slope", self.execution_intensity_slope
         )
-        risk_horizon_s = (
-            finite_positive_quote_coefficient(
-                "quote_horizon_s", self.quote_horizon_s
-            )
-            if self.risk_horizon_s is None
-            else finite_positive_quote_coefficient(
-                "risk_horizon_s", self.risk_horizon_s
-            )
+        risk_horizon_s = finite_positive_quote_coefficient(
+            "risk_horizon_s", self.risk_horizon_s
         )
-        acceleration_spread_mult = (
-            finite_positive_quote_coefficient("ber_spread_mult", self.ber_spread_mult)
-            if self.trade_intensity_acceleration_spread_mult is None
-            else finite_positive_quote_coefficient(
-                "trade_intensity_acceleration_spread_mult",
-                self.trade_intensity_acceleration_spread_mult,
-            )
+        acceleration_spread_mult = finite_positive_quote_coefficient(
+            "trade_intensity_acceleration_spread_mult",
+            self.trade_intensity_acceleration_spread_mult,
         )
         object.__setattr__(self, "inventory_reference_qty", inventory_reference_qty)
         object.__setattr__(self, "eta_inventory", eta_inventory)
@@ -429,7 +413,7 @@ class QuoteCoreConfig:
             acceleration_spread_mult,
         )
         if (
-            self.historical_p3_scalar_adapter_enabled
+            self.p3_pair_spread_projection_enabled
             and self.p3_side_bbo_floor_enabled
         ):
             raise ValueError(
@@ -447,10 +431,10 @@ class QuoteCoreConfig:
             )
         )
         p3_projection_active = (
-            self.historical_p3_scalar_adapter_enabled
-            and (self.p3_delta_star > 0.0 or self.p3_kappa_eff > 0.0)
+            self.p3_pair_spread_projection_enabled
+            and (self.p3_distance_touch_product_argmax > 0.0 or self.p3_touch_log_probability_distance_slope > 0.0)
         ) or (
-            self.p3_side_bbo_floor_enabled and self.p3_delta_star > 0.0
+            self.p3_side_bbo_floor_enabled and self.p3_distance_touch_product_argmax > 0.0
         )
         if self.p3_identity_required or has_p3_identity:
             validate_p3_touch_identity(
@@ -608,8 +592,8 @@ class DeferredNativeQuoteCoreResult:
             return getattr(self._native_result, key)
         if key == "p3_side_bbo_floor_enabled":
             return self._cfg.p3_side_bbo_floor_enabled
-        if key == "p3_touch_delta_star":
-            return self._cfg.p3_delta_star
+        if key == "p3_distance_touch_product_argmax":
+            return self._cfg.p3_distance_touch_product_argmax
         return self.materialize().diagnostics.get(key, default)
 
     def materialize(self) -> QuoteCoreResult:
@@ -1334,8 +1318,8 @@ def _side_defense_state(
 def quote_core_config_from_live_config(
     cfg: Any,
     *,
-    p3_delta_star: float = 0.0,
-    p3_kappa_eff: float = 0.0,
+    p3_distance_touch_product_argmax: float = 0.0,
+    p3_touch_log_probability_distance_slope: float = 0.0,
     p3_identity: Mapping[str, Any] | None = None,
     f03_ret_action_horizon_s: float = 0.0,
     f03_ret_action_compatible: bool = False,
@@ -1387,8 +1371,8 @@ def quote_core_config_from_live_config(
         strategy, "execution_intensity_slope", None
     )
     risk_horizon_s = getattr(strategy, "risk_horizon_s", None)
-    historical_p3_scalar_adapter_enabled = bool(
-        getattr(strategy, "historical_p3_scalar_adapter_enabled", True)
+    p3_pair_spread_projection_enabled = bool(
+        getattr(strategy, "p3_pair_spread_projection_enabled", True)
     )
     p3_side_bbo_floor_enabled = bool(
         getattr(strategy, "p3_side_bbo_floor_enabled", False)
@@ -1397,7 +1381,6 @@ def quote_core_config_from_live_config(
         strategy, "trade_intensity_acceleration_spread_mult", None
     )
     return QuoteCoreConfig(
-        kappa=float(strategy.kappa),
         tick_size=float(cfg.tick_size),
         lot_size=float(cfg.lot_size),
         maker_fee=float(fees.maker),
@@ -1425,8 +1408,8 @@ def quote_core_config_from_live_config(
         liquidity_spread_scale_max=float(getattr(regime, "liquidity_spread_scale_max", 3.0)) if regime else 3.0,
         vol_power=float(getattr(strategy, "vol_power", 1.0)),
         kappa_ratio=float(getattr(strategy, "kappa_ratio", 0.3)),
-        p3_delta_star=float(p3_delta_star),
-        p3_kappa_eff=float(p3_kappa_eff),
+        p3_distance_touch_product_argmax=float(p3_distance_touch_product_argmax),
+        p3_touch_log_probability_distance_slope=float(p3_touch_log_probability_distance_slope),
         p3_identity_required=p3_identity is not None,
         p3_event_type=str(normalized_p3_identity.get("event_type", "")),
         p3_horizon_s=float(normalized_p3_identity.get("horizon_s", 0.0)),
@@ -1447,7 +1430,6 @@ def quote_core_config_from_live_config(
             if mk_enabled else float(getattr(strategy, "kappa_depth_baseline", 50.0))
         ),
         depth_kappa_ratio=max(0.05, min(3.0, float(getattr(strategy, "depth_kappa_ratio", 0.3)))),
-        ber_spread_mult=float(getattr(strategy, "ber_spread_mult", 2.0)),
         markout_spread_scale=float(getattr(strategy, "markout_spread_scale", 0.0)),
         markout_side_asymmetry_sign=float(
             getattr(strategy, "markout_side_asymmetry_sign", 1.0)
@@ -1506,8 +1488,8 @@ def quote_core_config_from_live_config(
         risk_per_order=risk_per_order,
         execution_intensity_slope=execution_intensity_slope,
         risk_horizon_s=risk_horizon_s,
-        historical_p3_scalar_adapter_enabled=(
-            historical_p3_scalar_adapter_enabled
+        p3_pair_spread_projection_enabled=(
+            p3_pair_spread_projection_enabled
         ),
         p3_side_bbo_floor_enabled=p3_side_bbo_floor_enabled,
         trade_intensity_acceleration_spread_mult=acceleration_spread_mult,
@@ -1544,6 +1526,8 @@ def quote_core_config_from_params(
     order_size = finite_positive_quote_coefficient("order_size", params["order_size"])
     if "gamma" in params:
         raise ValueError("gamma is not a current quote parameter; migrate the configuration offline")
+    if "kappa" in params or "ber_spread_mult" in params:
+        raise ValueError("retired quote parameter; migrate kappa/ber_spread_mult offline")
     inventory_reference_qty = finite_positive_quote_coefficient(
         "inventory_reference_qty", params["inventory_reference_qty"]
     )
@@ -1554,28 +1538,20 @@ def quote_core_config_from_params(
         eta_inventory=eta_inventory,
         a_spread=a_spread,
         risk_per_order=params["risk_per_order"],
-        execution_intensity_slope=params.get(
-            "execution_intensity_slope", params["kappa"]
-        ),
-        risk_horizon_s=params.get(
-            "risk_horizon_s", params.get("quote_horizon_s", 1.0)
-        ),
-        historical_p3_scalar_adapter_enabled=bool(
+        execution_intensity_slope=params["execution_intensity_slope"],
+        risk_horizon_s=params["risk_horizon_s"],
+        p3_pair_spread_projection_enabled=bool(
             # Pre-unit-split replay bundles predate this explicit identity
             # field, but their B0 behavior always consumed the historical P3
             # pair-spread projection.  Defaulting a missing field to False
             # silently narrows those frozen quotes and breaks live/replay
             # behavior identity.
-            params.get("historical_p3_scalar_adapter_enabled", True)
+            params.get("p3_pair_spread_projection_enabled", True)
         ),
         p3_side_bbo_floor_enabled=bool(
             params.get("p3_side_bbo_floor_enabled", False)
         ),
-        trade_intensity_acceleration_spread_mult=params.get(
-            "trade_intensity_acceleration_spread_mult",
-            params.get("ber_spread_mult", 2.0),
-        ),
-        kappa=float(params["kappa"]),
+        trade_intensity_acceleration_spread_mult=params["trade_intensity_acceleration_spread_mult"],
         tick_size=float(tick_size),
         lot_size=float(lot_size),
         maker_fee=float(params["maker_fee"]),
@@ -1603,16 +1579,16 @@ def quote_core_config_from_params(
         liquidity_spread_scale_max=float(params.get("liquidity_spread_scale_max", 3.0)),
         vol_power=float(params.get("vol_power", 1.5)),
         kappa_ratio=float(params.get("kappa_ratio", 0.3)),
-        p3_delta_star=float(params.get("p3_delta_star", 0.0)),
-        p3_kappa_eff=float(params.get("p3_kappa_eff", 0.0)),
+        p3_distance_touch_product_argmax=float(params.get("p3_distance_touch_product_argmax", 0.0)),
+        p3_touch_log_probability_distance_slope=float(params.get("p3_touch_log_probability_distance_slope", 0.0)),
         p3_identity_required=bool(params.get("p3_identity_required", False)),
-        p3_event_type=str(params.get("fill_probability_event_type", "")),
-        p3_horizon_s=float(params.get("fill_probability_horizon_s", 0.0)),
-        p3_distance_origin=str(params.get("fill_probability_distance_origin", "")),
-        p3_distance_unit=str(params.get("fill_probability_distance_unit", "")),
-        p3_side=str(params.get("fill_probability_side", "")),
-        p3_queue_included=params.get("fill_probability_queue_included"),
-        p3_artifact_sha256=str(params.get("fill_probability_artifact_sha256", "")),
+        p3_event_type=str(params.get("touch_probability_event_type", "")),
+        p3_horizon_s=float(params.get("touch_probability_horizon_s", 0.0)),
+        p3_distance_origin=str(params.get("touch_probability_distance_origin", "")),
+        p3_distance_unit=str(params.get("touch_probability_distance_unit", "")),
+        p3_side=str(params.get("touch_probability_side", "")),
+        p3_queue_included=params.get("touch_probability_queue_included"),
+        p3_artifact_sha256=str(params.get("touch_probability_artifact_sha256", "")),
         f03_ret_action_horizon_s=float(
             params.get("f03_ret_action_horizon_s", 0.0)
         ),
@@ -1624,7 +1600,6 @@ def quote_core_config_from_params(
         kappa_levels=int(params.get("kappa_levels", 5)),
         kappa_depth_baseline=float(params.get("kappa_depth_baseline", 50.0)),
         depth_kappa_ratio=max(0.05, min(3.0, float(params.get("depth_kappa_ratio", 0.3)))),
-        ber_spread_mult=float(params.get("ber_spread_mult", 2.0)),
         markout_spread_scale=float(params.get("markout_spread_scale", 0.0)),
         markout_side_asymmetry_sign=float(
             params.get("markout_side_asymmetry_sign", 1.0)
@@ -1704,11 +1679,11 @@ def _compute_quote_core_py(
     distance_decay_source = "execution_intensity_slope"
     distance_decay_before_depth = float(cfg.execution_intensity_slope)
     if (
-        cfg.historical_p3_scalar_adapter_enabled
-        and cfg.p3_kappa_eff > 0.0
+        cfg.p3_pair_spread_projection_enabled
+        and cfg.p3_touch_log_probability_distance_slope > 0.0
     ):
         distance_decay_source = "legacy_p3_touch_slope_projection"
-        distance_decay_before_depth = float(cfg.p3_kappa_eff)
+        distance_decay_before_depth = float(cfg.p3_touch_log_probability_distance_slope)
     kappa_used = max(distance_decay_before_depth, 1e-12)
     kappa_before_depth = kappa_used
 
@@ -1791,18 +1766,18 @@ def _compute_quote_core_py(
     p3_floor_mode = "inactive"
     if (
         cfg.regime_enabled
-        and cfg.historical_p3_scalar_adapter_enabled
-        and cfg.p3_delta_star > 0.0
+        and cfg.p3_pair_spread_projection_enabled
+        and cfg.p3_distance_touch_product_argmax > 0.0
     ):
         # The frozen B0 mechanism used one pooled same-side-BBO touch distance
         # as a symmetric pair-spread floor.  Keep that exact projection for
         # behavior identity while making the coordinate conversion explicit;
         # it must not be misread as a side-specific fill-probability optimum.
-        p3_pair_floor = 2.0 * float(cfg.p3_delta_star)
+        p3_pair_floor = 2.0 * float(cfg.p3_distance_touch_product_argmax)
         p3_floor_mode = (
-            "legacy_pair_projection_from_same_side_bbo"
+            "pair_projection_from_same_side_bbo"
             if cfg.p3_event_type
-            else "legacy_naked_pair_floor"
+            else "pair_spread_floor"
         )
         delta = max(delta, p3_pair_floor)
 
@@ -2096,7 +2071,7 @@ def _compute_quote_core_py(
     p3_sell_side_floor_changed = False
     p3_buy_floor_price = 0.0
     p3_sell_floor_price = 0.0
-    if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0:
+    if cfg.p3_side_bbo_floor_enabled and cfg.p3_distance_touch_product_argmax > 0.0:
         p3_floor_mode = "same_side_bbo_floor"
         (
             bid_price,
@@ -2109,7 +2084,7 @@ def _compute_quote_core_py(
             bid_price,
             ask_price,
             enabled=True,
-            delta_star=cfg.p3_delta_star,
+            delta_star=cfg.p3_distance_touch_product_argmax,
             best_bid=state.best_bid,
             best_ask=state.best_ask,
             tick_size=tick,
@@ -2206,7 +2181,7 @@ def _compute_quote_core_py(
         "bid_adverse": bid_adverse_active,
         "ask_adverse": ask_adverse_active,
         "p3_floor_mode": p3_floor_mode,
-        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_distance_touch_product_argmax": float(cfg.p3_distance_touch_product_argmax),
         "p3_pair_floor": p3_pair_floor,
         "p3_distance_origin": str(cfg.p3_distance_origin),
         "p3_buy_floor_price": p3_buy_floor_price,
@@ -2333,15 +2308,15 @@ def _compute_quote_core_py(
         "execution_intensity_slope": float(cfg.execution_intensity_slope),
         "distance_decay_source": distance_decay_source,
         "p3_floor_mode": p3_floor_mode,
-        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_distance_touch_product_argmax": float(cfg.p3_distance_touch_product_argmax),
         "p3_pair_floor": p3_pair_floor,
         "p3_buy_floor_price": p3_buy_floor_price,
         "p3_sell_floor_price": p3_sell_floor_price,
         "p3_side_floor_changed": (
             p3_buy_side_floor_changed or p3_sell_side_floor_changed
         ),
-        "historical_p3_scalar_adapter_enabled": bool(
-            cfg.historical_p3_scalar_adapter_enabled
+        "p3_pair_spread_projection_enabled": bool(
+            cfg.p3_pair_spread_projection_enabled
         ),
         "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
         "p3_event_type": str(cfg.p3_event_type),
@@ -2523,7 +2498,7 @@ def _cached_cpp_config(cpp: Any, cfg: QuoteCoreConfig) -> Any:
 
 
 _CPP_CFG_FIELDS = (
-    "kappa", "tick_size", "lot_size",
+    "tick_size", "lot_size",
     "maker_fee", "order_size",
     "max_inventory", "position_timeout_s", "quote_horizon_s",
     "pnl_volatility_horizon_s", "ml_enabled", "vol_blend",
@@ -2531,10 +2506,10 @@ _CPP_CFG_FIELDS = (
     "ret_skew", "ret_shift_max_pct", "regime_enabled", "vol_baseline",
     "volatility_spread_scale_min", "volatility_spread_scale_max", "liq_baseline",
     "liquidity_spread_scale_min", "liquidity_spread_scale_max", "vol_power",
-    "kappa_ratio", "p3_delta_star", "p3_kappa_eff", "use_bar_pricing",
+    "kappa_ratio", "p3_distance_touch_product_argmax", "p3_touch_log_probability_distance_slope", "use_bar_pricing",
     "use_depth_weighted_mid_proxy", "use_depth_kappa", "weighted_mid_proxy_levels",
     "kappa_levels", "kappa_depth_baseline", "depth_kappa_ratio",
-    "ber_spread_mult", "markout_spread_scale", "markout_side_asymmetry_sign",
+    "markout_spread_scale", "markout_side_asymmetry_sign",
     "inventory_skew_strength",
     "inventory_asym_strength", "inventory_signal_fade_strength",
     "book_imb_strength", "book_imb_levels", "trace_book_imb_levels",
@@ -2558,7 +2533,7 @@ _CPP_CFG_FIELDS = (
     "inventory_reference_qty", "eta_inventory", "a_spread",
     "f03_ret_action_horizon_s", "f03_ret_action_compatible",
     "risk_per_order", "execution_intensity_slope", "risk_horizon_s",
-    "historical_p3_scalar_adapter_enabled", "p3_side_bbo_floor_enabled",
+    "p3_pair_spread_projection_enabled", "p3_side_bbo_floor_enabled",
     "p3_identity_required", "p3_event_type", "p3_horizon_s",
     "p3_distance_origin", "p3_distance_unit", "p3_side",
     "p3_queue_included", "p3_artifact_sha256",
@@ -2786,32 +2761,32 @@ def _compute_quote_core_cpp(
     inventory_reference_qty = float(cfg.inventory_reference_qty)
     inventory_units = float(state.inventory) / inventory_reference_qty
     p3_pair_floor = (
-        2.0 * float(cfg.p3_delta_star)
+        2.0 * float(cfg.p3_distance_touch_product_argmax)
         if cfg.regime_enabled
-        and cfg.historical_p3_scalar_adapter_enabled
-        and cfg.p3_delta_star > 0.0
+        and cfg.p3_pair_spread_projection_enabled
+        and cfg.p3_distance_touch_product_argmax > 0.0
         else 0.0
     )
     p3_floor_mode = (
-        "legacy_pair_projection_from_same_side_bbo"
+        "pair_projection_from_same_side_bbo"
         if p3_pair_floor > 0.0 and cfg.p3_event_type
-        else "legacy_naked_pair_floor"
+        else "pair_spread_floor"
         if p3_pair_floor > 0.0
         else "same_side_bbo_floor"
-        if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0
+        if cfg.p3_side_bbo_floor_enabled and cfg.p3_distance_touch_product_argmax > 0.0
         else "inactive"
     )
     p3_buy_floor_price = (
-        _floor_tick(float(state.best_bid) - float(cfg.p3_delta_star), tick)
+        _floor_tick(float(state.best_bid) - float(cfg.p3_distance_touch_product_argmax), tick)
         if cfg.p3_side_bbo_floor_enabled
-        and cfg.p3_delta_star > 0.0
+        and cfg.p3_distance_touch_product_argmax > 0.0
         and state.best_bid > 0.0
         else 0.0
     )
     p3_sell_floor_price = (
-        _ceil_tick(float(state.best_ask) + float(cfg.p3_delta_star), tick)
+        _ceil_tick(float(state.best_ask) + float(cfg.p3_distance_touch_product_argmax), tick)
         if cfg.p3_side_bbo_floor_enabled
-        and cfg.p3_delta_star > 0.0
+        and cfg.p3_distance_touch_product_argmax > 0.0
         and state.best_ask > 0.0
         else 0.0
     )
@@ -2886,13 +2861,13 @@ def _compute_quote_core_cpp(
         "bid_adverse": quote_flags["bid_adverse"],
         "ask_adverse": quote_flags["ask_adverse"],
         "p3_floor_mode": p3_floor_mode,
-        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_distance_touch_product_argmax": float(cfg.p3_distance_touch_product_argmax),
         "p3_pair_floor": p3_pair_floor,
         "p3_distance_origin": str(cfg.p3_distance_origin),
         "p3_buy_floor_price": p3_buy_floor_price,
         "p3_sell_floor_price": p3_sell_floor_price,
-        "historical_p3_scalar_adapter_enabled": bool(
-            cfg.historical_p3_scalar_adapter_enabled
+        "p3_pair_spread_projection_enabled": bool(
+            cfg.p3_pair_spread_projection_enabled
         ),
         "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
     }
@@ -2918,17 +2893,17 @@ def _compute_quote_core_cpp(
         "execution_intensity_slope": float(cfg.execution_intensity_slope),
         "distance_decay_source": (
             "legacy_p3_touch_slope_projection"
-            if cfg.historical_p3_scalar_adapter_enabled
-            and cfg.p3_kappa_eff > 0.0
+            if cfg.p3_pair_spread_projection_enabled
+            and cfg.p3_touch_log_probability_distance_slope > 0.0
             else "execution_intensity_slope"
         ),
         "p3_floor_mode": p3_floor_mode,
-        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_distance_touch_product_argmax": float(cfg.p3_distance_touch_product_argmax),
         "p3_pair_floor": p3_pair_floor,
         "p3_buy_floor_price": p3_buy_floor_price,
         "p3_sell_floor_price": p3_sell_floor_price,
-        "historical_p3_scalar_adapter_enabled": bool(
-            cfg.historical_p3_scalar_adapter_enabled
+        "p3_pair_spread_projection_enabled": bool(
+            cfg.p3_pair_spread_projection_enabled
         ),
         "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
         "p3_event_type": str(cfg.p3_event_type),
@@ -3053,10 +3028,10 @@ def _compute_quote_core_cpp_compact(
     inventory_reference_qty = float(cfg.inventory_reference_qty)
     inventory_units = float(state.inventory) / inventory_reference_qty
     p3_pair_floor = (
-        2.0 * float(cfg.p3_delta_star)
+        2.0 * float(cfg.p3_distance_touch_product_argmax)
         if cfg.regime_enabled
-        and cfg.historical_p3_scalar_adapter_enabled
-        and cfg.p3_delta_star > 0.0
+        and cfg.p3_pair_spread_projection_enabled
+        and cfg.p3_distance_touch_product_argmax > 0.0
         else 0.0
     )
     delta_cap = bool(result.flags.delta_cap)
@@ -3116,18 +3091,18 @@ def _compute_quote_core_cpp_compact(
         "risk_per_order": float(cfg.risk_per_order),
         "execution_intensity_slope": float(cfg.execution_intensity_slope),
         "p3_floor_mode": (
-            "legacy_pair_projection_from_same_side_bbo"
+            "pair_projection_from_same_side_bbo"
             if p3_pair_floor > 0.0 and cfg.p3_event_type
-            else "legacy_naked_pair_floor"
+            else "pair_spread_floor"
             if p3_pair_floor > 0.0
             else "same_side_bbo_floor"
-            if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0
+            if cfg.p3_side_bbo_floor_enabled and cfg.p3_distance_touch_product_argmax > 0.0
             else "inactive"
         ),
-        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_distance_touch_product_argmax": float(cfg.p3_distance_touch_product_argmax),
         "p3_pair_floor": p3_pair_floor,
-        "historical_p3_scalar_adapter_enabled": bool(
-            cfg.historical_p3_scalar_adapter_enabled
+        "p3_pair_spread_projection_enabled": bool(
+            cfg.p3_pair_spread_projection_enabled
         ),
         "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
         "p3_event_type": str(cfg.p3_event_type),

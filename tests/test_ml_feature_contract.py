@@ -9,15 +9,13 @@ import models.backtest_tick as backtest_tick
 import research.families.f03_causal_13_head.ml_model as ml_model
 from research.families.f03_causal_13_head.ml_model import drop_all_missing_training_features
 from strategy.model_contract import (
-    LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
-    PRIVATE_DEPLOYMENT_AUTHORITY,
     REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
     REQUIRED_FEATURE_DAG_ID,
     REQUIRED_FEATURE_DAG_SHA256,
     REQUIRED_FEATURE_SEMANTICS_VERSION,
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
-    canonicalize_model_variance_unit_contract,
+    validate_variance_unit_contract,
     f03_direct_quote_action_contract,
 )
 from strategy.quote_core import (
@@ -69,7 +67,7 @@ def test_all_missing_training_feature_is_removed_from_every_split() -> None:
     assert "usable" in train
 
 
-def test_training_identity_propagates_feature_manifest_semantics(
+def test_training_rejects_retired_manifest_even_with_complete_old_semantics(
     tmp_path, monkeypatch
 ) -> None:
     manifest = tmp_path / "causal_feature_manifest.json"
@@ -92,11 +90,11 @@ def test_training_identity_propagates_feature_manifest_semantics(
                 "label_volatility_units": _BTCUSDC_VARIANCE_UNITS["variance_units"],
                 "volatility_unit_contract": _BTCUSDC_VARIANCE_UNITS,
                 "label_quote_calibration": {
-                    "schema_version": "narrowgate_p3_touch_calibration.v3",
+                    "schema_version": "narrowgate_p3_touch_calibration.v4",
                     "model_type": "empirical_survival",
                     "sha256": "p3-sha",
-                    "p3_delta_star": 14.0,
-                    "p3_kappa_eff": 0.067,
+                    "p3_distance_touch_product_argmax": 14.0,
+                    "p3_touch_log_probability_distance_slope": 0.067,
                 },
             }
         ),
@@ -104,18 +102,8 @@ def test_training_identity_propagates_feature_manifest_semantics(
     )
     monkeypatch.setattr(ml_model, "DATA_DIR", tmp_path)
 
-    identity = ml_model._feature_panel_identity()
-
-    assert identity["feature_semantics_version"] == REQUIRED_FEATURE_SEMANTICS_VERSION
-    assert identity["feature_dag_id"] == REQUIRED_FEATURE_DAG_ID
-    assert identity["feature_dag_sha256"] == REQUIRED_FEATURE_DAG_SHA256
-    assert identity["calendar_timestamp_semantics"] == (
-        "preserve_datetime_physical_unit"
-    )
-    assert identity["microstructure_5s_semantics"] == "trailing_five_seconds"
-    assert identity["label_semantics_version"] == 3
-    assert identity["label_window_semantics"] == "left_closed_right_open_[t,t+h)"
-    assert identity["volatility_unit_contract"] == _BTCUSDC_VARIANCE_UNITS
+    with pytest.raises(RuntimeError, match="retired panels are rejected"):
+        ml_model._feature_panel_identity()
 
 
 def test_training_rejects_pre_cutoff_feature_identity(tmp_path, monkeypatch) -> None:
@@ -132,39 +120,23 @@ def test_training_rejects_pre_cutoff_feature_identity(tmp_path, monkeypatch) -> 
     )
     monkeypatch.setattr(ml_model, "DATA_DIR", tmp_path)
 
-    with pytest.raises(RuntimeError, match="feature semantics v6"):
+    with pytest.raises(RuntimeError, match="retired panels are rejected"):
         ml_model._feature_panel_identity()
 
 
-def test_authorization_bound_legacy_metadata_canonicalizes_without_owner_hash() -> None:
+def test_old_authorization_cannot_supply_missing_variance_units() -> None:
     source = {
         "symbol": "BTCUSDC",
         "feature_manifest_sha256": "legacy-fixture-manifest",
         "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
-        "promotion_authority": LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
+        "promotion_authority": "owner_authorized_live_canary",
         "source_profile": "all",
         "feature_variant": "base",
     }
-    metadata = canonicalize_model_variance_unit_contract(
-        source,
-        legacy_authorization_contract=_BTCUSDC_VARIANCE_UNITS,
-    )
-
     assert "volatility_unit_contract" not in source
-    assert metadata["volatility_unit_contract"] == _BTCUSDC_VARIANCE_UNITS
-    assert metadata["volatility_unit_contract_origin"] == (
-        "legacy_authorization_manifest"
-    )
-    assert metadata["promotion_authority"] == PRIVATE_DEPLOYMENT_AUTHORITY
-    assert (
-        metadata["promotion_authority_origin"]
-        == LEGACY_OWNER_AUTHORIZED_LIVE_CANARY
-    )
-
-    unregistered = dict(source)
-    unregistered["feature_manifest_sha256"] = "unregistered"
-    with pytest.raises(ValueError, match="unregistered legacy metadata"):
-        canonicalize_model_variance_unit_contract(unregistered)
+    with pytest.raises(ValueError, match="volatility_unit_contract"):
+        validate_variance_unit_contract(source.get("volatility_unit_contract"), symbol="BTCUSDC")
+    assert validate_variance_unit_contract(_BTCUSDC_VARIANCE_UNITS, symbol="BTCUSDC") == _BTCUSDC_VARIANCE_UNITS
 
 
 def test_legacy_f03_ret_name_does_not_imply_direct_quote_compatibility() -> None:
@@ -502,7 +474,9 @@ def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() ->
     )
     cfg = QuoteCoreConfig(
         eta_inventory=0.046, a_spread=0.046, risk_per_order=0.046,
-        kappa=0.01,
+        execution_intensity_slope=0.01,
+        risk_horizon_s=1.0,
+        trade_intensity_acceleration_spread_mult=2.0,
         tick_size=0.1,
         lot_size=0.001,
         maker_fee=0.0,

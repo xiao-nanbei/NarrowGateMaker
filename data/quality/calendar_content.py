@@ -26,7 +26,7 @@ import pyarrow.parquet as pq
 from data.quality.calendar_gap_manifest import _calendar_days, sha256_file
 from data.quality.calendar_readability import UNKNOWN, validate_readability_manifest
 from data.daily_raw import DAILY_BOOK_MARKER
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 
 DAY_US = 86_400_000_000
 DERIVED_AGGREGATE_ID = "btcusdc-derived-trade-aggregates-100ms"
@@ -755,7 +755,7 @@ def audit_book_calendar(records: list[dict], book_root: Path, output_dir: Path,
                 if independent:
                     binding["independent_top"] = verify_separate_top_view(raw_path, bbo_path, l2_path, clock_path)
             elif source["source_clock"] == "tardis_exchange":
-                origin = relocate_marketdata_path(source["root"])
+                origin = resolve_portable_path(source["root"])
                 qpath = origin / "quality" / f"BTCUSDC-{day}.json"
                 q = json.loads(qpath.read_text())
                 expected_quality = source_qualities.get(day, {}).get("source_quality_sha256")
@@ -778,7 +778,7 @@ def audit_book_calendar(records: list[dict], book_root: Path, output_dir: Path,
                            "retained_original_source_sha256": q.get("raw_inputs", {}).get("incremental_book_L2", {}).get("sha256"),
                            "canonical_original_source_sha256": raw.get("source_content_validation", {}).get("source_sha256")}
             elif source["source_clock"] == "transaction":
-                origin = relocate_marketdata_path(source["root"])
+                origin = resolve_portable_path(source["root"])
                 quality = source.get("source_quality") or {}
                 for kind, audit in (("bbo", bbo), ("l2", l2)):
                     expected = quality.get(f"{kind}_sha256")

@@ -4607,8 +4607,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         params.get(name) is not None
         for name in (
             "_conditional_p3_ts_ms",
-            "_conditional_p3_delta_star",
-            "_conditional_p3_kappa_eff",
+            "_conditional_p3_distance_touch_product_argmax",
+            "_conditional_p3_touch_log_probability_distance_slope",
         )
     ):
         raise ValueError(
@@ -4819,7 +4819,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     # ── Unpack params ──
     _tick_state.eta_inventory = params["eta_inventory"]
     _tick_state.risk_per_order = params["risk_per_order"]
-    _tick_state.kappa = params["kappa"]
+    _tick_state.execution_intensity_slope = params["execution_intensity_slope"]
     _tick_state.order_size = params["order_size"]
     _tick_state.max_inv = params["max_inventory"]
     _tick_state.max_daily_loss, _tick_state.max_position_value, _tick_state.emergency_close_dd = replay_hard_risk_limits(params)
@@ -31216,11 +31216,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             _tick_state.p3_floor_enabled = bool(
                 _tick_state.diag.get("p3_side_bbo_floor_enabled", False)
             )
-            _tick_state.p3_delta_star = float(_tick_state.diag.get("p3_touch_delta_star", 0.0) or 0.0)
+            _tick_state.p3_distance_touch_product_argmax = float(_tick_state.diag.get("p3_distance_touch_product_argmax", 0.0) or 0.0)
             _tick_state.p3_floor_active = bool(
                 _tick_state.p3_floor_enabled
-                and math.isfinite(_tick_state.p3_delta_star)
-                and _tick_state.p3_delta_star > 0.0
+                and math.isfinite(_tick_state.p3_distance_touch_product_argmax)
+                and _tick_state.p3_distance_touch_product_argmax > 0.0
             )
             (
                 _tick_state.nbid,
@@ -31233,7 +31233,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _tick_state.nbid,
                 _tick_state.nask,
                 enabled=_tick_state.p3_floor_active,
-                delta_star=_tick_state.p3_delta_star,
+                delta_star=_tick_state.p3_distance_touch_product_argmax,
                 best_bid=float(_tick_state.cur_best_bid),
                 best_ask=float(_tick_state.cur_best_ask),
                 tick_size=float(_tick_state.TICK),
@@ -33792,7 +33792,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             for action in STATE_CONDITIONED_REARM_ACTIONS
         },
-        "kappa": _tick_state.kappa,
+        "execution_intensity_slope": _tick_state.execution_intensity_slope,
         "queue_base": _tick_state.queue_base,
         "queue_decay": _tick_state.queue_decay,
         "queue_ahead_mode": _tick_state.queue_ahead_mode,
@@ -36619,8 +36619,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     ber_exposure_add_only = bool(params.get("ber_exposure_add_only", False))
     conditional_p3_requested = bool(
         _as_i64_array(params.get("_conditional_p3_ts_ms")).size
-        or _as_f64_array(params.get("_conditional_p3_delta_star")).size
-        or _as_f64_array(params.get("_conditional_p3_kappa_eff")).size
+        or _as_f64_array(params.get("_conditional_p3_distance_touch_product_argmax")).size
+        or _as_f64_array(params.get("_conditional_p3_touch_log_probability_distance_slope")).size
     )
     p3_reach_gate_enabled = bool(
         params.get("conditional_p3_reach_gate_enabled", False)
@@ -37958,10 +37958,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         _as_f64_array(sell_queue_deplete_mult_by_trade),
     )
     p3_ts = _as_i64_array(params.get("_conditional_p3_ts_ms"))
-    p3_delta_star = _as_f64_array(params.get("_conditional_p3_delta_star"))
-    p3_kappa_eff = _as_f64_array(params.get("_conditional_p3_kappa_eff"))
+    p3_distance_touch_product_argmax = _as_f64_array(params.get("_conditional_p3_distance_touch_product_argmax"))
+    p3_touch_log_probability_distance_slope = _as_f64_array(params.get("_conditional_p3_touch_log_probability_distance_slope"))
     has_conditional_p3 = bool(
-        p3_ts.size or p3_delta_star.size or p3_kappa_eff.size
+        p3_ts.size or p3_distance_touch_product_argmax.size or p3_touch_log_probability_distance_slope.size
     )
     if has_conditional_p3 != conditional_p3_requested:
         raise RuntimeError("conditional P3 overlay request identity changed during replay")
@@ -38015,8 +38015,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         cpp_result = cpp.simulate_tick_arrays_ext_policy_v4(
             *replay_args,
             p3_ts,
-            p3_delta_star,
-            p3_kappa_eff,
+            p3_distance_touch_product_argmax,
+            p3_touch_log_probability_distance_slope,
             cpp_params,
         )
     else:
@@ -38646,7 +38646,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         ),
         "eta_inventory": float(params["eta_inventory"]),
         "risk_per_order": float(params["risk_per_order"]),
-        "kappa": float(params.get("kappa", 0.0)),
+        "execution_intensity_slope": float(params.get("execution_intensity_slope", 0.0)),
         "queue_base": float(params.get("queue_base", 5.0)),
         "queue_decay": float(params.get("queue_decay", 0.1)),
         "queue_ahead_mode": queue_mode,
@@ -39613,20 +39613,20 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
 # ═══════════════════════════════════════════════════════════════════
 
 # Legacy AS-only sweep grid (without ML).  Do not use this as the live
-# parameter surface: current live/tick quotes use p3_kappa_eff when available,
-# so raw kappa is only a fallback/legacy AS diagnostic.
+# parameter surface: current live/tick quotes use p3_touch_log_probability_distance_slope when available,
+# so raw execution_intensity_slope is only a fallback/legacy AS diagnostic.
 SWEEP_GRID = {
     "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.02, 0.05, 0.1, 0.5],
+    "execution_intensity_slope": [0.02, 0.05, 0.1, 0.5],
     "queue_base": [3.0, 5.0, 10.0],
     "queue_decay": [0.05, 0.1],
 }
 
-# ML-enhanced legacy sweep grid. Keep fallback kappa fixed; effective-kappa
-# experiments belong in parameter_racing_sweep.py via p3_kappa_eff/cap arms.
+# ML-enhanced legacy sweep grid. Keep fallback execution_intensity_slope fixed; effective-execution_intensity_slope
+# experiments belong in parameter_racing_sweep.py via p3_touch_log_probability_distance_slope/cap arms.
 SWEEP_GRID_ML = {
     "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.05],
+    "execution_intensity_slope": [0.05],
     "queue_base": [5.0],
     "queue_decay": [0.1],
     "vol_blend": [0.0, 0.3, 0.7],
@@ -40845,7 +40845,7 @@ _HDR = (f"{'Rk':>3s}  {'γ':>6s}  {'κ':>6s}  {'QBase':>6s}  {'QDec':>5s}  {'Cap
 
 
 def _row(i, r):
-    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['kappa']:6.3f}  "
+    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['execution_intensity_slope']:6.3f}  "
             f"{r.get('queue_base', 5.0):6.1f}  {r.get('queue_decay', 0.1):5.2f}  "
             f"{_cap_cell(r):>4s}  "
             f"{r.get('eta', 0.0):4.1f}  "
@@ -40891,7 +40891,7 @@ def _format_pick(label, r):
                   f"Asy={r.get('asym', 0)}, "
                   f"GD={r.get('gdir', 0)}, "
                   f"RS={r.get('ret_skew', 0)}")
-    print(f"  {label}: Cap={_cap_cell(r)}, spread-risk={r['risk_per_order']}, κ={r['kappa']}, "
+    print(f"  {label}: Cap={_cap_cell(r)}, spread-risk={r['risk_per_order']}, κ={r['execution_intensity_slope']}, "
           f"QB={r.get('queue_base', 5)}, QD={r.get('queue_decay', 0.1)}"
           f"{ml_str}")
     print(f"         InvAdj=${r.get('inventory_adjusted_pnl', 0.0):.2f}, PnL=${r['pnl']:.2f}, "
@@ -40918,7 +40918,7 @@ def print_results(results, top_n=30, sort_by="selection_score"):
         print(f"\n  Selection-robust (displayed top-{k} by {metric_label}): "
               f"median {metric_label}={np.median(metric_values):.2f}, "
               f"median PnL=${np.median(pnl):.2f}")
-        print(f"  Robust pick: Cap={_cap_cell(robust)}, spread-risk={robust['risk_per_order']}, κ={robust['kappa']}, "
+        print(f"  Robust pick: Cap={_cap_cell(robust)}, spread-risk={robust['risk_per_order']}, κ={robust['execution_intensity_slope']}, "
               f"{metric_label}={robust.get(metric_field, 0.0):.2f}, "
               f"InvAdj=${robust.get('inventory_adjusted_pnl', 0.0):.2f}, "
               f"PnL=${robust['pnl']:.2f}, Sharpe={robust['sharpe']:.2f}")
@@ -41171,7 +41171,7 @@ def run_cli(argv=None):
     ap.add_argument("--eta-inventory", type=float, default=None)
     ap.add_argument("--a-spread", type=float, default=None)
     ap.add_argument("--risk-per-order", type=float, default=None)
-    ap.add_argument("--kappa", type=float, default=None)
+    ap.add_argument("--execution-intensity-slope", type=float, default=None)
     ap.add_argument("--order-size", type=float, default=None)
     ap.add_argument("--max-inventory", type=float, default=None)
     ap.add_argument("--initial-inventory", type=float, default=None,
@@ -41403,7 +41403,7 @@ def run_cli(argv=None):
     ap.add_argument("--pricing-mode", choices=["config", "bar", "microprice"],
                     default="config",
                     help="Pricing mode A/B: config=live config, bar=1s/trade bar pricing, microprice=depth microprice")
-    ap.add_argument("--depth-kappa-ratio", type=float, default=None,
+    ap.add_argument("--depth-execution_intensity_slope-ratio", type=float, default=None,
                     help="Live-style depth κ ratio used when pricing mode uses depth but only bookDepth buckets are available (default 0.3)")
     ap.add_argument("--l2-refill-cancel-lookback-s", type=float, default=None,
                     help="Quote-time lookback window for exact-L2 refill/cancel trace fields (default: 10s)")
@@ -41554,7 +41554,7 @@ def run_cli(argv=None):
 
     # Apply CLI overrides
     _cli_map = {
-        "eta_inventory": "eta_inventory", "a_spread": "a_spread", "risk_per_order": "risk_per_order", "kappa": "kappa", "order_size": "order_size",
+        "eta_inventory": "eta_inventory", "a_spread": "a_spread", "risk_per_order": "risk_per_order", "execution_intensity_slope": "execution_intensity_slope", "order_size": "order_size",
         "max_inventory": "max_inventory", "requote_interval": "requote_interval",
         "initial_inventory": "initial_inventory",
         "initial_entry_price": "initial_entry_price",
@@ -41767,7 +41767,7 @@ def run_cli(argv=None):
             f"jitter={float(base.get('exec_book_visibility_delay_jitter_ms', 0.0)):.1f}ms,"
             f"seed={int(base.get('exec_book_visibility_delay_seed', 20260718))}]"
         )
-    print(f"  Key params: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
+    print(f"  Key params: spread-risk={base['risk_per_order']}, κ={base['execution_intensity_slope']}, "
           f"regime={base.get('regime_enabled', False)}, "
             f"pricing={'bar' if base.get('use_bar_pricing', True) else 'microprice'}, "
             f"exit_urg={base.get('exit_urgency_strength', 0)}, "
@@ -41969,7 +41969,7 @@ def run_cli(argv=None):
             if args.quality_segment_aware is not None
             else False
         )
-        print(f"\nRunning single backtest: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
+        print(f"\nRunning single backtest: spread-risk={base['risk_per_order']}, κ={base['execution_intensity_slope']}, "
               f"QB={base['queue_base']}, QD={base['queue_decay']}, "
               f"QMode={base.get('queue_ahead_mode', 'exact_level')}")
         if run_ml and ml_data is not None:

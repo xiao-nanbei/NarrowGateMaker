@@ -358,12 +358,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -2746,8 +2746,8 @@ void bind_tick_replay(py::module_& m) {
            CArray<double> buy_queue_deplete_mult_by_trade,
            CArray<double> sell_queue_deplete_mult_by_trade,
            CArray<std::int64_t> p3_ts_ms,
-           CArray<double> p3_delta_star,
-           CArray<double> p3_kappa_eff,
+           CArray<double> p3_distance_touch_product_argmax,
+           CArray<double> p3_touch_log_probability_distance_slope,
            const TickReplayParams& params) {
             TickReplayInput input;
             set_trade_arrays(input, trade_ts_ms, trade_price, trade_qty, is_buyer_maker);
@@ -2759,8 +2759,8 @@ void bind_tick_replay(py::module_& m) {
             set_conditional_p3_arrays(
                 input,
                 p3_ts_ms,
-                p3_delta_star,
-                p3_kappa_eff
+                p3_distance_touch_product_argmax,
+                p3_touch_log_probability_distance_slope
             );
             set_buy_fill_selection_static_arrays(
                 input,
@@ -2816,8 +2816,8 @@ void bind_tick_replay(py::module_& m) {
         py::arg("buy_queue_deplete_mult_by_trade"),
         py::arg("sell_queue_deplete_mult_by_trade"),
         py::arg("p3_ts_ms"),
-        py::arg("p3_delta_star"),
-        py::arg("p3_kappa_eff"),
+        py::arg("p3_distance_touch_product_argmax"),
+        py::arg("p3_touch_log_probability_distance_slope"),
         py::arg("params")
     );
 

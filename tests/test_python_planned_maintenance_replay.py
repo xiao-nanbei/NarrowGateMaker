@@ -6,6 +6,7 @@ import pytest
 
 from models.backtest_tick import LocalLifecycleBoundaryScheduler, simulate_tick
 from models.tick_data_types import HistoricalBBOData, HistoricalExchangeBookEvent, HistoricalL2Data
+from tests.exact_replay_assertions import assert_exact_replay_value
 
 
 def _inputs(
@@ -53,7 +54,9 @@ def _params(*, cancel_latency_ms: int = 500) -> dict[str, object]:
         "eta_inventory": 0.01,
         "a_spread": 0.01,
         "risk_per_order": 0.01,
-        "kappa": 1.0,
+        "execution_intensity_slope": 1.0,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 1.0,
@@ -1015,7 +1018,7 @@ def test_historical_passive_close_clip_keeps_order_during_30s_aggression(initial
         {**params, "_diagnostic_passive_close_bbo_clip": True}, bbo_data=bbo,
     )
     assert default["_quote_trace"] == unclipped["_quote_trace"]
-    assert default["_fill_trace"] == unclipped["_fill_trace"]
+    assert_exact_replay_value(default["_fill_trace"], unclipped["_fill_trace"])
     assert default["circuit_breaker_close_gtx_reject_count"] == 3
     assert default["circuit_breaker_close_ioc_place_count"] == 1
     assert clipped["circuit_breaker_close_gtx_reject_count"] == 0
@@ -1915,7 +1918,7 @@ def test_event_cursor_round_trip_at_every_boundary_preserves_replay(main_loop):
         assert {None, "wake", "resume"} <= phases
     for name in ("_quote_trace", "_fill_trace", "_decision_trace",
                  "pnl", "final_inventory", "fills_bid", "fills_ask", "n_requotes"):
-        assert actual.get(name) == expected.get(name), name
+        assert_exact_replay_value(actual.get(name), expected.get(name))
 
 
 @pytest.mark.parametrize("async_gateway", [False, True])
@@ -2551,7 +2554,7 @@ def test_risk_selection_b0_and_single_target_preserve_active_budget_prefix(budge
                        risk_selection_mode="B", risk_selection_policy=_risk_policy_payload())
     for name in ("_quote_trace", "_fill_trace", "_decision_trace", "pnl", "final_inventory",
                  "n_requotes", "_post_cooldown_incremental_inventory_budget_trace"):
-        assert collected[name] == baseline[name]
+        assert_exact_replay_value(collected[name], baseline[name])
     for name in baseline:
         if name.startswith("post_cooldown_incremental_inventory_budget_"):
             assert collected[name] == baseline[name]
@@ -3470,7 +3473,7 @@ def test_zero_private_fill_visibility_preserves_b0_outputs() -> None:
         "inventory_pnl",
     ):
         assert zero_delay[key] == pytest.approx(baseline[key])
-    assert zero_delay["_fill_trace"] == baseline["_fill_trace"]
+    assert_exact_replay_value(zero_delay["_fill_trace"], baseline["_fill_trace"])
     assert zero_delay["_quote_trace"] == baseline["_quote_trace"]
 
 

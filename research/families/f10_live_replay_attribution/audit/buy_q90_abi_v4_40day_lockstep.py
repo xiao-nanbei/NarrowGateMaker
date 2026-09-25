@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from data_paths import LEGACY_MARKETDATA_ROOT, relocate_marketdata_path
+
 from models import backtest_tick as bt
 from models.backtest_config import (
     load_tick_base_params,
@@ -137,14 +137,7 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _relocate(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _relocate(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_relocate(item) for item in value]
-    if isinstance(value, str) and value.startswith(str(LEGACY_MARKETDATA_ROOT)):
-        return str(relocate_marketdata_path(value))
-    return value
+
 
 
 def require_identity(identity: Mapping[str, Any], label: str) -> Path:
@@ -188,7 +181,7 @@ def _load_source(spec: Mapping[str, Any]) -> dict[str, Any]:
     frozen = _load_json(source_path)
     predecessor = frozen["source_contract_identity"]
     predecessor_path = require_identity(predecessor, "frozen source replay contract")
-    source = _relocate(_load_json(predecessor_path))
+    source = _load_json(predecessor_path)
     if list(map(str, source["panels"]["development_days"])) != list(
         map(str, spec["development_days"])
     ):

@@ -29,7 +29,7 @@ def calibration_fixture(tmp_path):
         rows.append({"day": day, "consumer_manifest_path": str(path),
                      "consumer_manifest_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         sources.append({"day": day, "source_bundles": [{"day": day, "manifest_sha256": "source"+day}]})
-    p3 = {"schema_version": "narrowgate_p3_touch_calibration.v3", "model_type": "empirical_survival",
+    p3 = {"schema_version": "narrowgate_p3_touch_calibration.v4", "model_type": "empirical_survival",
         "metadata": {"fit_days": list(TRAIN_DAYS), "event_type": "touch", "horizon_s": 10.,
             "distance_unit": "USDC_per_BTC", "queue_included": False, "quote_tick_size": 0.1, "daily_inputs": sources,
             "plan": {"market_id": "BTCUSDC", "fit_days": list(TRAIN_DAYS), "observation_profile": profile}}}
@@ -119,7 +119,7 @@ def test_label_entry_rejects_wrong_calibration_before_reading_tables(tmp_path, m
     p3, rows = calibration_fixture(tmp_path)
     consumer = json.loads(Path(rows[0]["consumer_manifest_path"]).read_text())
     p3["metadata"]["distance_unit"] = "bps"
-    (tmp_path/"fill_prob_params.json").write_text(json.dumps(p3))
+    (tmp_path/"touch_probability.json").write_text(json.dumps(p3))
     config = tmp_path/"config.yaml"
     config.write_text(yaml.safe_dump({"tick_size": .1, "ml": {"model_dir": str(tmp_path)}}))
     monkeypatch.setattr("data.runtime.ConsumerBundle", lambda _: SimpleNamespace(manifest=consumer))

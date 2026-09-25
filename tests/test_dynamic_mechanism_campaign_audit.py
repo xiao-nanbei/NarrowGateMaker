@@ -126,7 +126,7 @@ def test_missing_live_dynamic_fields_remain_unobserved() -> None:
     )
 
     summarized = summarize_campaign_decisions(
-        campaigns, decisions, p3_delta_star=14.0, p3_kappa_eff=0.067
+        campaigns, decisions, p3_distance_touch_product_argmax=14.0, p3_touch_log_probability_distance_slope=0.067
     )
 
     assert math.isnan(summarized.iloc[0]["p3_floor_bound_rate"])

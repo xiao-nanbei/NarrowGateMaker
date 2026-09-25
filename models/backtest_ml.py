@@ -522,7 +522,7 @@ def build_toxicity_arrays(ts_ms, pred_10s, pred_dir=None, toxicity_horizon_s=10)
 @njit_opt
 def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                       book_imb, trade_intensity,
-                      inventory_price_risk, risk_per_order, kappa, order_size, max_inv,
+                      inventory_price_risk, risk_per_order, execution_intensity_slope, order_size, max_inv,
                       rq_ms, fee, taker_fee, tick, sample_rate,
                       skew_strength, vol_blend, dir_threshold,
                       asym_strength, inventory_direction_alignment_strength,
@@ -537,15 +537,15 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                       lot_size, book_imb_strength,
                       rq_min_ms, rq_max_ms,
                       liq_baseline, gamma_liq_min, gamma_liq_max,
-                      p3_delta_star, inv_gamma_enabled,
+                      p3_distance_touch_product_argmax, inv_gamma_enabled,
                       inv_skew_strength,
                       fill_dist_decay, ret_shift_max_pct,
                       ret_demean_halflife,
                       maker_fill_prob, rng_seed,
-                      p3_kappa_eff, depth_near, kappa_depth_baseline,
+                      p3_touch_log_probability_distance_slope, depth_near, kappa_depth_baseline,
                       queue_base_arr, queue_decay_arr,
                       buy_fill_prob_arr, sell_fill_prob_arr,
-                      ber_guard_thresh, ber_spread_mult,
+                      ber_guard_thresh, trade_intensity_acceleration_spread_mult,
                       vol_power, markout_ema_span_fills, markout_spread_scale,
                       urg_w_time, urg_w_pnl, urg_w_signal,
                       requote_threshold_bps,
@@ -574,7 +574,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     v1.1 enhancements:
       P1 BER Guard (Zhao & Linetsky 2021):
         ber_guard_thresh > 0: when recent trade intensity spikes (proxy for
-        book exhaustion), multiply spread by ber_spread_mult.
+        book exhaustion), multiply spread by trade_intensity_acceleration_spread_mult.
 
         Fill models:
       fill_dist_decay = 0:  touch-fill (legacy, 100% fill when price reaches limit)
@@ -632,8 +632,8 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     bid_sz = order_size    # current bid order size (eta decay)
     ask_sz = order_size    # current ask order size (eta decay)
 
-    # P3 effective kappa: use as base instead of raw config kappa (matching live)
-    kappa_base = p3_kappa_eff if p3_kappa_eff > 0.0 else kappa
+    # P3 effective execution_intensity_slope: use as base instead of raw config execution_intensity_slope (matching live)
+    kappa_base = p3_touch_log_probability_distance_slope if p3_touch_log_probability_distance_slope > 0.0 else execution_intensity_slope
     kappa_eff = kappa_base * kappa_ratio
 
     # ── Dynamic RQ state ──
@@ -1028,7 +1028,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                     g_eff = g_base * 3.0
 
             # ── Spread: exponential GLFT ──
-            # Dynamic kappa from depth (matching live estimate_kappa)
+            # Dynamic execution_intensity_slope from depth (matching live estimate_kappa)
             cur_kappa_eff = kappa_eff  # static fallback
             if kappa_depth_baseline > 0.0:
                 dn = depth_near[i]
@@ -1049,8 +1049,8 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
             # ── P1: BER Guard spread widening ──
             # When book exhaustion is detected, widen spread to avoid
             # adverse selection from informed flow sweeps.
-            if ber_active and ber_spread_mult > 1.0:
-                d = d * ber_spread_mult
+            if ber_active and trade_intensity_acceleration_spread_mult > 1.0:
+                d = d * trade_intensity_acceleration_spread_mult
 
             # ── v1.2 Markout-based spread adjustment ──
             # When recent fills show adverse markout (mo_ema_all < 0),
@@ -1067,8 +1067,8 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                 d = d * mo_adj
 
             # Layer 2: P3 fill-probability floor (applied to δ directly)
-            if regime_enabled > 0.5 and p3_delta_star > 0.0:
-                min_spread = 2.0 * p3_delta_star
+            if regime_enabled > 0.5 and p3_distance_touch_product_argmax > 0.0:
+                min_spread = 2.0 * p3_distance_touch_product_argmax
                 if d < min_spread:
                     d = min_spread
 
@@ -1388,7 +1388,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
         tox_ask = np.clip(pred_dir, 0.0, 1.0)
     inventory_price_risk = params["eta_inventory"] / params["inventory_reference_qty"]
     risk_per_order = params["risk_per_order"]
-    kappa   = params["kappa"]
+    execution_intensity_slope   = params["execution_intensity_slope"]
     osiz    = params["order_size"]
     maxinv  = params["max_inventory"]
     rq_ms   = int(params["requote_interval"] * 1000)
@@ -1432,7 +1432,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     liq_baseline = params.get("liq_baseline", DEFAULT_LIQ_BASELINE)
     gamma_liq_min = params.get("liquidity_spread_scale_min", 0.5)
     gamma_liq_max = params.get("liquidity_spread_scale_max", 3.0)
-    p3_delta_star = params.get("p3_delta_star", 0.0)
+    p3_distance_touch_product_argmax = params.get("p3_distance_touch_product_argmax", 0.0)
     inv_gamma_en = 1.0 if params.get("inv_gamma_enabled", True) else 0.0
 
     inv_skew = params.get("inventory_skew_strength", 0.0)
@@ -1443,7 +1443,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     rng_seed = int(params.get("rng_seed", 42))
     if rng_seed <= 0:
         rng_seed = 42
-    p3_ke = params.get("p3_kappa_eff", 0.0)
+    p3_ke = params.get("p3_touch_log_probability_distance_slope", 0.0)
     k_depth_bl = params.get("kappa_depth_baseline", 0.0)
     queue_calibration = params.get("_queue_calibration")
     if queue_calibration:
@@ -1463,7 +1463,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
 
     # P1: BER Guard params
     ber_gt = params.get("ber_guard_thresh", 0.0)
-    ber_sm = params.get("ber_spread_mult", 2.0)
+    ber_sm = params.get("trade_intensity_acceleration_spread_mult", 2.0)
 
     # v1.2 empirical volatility/markout params (historically labeled LVR-inspired)
     v_power = params.get("vol_power", 1.0)
@@ -1490,7 +1490,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
 
     raw = _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                             book_imb, trade_intensity,
-                            inventory_price_risk, risk_per_order, kappa, osiz, maxinv,
+                            inventory_price_risk, risk_per_order, execution_intensity_slope, osiz, maxinv,
                             rq_ms, fee, taker_fee, TICK, sr,
                             skew, vblend, dthr,
                             asym, gdir,
@@ -1504,7 +1504,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                             bi_str,
                             rq_min_ms, rq_max_ms,
                             liq_baseline, gamma_liq_min, gamma_liq_max,
-                            p3_delta_star, inv_gamma_en,
+                            p3_distance_touch_product_argmax, inv_gamma_en,
                             inv_skew,
                             f_dist_decay, rs_max_pct,
                             ret_dm_hl, m_fill_prob, rng_seed,
@@ -1581,7 +1581,7 @@ def _unpack(raw, params):
 
     return {
         "eta_inventory": params["eta_inventory"], "risk_per_order": params["risk_per_order"],
-        "kappa": params["kappa"],
+        "execution_intensity_slope": params["execution_intensity_slope"],
         "skew": params["skew_strength"],
         "vol_blend": params["vol_blend"],
         "dir_thr": params["dir_threshold"],
@@ -1641,7 +1641,7 @@ def _unpack(raw, params):
         "n_requotes": nrq,
         "timeout_closes": nto,
         "ber_guard_thresh": params.get("ber_guard_thresh", 0.0),
-        "ber_spread_mult": params.get("ber_spread_mult", 2.0),
+        "trade_intensity_acceleration_spread_mult": params.get("trade_intensity_acceleration_spread_mult", 2.0),
         "vol_power": params.get("vol_power", 1.0),
         "markout_ema_span_fills": params.get("markout_ema_span_fills", 0),
         "markout_spread_scale": params.get("markout_spread_scale", 0.0),
@@ -1663,14 +1663,14 @@ def _unpack(raw, params):
 # v1.4 reachability-constrained sweep grid (2026-04-17)
 # Root cause analysis: v1.x κ_eff=0.0024 → spread $300+, unreachable.
 # Legacy note: raw κ is only a fallback in this path.
-# NOTE: p3_kappa_eff (from fill_prob model) overrides grid κ when > 0.
-#   Currently p3_kappa_eff ≈ 0.049 → grid κ is irrelevant; keep a generic placeholder.
+# NOTE: p3_touch_log_probability_distance_slope (from fill_prob model) overrides grid κ when > 0.
+#   Currently p3_touch_log_probability_distance_slope ≈ 0.049 → grid κ is irrelevant; keep a generic placeholder.
 # max_spread_bps caps spread within 10s excursion reachable range.
 # maker_fill_prob < 1.0 models queue position (no free touch-fill).
 # Fee floor: 2 × 0.018% × $85k ≈ $30.6 → need spread > $31 minimum.
 SWEEP_GRID = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.05],               # overridden by p3_kappa_eff; fallback placeholder
+    "execution_intensity_slope": [0.05],               # overridden by p3_touch_log_probability_distance_slope; fallback placeholder
     "skew_strength": [0.0],
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
@@ -1698,7 +1698,7 @@ SWEEP_GRID = {
 # Regime-aware sweep grid (v1.4 reachability-constrained)
 SWEEP_GRID_REGIME = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.02, 0.05, 0.1],
+    "execution_intensity_slope": [0.02, 0.05, 0.1],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
@@ -1728,7 +1728,7 @@ SWEEP_GRID_REGIME = {
 # ret_skew=0.0, skew_strength=0.0, inventory_direction_alignment_strength=0.0.
 SWEEP_GRID_LIVE = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.02, 0.05, 0.1],
+    "execution_intensity_slope": [0.02, 0.05, 0.1],
     "skew_strength": [0.0],
     "vol_blend": [0.0, 0.5],
     "dir_threshold": [0.05],
@@ -1756,7 +1756,7 @@ SWEEP_GRID_LIVE = {
 # ── v1.1 sweep: P1 BER (v1.4 reachability-constrained base) ──
 SWEEP_GRID_V1_1 = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}],
-    "kappa": [0.05],
+    "execution_intensity_slope": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
@@ -1781,21 +1781,21 @@ SWEEP_GRID_V1_1 = {
     "maker_fill_prob": [0.10, 0.20],
     # ── P1: BER Guard ──
     "ber_guard_thresh": [0.0, 1.2, 1.5, 2.0],
-    "ber_spread_mult": [1.5, 2.0, 3.0],
+    "trade_intensity_acceleration_spread_mult": [1.5, 2.0, 3.0],
 }
 
 
 def _dedup_v1_1_combos(params_list):
     """Remove redundant combos where disabled features have varying sub-params.
 
-    When ber_guard_thresh=0, ber_spread_mult is irrelevant.
+    When ber_guard_thresh=0, trade_intensity_acceleration_spread_mult is irrelevant.
     """
     seen = set()
     deduped = []
     for p in params_list:
         norm = dict(p)
         if norm.get("ber_guard_thresh", 0.0) == 0.0:
-            norm["ber_spread_mult"] = 2.0
+            norm["trade_intensity_acceleration_spread_mult"] = 2.0
         sig = tuple(sorted((k, v) for k, v in norm.items() if not k.startswith("_")))
         if sig not in seen:
             seen.add(sig)
@@ -1806,7 +1806,7 @@ def _dedup_v1_1_combos(params_list):
 # ── v1.2 sweep: empirical volatility/markout scaling ──
 SWEEP_GRID_V1_2 = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}],
-    "kappa": [0.05],
+    "execution_intensity_slope": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
@@ -1831,7 +1831,7 @@ SWEEP_GRID_V1_2 = {
     "maker_fill_prob": [0.10, 0.20],
     # P1: BER
     "ber_guard_thresh": [0.0],
-    "ber_spread_mult": [2.0],
+    "trade_intensity_acceleration_spread_mult": [2.0],
     # v1.2 empirical volatility/markout scaling
     "vol_power": [1.0, 1.5, 2.0],
     "markout_ema_span_fills": [0, 10, 20, 50],
@@ -1842,7 +1842,7 @@ SWEEP_GRID_V1_2 = {
 # Sweeps fill_cooldown base seconds; effective cooldown = base × n_consecutive
 SWEEP_GRID_COOLDOWN = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}],
-    "kappa": [0.05],
+    "execution_intensity_slope": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.0, 0.5],
     "dir_threshold": [0.05],
@@ -1875,14 +1875,14 @@ def _dedup_v1_2_combos(params_list):
 
     - When markout_ema_span_fills=0, markout_spread_scale is irrelevant.
     - When markout_spread_scale=0, markout_ema_span_fills is irrelevant.
-    - When ber_guard_thresh=0, ber_spread_mult is irrelevant.
+    - When ber_guard_thresh=0, trade_intensity_acceleration_spread_mult is irrelevant.
     """
     seen = set()
     deduped = []
     for p in params_list:
         norm = dict(p)
         if norm.get("ber_guard_thresh", 0.0) == 0.0:
-            norm["ber_spread_mult"] = 2.0
+            norm["trade_intensity_acceleration_spread_mult"] = 2.0
         if norm.get("markout_ema_span_fills", 0) == 0:
             norm["markout_spread_scale"] = 0.0
         if norm.get("markout_spread_scale", 0.0) == 0.0:
@@ -2034,7 +2034,7 @@ _HDR = (f"{'Rk':>3s}  {'γ':>6s}  {'κ':>6s}  {'κR':>4s}  {'MI':>5s}  {'RQn':>3
 
 
 def _row(i, r):
-    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['kappa']:6.3f}  "
+    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['execution_intensity_slope']:6.3f}  "
             f"{r.get('kappa_ratio', 1.0):4.1f}  "
             f"{r.get('max_inv_cfg', 0.01):5.3f}  "
             f"{r.get('rq_min', r.get('rq_sec', 10)):3.0f}  "
@@ -2051,7 +2051,7 @@ def _row(i, r):
             f"{r.get('book_imb_str', 0.0):4.1f}  "
             f"{r.get('fill_dist_decay', 0.0):4.0f}  "
             f"{r.get('maker_fill_prob', 1.0):4.2f}  "
-            f"{r.get('ber_guard_thresh', 0.0):4.1f}  {r.get('ber_spread_mult', 2.0):3.1f}  "
+            f"{r.get('ber_guard_thresh', 0.0):4.1f}  {r.get('trade_intensity_acceleration_spread_mult', 2.0):3.1f}  "
             f"{r.get('vol_power', 1.0):3.1f}  {r.get('markout_ema_span_fills', 0):3d}  {r.get('markout_spread_scale', 0.0):4.2f}  "
             f"{r.get('selection_score', 0.0):5.2f}  {r.get('inventory_adjusted_pnl', 0.0):10.2f}  {r.get('avg_markout', 0.0):7.2f}  "
             f"{r['pnl']:10.2f}  {r['pnl_per_day']:8.2f}  "
@@ -2096,7 +2096,7 @@ def print_results(results, top_n=20, sort_by="selection_score"):
         robust = _pick_robust_best(results, sort_by=sort_by, top_k=k)
         print(f"\n  Selection-robust (top-{k} by {metric_label}): median {metric_label}={np.median(metric_values):.2f}, "
               f"median PnL=${np.median(pnl):.2f}")
-        print(f"  Robust pick: Cap={_cap_cell(robust)}, γ={robust['risk_per_order']}, κ={robust['kappa']}, "
+        print(f"  Robust pick: Cap={_cap_cell(robust)}, γ={robust['risk_per_order']}, κ={robust['execution_intensity_slope']}, "
               f"{metric_label}={robust.get(metric_field, 0.0):.2f}, "
               f"InvAdj=${robust.get('inventory_adjusted_pnl', 0.0):.2f}, PnL=${robust['pnl']:.2f}")
 

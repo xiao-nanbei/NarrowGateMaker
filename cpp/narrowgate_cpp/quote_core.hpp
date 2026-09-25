@@ -11,7 +11,6 @@ namespace narrowgate_cpp {
 // 的字段列表和 parity tests。
 struct QuoteCoreConfig {
     // Legacy compatibility input. NaN split fields inherit this value exactly.
-    double kappa = 1.0;
     double tick_size = 0.1;
     double lot_size = 0.001;
     double maker_fee = 0.0;
@@ -40,8 +39,8 @@ struct QuoteCoreConfig {
     double vol_power = 1.0;
 
     double kappa_ratio = 0.3;
-    double p3_delta_star = 0.0;
-    double p3_kappa_eff = 0.0;
+    double p3_distance_touch_product_argmax = 0.0;
+    double p3_touch_log_probability_distance_slope = 0.0;
 
     bool use_bar_pricing = true;
     bool use_depth_weighted_mid_proxy = false;
@@ -51,7 +50,6 @@ struct QuoteCoreConfig {
     double kappa_depth_baseline = 50.0;
     double depth_kappa_ratio = 0.3;
 
-    double ber_spread_mult = 2.0;
     double markout_spread_scale = 0.0;
     double markout_side_asymmetry_sign = 1.0;
     double inventory_skew_strength = 0.0;
@@ -118,7 +116,7 @@ struct QuoteCoreConfig {
     double risk_per_order = std::numeric_limits<double>::quiet_NaN();
     double execution_intensity_slope = std::numeric_limits<double>::quiet_NaN();
     double risk_horizon_s = std::numeric_limits<double>::quiet_NaN();
-    bool historical_p3_scalar_adapter_enabled = false;
+    bool p3_pair_spread_projection_enabled = false;
     bool p3_side_bbo_floor_enabled = false;
     bool p3_identity_required = false;
     std::string p3_event_type;

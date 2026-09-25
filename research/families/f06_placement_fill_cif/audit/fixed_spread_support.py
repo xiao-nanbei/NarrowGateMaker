@@ -222,7 +222,7 @@ def build_research_params(
         config_path=config_path,
         configure_symbol=bt.configure_symbol,
         require_historical_bbo=True,
-        include_fill_probability=True,
+        include_touch_probability=True,
         include_queue_calibration=True,
         queue_calibration_path=queue_calibration_path,
         strict_calibration=strict_calibration,

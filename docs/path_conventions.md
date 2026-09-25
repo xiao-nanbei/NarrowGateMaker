@@ -12,6 +12,8 @@ Status: Current public path and privacy contract.
 
 NarrowGate documentation uses public placeholders instead of personal machine paths or private research output directories.
 
+Runtime paths are explicit. `MM_DATA_ROOT`, historical-root prefix maps, and the two `NARROWGATE_RETIRED_*` provenance placeholders are not runtime aliases. Migrate required locators offline; a missing selected input does not authorize borrowing a file from another root. Historical evidence retains its original identity.
+
 ## Placeholders
 
 | Placeholder | Meaning |

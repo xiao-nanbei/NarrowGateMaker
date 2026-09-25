@@ -500,7 +500,7 @@ def test_native_final_order_plan_reasserts_p3_and_forces_unsafe_orders() -> None
         best_bid=59_999.9,
         best_ask=60_000.1,
         p3_side_bbo_floor_enabled=True,
-        p3_delta_star=0.5,
+        p3_distance_touch_product_argmax=0.5,
     )
 
     expected = apply_p3_side_bbo_floor(
@@ -537,7 +537,7 @@ def test_native_final_order_plan_rejects_crossing_post_only_boundary() -> None:
             best_bid=60_000.0,
             best_ask=60_000.1,
             p3_side_bbo_floor_enabled=False,
-            p3_delta_star=0.0,
+            p3_distance_touch_product_argmax=0.0,
         )
 
 
@@ -612,7 +612,7 @@ def test_native_final_order_plan_matches_python_tail_random_and_nextafter() -> N
             best_bid=best_bid_ticks * 0.1,
             best_ask=best_ask_ticks * 0.1,
             p3_side_bbo_floor_enabled=True,
-            p3_delta_star=delta,
+            p3_distance_touch_product_argmax=delta,
         )
         expected_floor = apply_p3_side_bbo_floor(
             buy.target_price,

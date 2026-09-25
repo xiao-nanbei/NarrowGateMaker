@@ -1179,8 +1179,8 @@ def _resolve_project_path(raw: Any) -> Path | None:
 def build_backtest_base_params(
     live_params: Mapping[str, Any],
     *,
-    p3_delta_star: float = 0.0,
-    p3_kappa_eff: float = 0.0,
+    p3_distance_touch_product_argmax: float = 0.0,
+    p3_touch_log_probability_distance_slope: float = 0.0,
     queue_calibration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the shared bar/tick-compatible backtest parameter dict."""
@@ -1188,6 +1188,8 @@ def build_backtest_base_params(
     # 新增 live guard/policy 参数时要先进这里，再分别做 Python/C++ parity。
     if "gamma" in live_params:
         raise ValueError("gamma is not a current quote parameter")
+    if "kappa" in live_params or "ber_spread_mult" in live_params:
+        raise ValueError("retired quote parameter; migrate kappa/ber_spread_mult offline")
     params = {
         "eta_inventory": finite_positive_quote_coefficient("eta_inventory", live_params["eta_inventory"]),
         "a_spread": finite_positive_quote_coefficient("a_spread", live_params["a_spread"]),
@@ -1196,7 +1198,9 @@ def build_backtest_base_params(
             "inventory_reference_qty",
             live_params.get("inventory_reference_qty", 1.0),
         ),
-        "kappa": live_params["kappa"],
+        "execution_intensity_slope": live_params["execution_intensity_slope"],
+        "risk_horizon_s": live_params["risk_horizon_s"],
+        "trade_intensity_acceleration_spread_mult": live_params["trade_intensity_acceleration_spread_mult"],
         "order_size": live_params["order_size"],
         "max_inventory": live_params["max_inventory"],
         "max_daily_loss": live_params.get("max_daily_loss"),
@@ -1204,8 +1208,8 @@ def build_backtest_base_params(
         "emergency_close_dd": live_params.get("emergency_close_dd"),
         "requote_interval": live_params.get("requote_interval", 10.0),
         "quote_horizon_s": live_params.get("quote_horizon_s", 1.0),
-        "historical_p3_scalar_adapter_enabled": bool(
-            live_params.get("historical_p3_scalar_adapter_enabled", True)
+        "p3_pair_spread_projection_enabled": bool(
+            live_params.get("p3_pair_spread_projection_enabled", True)
         ),
         "p3_side_bbo_floor_enabled": bool(
             live_params.get("p3_side_bbo_floor_enabled", False)
@@ -1267,8 +1271,8 @@ def build_backtest_base_params(
         "liq_baseline": live_params.get("liq_baseline", 200.0),
         "liquidity_spread_scale_min": live_params.get("liquidity_spread_scale_min", 0.5),
         "liquidity_spread_scale_max": live_params.get("liquidity_spread_scale_max", 3.0),
-        "p3_delta_star": p3_delta_star,
-        "p3_kappa_eff": p3_kappa_eff,
+        "p3_distance_touch_product_argmax": p3_distance_touch_product_argmax,
+        "p3_touch_log_probability_distance_slope": p3_touch_log_probability_distance_slope,
         "kappa_depth_baseline": live_params.get("kappa_depth_baseline", 50.0),
         "thin_depth_threshold": live_params.get("thin_depth_threshold", 0.0),
         "inv_gamma_enabled": True,
@@ -1276,7 +1280,6 @@ def build_backtest_base_params(
         "ret_shift_max_pct": live_params.get("ret_shift_max_pct", 0.3),
         "ret_demean_halflife": live_params.get("ret_demean_halflife", 0),
         "ber_guard_thresh": live_params.get("ber_guard_thresh", 1.2),
-        "ber_spread_mult": live_params.get("ber_spread_mult", 2.0),
         "ber_exposure_add_only": live_params.get("ber_exposure_add_only", False),
         "vol_power": live_params.get("vol_power", 1.5),
         "markout_horizon_s": live_params.get("markout_horizon_s", 10.0),
@@ -1572,26 +1575,25 @@ def disable_ml_params(params: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
-def add_fill_probability_params(
+def add_touch_probability_params(
     params: dict[str, Any],
     *,
     model_path: Path,
     label: str = "P3",
-    strict: bool = False,
 ) -> dict[str, Any]:
-    params["p3_kappa_eff"] = 0.0
-    params["fill_probability_calibrated"] = False
-    params["fill_probability_model_path"] = str(model_path)
-    params["fill_probability_schema_version"] = ""
-    params["fill_probability_model_type"] = ""
-    params["fill_probability_event_type"] = ""
-    params["fill_probability_horizon_s"] = 0.0
-    params["fill_probability_distance_origin"] = ""
-    params["fill_probability_distance_unit"] = ""
-    params["fill_probability_side"] = ""
-    params["fill_probability_queue_included"] = None
-    params["fill_probability_artifact_sha256"] = ""
-    params["p3_identity_required"] = bool(strict)
+    params["p3_touch_log_probability_distance_slope"] = 0.0
+    params["touch_probability_calibrated"] = False
+    params["touch_probability_model_path"] = str(model_path)
+    params["touch_probability_schema_version"] = ""
+    params["touch_probability_model_type"] = ""
+    params["touch_probability_event_type"] = ""
+    params["touch_probability_horizon_s"] = 0.0
+    params["touch_probability_distance_origin"] = ""
+    params["touch_probability_distance_unit"] = ""
+    params["touch_probability_side"] = ""
+    params["touch_probability_queue_included"] = None
+    params["touch_probability_artifact_sha256"] = ""
+    params["p3_identity_required"] = True
     try:
         from research.families.f02_empirical_p3_touch.touch_probability import (
             TouchProbabilityModel,
@@ -1611,39 +1613,34 @@ def add_fill_probability_params(
                 "artifact_sha256": "",
             }
         )
-        params["p3_delta_star"] = fill_model.distance_touch_product_argmax()
-        p3_kappa_eff = fill_model.touch_log_probability_distance_slope()
-        if p3_kappa_eff > 0:
-            params["p3_kappa_eff"] = p3_kappa_eff
-        if params["p3_delta_star"] <= 0.0 or params["p3_kappa_eff"] <= 0.0:
-            raise ValueError(f"{label} calibration must provide positive delta_star and kappa_eff")
-        params["fill_probability_calibrated"] = True
-        params["fill_probability_schema_version"] = str(fill_model.schema_version)
-        params["fill_probability_model_type"] = str(fill_model.model_type)
-        params["fill_probability_event_type"] = str(p3_identity["event_type"])
-        params["fill_probability_horizon_s"] = float(p3_identity["horizon_s"])
-        params["fill_probability_distance_origin"] = str(
+        params["p3_distance_touch_product_argmax"] = fill_model.distance_touch_product_argmax()
+        p3_touch_log_probability_distance_slope = fill_model.touch_log_probability_distance_slope()
+        if p3_touch_log_probability_distance_slope > 0:
+            params["p3_touch_log_probability_distance_slope"] = p3_touch_log_probability_distance_slope
+        if params["p3_distance_touch_product_argmax"] <= 0.0 or params["p3_touch_log_probability_distance_slope"] <= 0.0:
+            raise ValueError(f"{label} calibration must provide positive touch-distance argmax and log-probability distance slope")
+        params["touch_probability_calibrated"] = True
+        params["touch_probability_schema_version"] = str(fill_model.schema_version)
+        params["touch_probability_model_type"] = str(fill_model.model_type)
+        params["touch_probability_event_type"] = str(p3_identity["event_type"])
+        params["touch_probability_horizon_s"] = float(p3_identity["horizon_s"])
+        params["touch_probability_distance_origin"] = str(
             p3_identity["distance_origin"]
         )
-        params["fill_probability_distance_unit"] = str(p3_identity["distance_unit"])
-        params["fill_probability_side"] = str(p3_identity["side"])
-        params["fill_probability_queue_included"] = bool(
+        params["touch_probability_distance_unit"] = str(p3_identity["distance_unit"])
+        params["touch_probability_side"] = str(p3_identity["side"])
+        params["touch_probability_queue_included"] = bool(
             p3_identity["queue_included"]
         )
-        params["fill_probability_artifact_sha256"] = str(p3_identity["artifact_sha256"])
+        params["touch_probability_artifact_sha256"] = str(p3_identity["artifact_sha256"])
         print(
-            f"  {label}: delta_star={params['p3_delta_star']:.4f}, "
-            f"kappa_eff={params['p3_kappa_eff']:.4f}, path={model_path}"
+            f"  {label}: distance_touch_product_argmax={params['p3_distance_touch_product_argmax']:.4f}, "
+            f"touch_log_probability_distance_slope={params['p3_touch_log_probability_distance_slope']:.4f}, path={model_path}"
         )
     except Exception as exc:
-        if strict:
-            raise RuntimeError(
-                f"{label} fill calibration unavailable: {model_path}: {exc}"
-            ) from exc
-        # 探索性入口保持历史 fail-open 行为；formal replay 使用 strict=True。
-        print(f"  [WARN] {label} fill model unavailable: {exc}")
-        params["p3_delta_star"] = 0.0
-        params["p3_kappa_eff"] = 0.0
+        raise RuntimeError(
+            f"{label} touch calibration unavailable: {model_path}: {exc}"
+        ) from exc
     return params
 
 
@@ -1718,44 +1715,44 @@ def validate_formal_replay_calibration(
         if "PUBLIC TEMPLATE" in config_text.upper():
             errors.append(f"public template config is not a formal baseline: {config_path}")
 
-    if not bool(params.get("fill_probability_calibrated", False)):
+    if not bool(params.get("touch_probability_calibrated", False)):
         errors.append("fill-probability/effective-kappa calibration is missing")
-    if params.get("fill_probability_schema_version") != "narrowgate_p3_touch_calibration.v3":
+    if params.get("touch_probability_schema_version") != "narrowgate_p3_touch_calibration.v4":
         errors.append("formal replay requires causal exact-tick P3 calibration v2")
-    if params.get("fill_probability_model_type") != "empirical_survival":
+    if params.get("touch_probability_model_type") != "empirical_survival":
         errors.append("formal replay requires empirical P3 survival calibration")
-    if params.get("fill_probability_event_type") != "touch":
+    if params.get("touch_probability_event_type") != "touch":
         errors.append("formal replay requires event_type=touch for P3")
     if not math.isclose(
-        float(params.get("fill_probability_horizon_s", 0.0) or 0.0),
+        float(params.get("touch_probability_horizon_s", 0.0) or 0.0),
         10.0,
         rel_tol=0.0,
         abs_tol=1e-12,
     ):
         errors.append("formal replay requires P3 horizon_s=10")
-    if params.get("fill_probability_distance_unit") != "USDC_per_BTC":
+    if params.get("touch_probability_distance_unit") != "USDC_per_BTC":
         errors.append("formal replay requires P3 distance_unit=USDC_per_BTC")
     if (
-        params.get("fill_probability_distance_origin")
+        params.get("touch_probability_distance_origin")
         != "same_side_best_bid_or_ask_at_window_start"
     ):
         errors.append("formal replay requires the same-side-BBO origin")
-    if params.get("fill_probability_side") != "pooled_buy_sell":
+    if params.get("touch_probability_side") != "pooled_buy_sell":
         errors.append("formal replay requires pooled BUY/SELL identity")
-    if params.get("fill_probability_queue_included") is not False:
+    if params.get("touch_probability_queue_included") is not False:
         errors.append("formal replay requires queue_included=false")
-    p3_sha256 = str(params.get("fill_probability_artifact_sha256", "") or "")
+    p3_sha256 = str(params.get("touch_probability_artifact_sha256", "") or "")
     if len(p3_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in p3_sha256):
         errors.append("formal replay requires the exact P3 artifact SHA256")
-    p3_path = Path(str(params.get("fill_probability_model_path", "") or ""))
+    p3_path = Path(str(params.get("touch_probability_model_path", "") or ""))
     if not p3_path.is_file():
         errors.append("formal replay requires the exact P3 artifact file")
     elif hashlib.sha256(p3_path.read_bytes()).hexdigest() != p3_sha256:
         errors.append("P3 artifact SHA256 does not match the executed file")
-    if float(params.get("p3_delta_star", 0.0) or 0.0) <= 0.0:
-        errors.append("p3_delta_star must be positive")
-    if float(params.get("p3_kappa_eff", 0.0) or 0.0) <= 0.0:
-        errors.append("p3_kappa_eff must be positive")
+    if float(params.get("p3_distance_touch_product_argmax", 0.0) or 0.0) <= 0.0:
+        errors.append("p3_distance_touch_product_argmax must be positive")
+    if float(params.get("p3_touch_log_probability_distance_slope", 0.0) or 0.0) <= 0.0:
+        errors.append("p3_touch_log_probability_distance_slope must be positive")
     if not bool(params.get("queue_calibration_loaded", False)):
         errors.append("daily queue calibration is missing")
     if params.get("queue_calibration_schema_version") != "narrowgate_queue_calibration.v3":
@@ -1900,7 +1897,7 @@ def load_tick_base_params(
     queue_price_tolerance: float | None = None,
     min_historical_book_coverage: float | None = None,
     maker_fill_prob: float | None = None,
-    include_fill_probability: bool = True,
+    include_touch_probability: bool = True,
     include_queue_calibration: bool = True,
     queue_calibration_path: str | Path | None = None,
     strict_calibration: bool = False,
@@ -2024,15 +2021,15 @@ def load_tick_base_params(
         params["maker_fill_prob"] = maker_fill_prob
 
     model_dir_for_artifacts = model_dir_override or symbol_model_dir(resolved_symbol or None)
-    model_path = model_dir_for_artifacts / "fill_prob_params.json"
-    if include_fill_probability:
-        add_fill_probability_params(params, model_path=model_path, strict=strict_calibration)
-        p3_kappa_eff_override = float(
-            params.get("p3_kappa_eff_override", 0.0) or 0.0
+    model_path = model_dir_for_artifacts / "touch_probability.json"
+    if include_touch_probability:
+        add_touch_probability_params(params, model_path=model_path)
+        p3_touch_log_probability_distance_slope_override = float(
+            params.get("p3_touch_log_probability_distance_slope_override", 0.0) or 0.0
         )
-        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+        if not math.isfinite(p3_touch_log_probability_distance_slope_override) or p3_touch_log_probability_distance_slope_override != 0.0:
             raise ValueError(
-                "nonzero p3_kappa_eff_override cannot inherit the empirical "
+                "nonzero p3_touch_log_probability_distance_slope_override cannot inherit the empirical "
                 "touch artifact identity"
             )
     if include_queue_calibration and resolved_symbol:

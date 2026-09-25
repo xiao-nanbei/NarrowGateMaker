@@ -18,9 +18,9 @@ bool is_lower_hex_sha256(const std::string& value) {
 
 void validate_p3_touch_identity(const QuoteCoreConfig& cfg) {
     const bool projection_active = (
-        cfg.historical_p3_scalar_adapter_enabled &&
-        (cfg.p3_delta_star > 0.0 || cfg.p3_kappa_eff > 0.0)
-    ) || (cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0);
+        cfg.p3_pair_spread_projection_enabled &&
+        (cfg.p3_distance_touch_product_argmax > 0.0 || cfg.p3_touch_log_probability_distance_slope > 0.0)
+    ) || (cfg.p3_side_bbo_floor_enabled && cfg.p3_distance_touch_product_argmax > 0.0);
     const bool identity_present =
         !cfg.p3_event_type.empty() || cfg.p3_horizon_s != 0.0 ||
         !cfg.p3_distance_origin.empty() || !cfg.p3_distance_unit.empty() ||
@@ -656,17 +656,9 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     }
     const double eta_inventory = cfg.eta_inventory;
     const double risk_per_order = cfg.risk_per_order;
-    const double execution_intensity_slope =
-        std::isfinite(cfg.execution_intensity_slope)
-        ? cfg.execution_intensity_slope
-        : cfg.kappa;
-    const double risk_horizon_s = std::isfinite(cfg.risk_horizon_s)
-        ? cfg.risk_horizon_s
-        : cfg.quote_horizon_s;
-    const double acceleration_spread_mult =
-        std::isfinite(cfg.trade_intensity_acceleration_spread_mult)
-        ? cfg.trade_intensity_acceleration_spread_mult
-        : cfg.ber_spread_mult;
+    const double execution_intensity_slope = cfg.execution_intensity_slope;
+    const double risk_horizon_s = cfg.risk_horizon_s;
+    const double acceleration_spread_mult = cfg.trade_intensity_acceleration_spread_mult;
     if (!std::isfinite(eta_inventory) || eta_inventory <= 0.0) {
         throw std::invalid_argument(
             "eta_inventory must be positive and finite"
@@ -694,7 +686,7 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
             "trade_intensity_acceleration_spread_mult must be positive and finite"
         );
     }
-    if (cfg.historical_p3_scalar_adapter_enabled &&
+    if (cfg.p3_pair_spread_projection_enabled &&
         cfg.p3_side_bbo_floor_enabled) {
         throw std::invalid_argument(
             "historical P3 scalar projection and side-BBO floor are mutually exclusive"
@@ -717,8 +709,8 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     }
 
     const double kappa_base =
-        cfg.historical_p3_scalar_adapter_enabled && cfg.p3_kappa_eff > 0.0
-        ? cfg.p3_kappa_eff
+        cfg.p3_pair_spread_projection_enabled && cfg.p3_touch_log_probability_distance_slope > 0.0
+        ? cfg.p3_touch_log_probability_distance_slope
         : execution_intensity_slope;
     return QuoteHotPlan{
         tick,
@@ -729,9 +721,9 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
         acceleration_spread_mult,
         kappa_base,
         clamp(cfg.spread_cap_mode, 0, 2),
-        cfg.regime_enabled && cfg.historical_p3_scalar_adapter_enabled &&
-            cfg.p3_delta_star > 0.0,
-        cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0,
+        cfg.regime_enabled && cfg.p3_pair_spread_projection_enabled &&
+            cfg.p3_distance_touch_product_argmax > 0.0,
+        cfg.p3_side_bbo_floor_enabled && cfg.p3_distance_touch_product_argmax > 0.0,
     };
 }
 
@@ -845,7 +837,7 @@ QuoteCoreResult compute_quote_core(
     );
     delta *= depth_tox;
     if (plan.historical_p3_pair_floor_active()) {
-        delta = std::max(delta, 2.0 * cfg.p3_delta_star);
+        delta = std::max(delta, 2.0 * cfg.p3_distance_touch_product_argmax);
     }
     const double min_spread = 2.0 * std::abs(cfg.maker_fee) * mid + tick;
     delta = std::max(delta, min_spread);
@@ -1117,10 +1109,10 @@ QuoteCoreResult compute_quote_core(
             );
         }
         const double p3_buy_floor_price = floor_tick(
-            state.best_bid - cfg.p3_delta_star, tick
+            state.best_bid - cfg.p3_distance_touch_product_argmax, tick
         );
         const double p3_sell_floor_price = ceil_tick(
-            state.best_ask + cfg.p3_delta_star, tick
+            state.best_ask + cfg.p3_distance_touch_product_argmax, tick
         );
         bid_price = std::min(bid_price, p3_buy_floor_price);
         ask_price = std::max(ask_price, p3_sell_floor_price);

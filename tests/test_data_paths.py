@@ -36,7 +36,7 @@ def test_daily_market_paths_separate_raw_and_generated(tmp_path, monkeypatch):
     )
 
 
-def test_explicit_daily_root_and_relocation_without_symlinks(tmp_path, monkeypatch):
+def test_explicit_daily_root_and_retired_relocation_rejected(tmp_path, monkeypatch):
     assert data_paths.daily_market_path("2026-09-08", "BTCUSDC", "funding", tmp_path) == (
         tmp_path / "raw/accounting/funding/BTCUSDC/2026-09-08.parquet"
     )
@@ -46,9 +46,8 @@ def test_explicit_daily_root_and_relocation_without_symlinks(tmp_path, monkeypat
         "path_prefix_relocations": {str(tmp_path / "old"): str(tmp_path / "derived")},
     }))
     monkeypatch.setattr(data_paths, "PRIVATE_STORAGE_ROOTS_PATH", pointer)
-    assert data_paths.relocate_marketdata_path(tmp_path / "old/bars/day.parquet") == (
-        tmp_path / "derived/bars/day.parquet"
-    )
+    with pytest.raises(ValueError, match="retired storage relocation"):
+        data_paths.marketdata_root()
 
 
 def test_marketdata_root_honors_explicit_environment(monkeypatch) -> None:
@@ -69,7 +68,7 @@ def test_default_roots_are_siblings_and_derived_override_does_not_rebind_raw(tmp
     assert data_paths.raw_data_root() == workspace / "raw"
 
 
-def test_legacy_volume_then_physical_split_is_resolved_once(tmp_path, monkeypatch):
+def test_retired_volume_mapping_is_not_a_runtime_protocol(tmp_path, monkeypatch):
     current = tmp_path / "volume"
     old = tmp_path / "old-volume"
     pointer = tmp_path / "roots.json"
@@ -82,12 +81,11 @@ def test_legacy_volume_then_physical_split_is_resolved_once(tmp_path, monkeypatc
         },
     }))
     monkeypatch.setattr(data_paths, "PRIVATE_STORAGE_ROOTS_PATH", pointer)
-    monkeypatch.setenv("NARROWGATE_MARKETDATA_ROOT", str(current))
-    assert data_paths.relocate_marketdata_path(old / "NarrowGate_BTCUSDC/bars_1s/day.parquet") == (
-        current / "NarrowGate_BTCUSDC/derived/bars_1s/day.parquet"
-    )
+    monkeypatch.delenv("NARROWGATE_MARKETDATA_ROOT", raising=False)
+    with pytest.raises(ValueError, match="retired storage relocation"):
+        data_paths.marketdata_root()
     raw = current / "NarrowGate_BTCUSDC/raw/binance_futures/BTCUSDC/2026-09-08/trades.parquet"
-    assert data_paths.relocate_marketdata_path(raw) == raw
+    assert data_paths.resolve_portable_path(raw) == raw
 
 
 def test_portable_raw_root_is_independent_of_derived(tmp_path, monkeypatch):
@@ -102,8 +100,7 @@ def test_marketdata_root_uses_ignored_owner_pointer(monkeypatch, tmp_path: Path)
     pointer = tmp_path / "storage-roots.json"
     pointer.write_text(
         '{"visibility":"local_only_do_not_publish",'
-        '"marketdata_root":"/srv/narrowgate-marketdata",'
-        '"legacy_marketdata_roots":[]}\n',
+        '"marketdata_root":"/srv/narrowgate-marketdata"}\n',
         encoding="utf-8",
     )
     monkeypatch.delenv("NARROWGATE_MARKETDATA_ROOT", raising=False)
@@ -112,11 +109,15 @@ def test_marketdata_root_uses_ignored_owner_pointer(monkeypatch, tmp_path: Path)
     assert data_paths.marketdata_root() == Path("/srv/narrowgate-marketdata")
 
 
-def test_data_root_honors_current_and_legacy_environment(monkeypatch) -> None:
+def test_data_root_rejects_retired_environment_even_with_current_key(monkeypatch) -> None:
     monkeypatch.setenv("MM_DATA_ROOT", "/tmp/legacy-data-root")
-    assert data_paths.data_root() == Path("/tmp/legacy-data-root").resolve()
+    with pytest.raises(ValueError, match="retired MM_DATA_ROOT"):
+        data_paths.data_root()
 
     monkeypatch.setenv("NARROWGATE_DATA_ROOT", "/tmp/current-data-root")
+    with pytest.raises(ValueError, match="retired MM_DATA_ROOT"):
+        data_paths.data_root()
+    monkeypatch.delenv("MM_DATA_ROOT")
     assert data_paths.data_root() == Path("/tmp/current-data-root").resolve()
 
 
@@ -195,33 +196,22 @@ def test_data_root_does_not_fall_back_when_external_volume_is_missing(
     )
 
 
-def test_relocate_legacy_marketdata_path(monkeypatch, tmp_path) -> None:
-    # Test generic root relocation without the owner's explicit file moves.
+def test_literal_historical_root_is_not_reinterpreted(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(data_paths, "PRIVATE_STORAGE_ROOTS_PATH", tmp_path / "missing.json")
     monkeypatch.setenv("NARROWGATE_MARKETDATA_ROOT", "/srv/current-marketdata")
-    legacy = data_paths.LEGACY_MARKETDATA_ROOT / "NarrowGate_BTCUSDC" / "reports"
-    assert data_paths.relocate_marketdata_path(legacy) == Path(
-        "/srv/current-marketdata/NarrowGate_BTCUSDC/reports"
-    )
+    old_path = Path("/srv/retired-marketdata/NarrowGate_BTCUSDC/reports")
+    assert data_paths.resolve_portable_path(old_path) == old_path
 
 
-def test_relocate_legacy_window_cache_to_internal_cache(monkeypatch) -> None:
+def test_literal_cache_location_is_not_redirected(monkeypatch) -> None:
     monkeypatch.setenv("NARROWGATE_CACHE_ROOT", "/tmp/narrowgate-cache")
     monkeypatch.delenv("NARROWGATE_TICK_WINDOW_CACHE_DIR", raising=False)
-    legacy = (
-        data_paths.LEGACY_MARKETDATA_ROOT
-        / "NarrowGate_BTCUSDC"
-        / "window_cache"
-        / "day.pkl"
-    )
-
-    assert data_paths.relocate_marketdata_path(legacy) == Path(
-        "/tmp/narrowgate-cache/window_cache/day.pkl"
-    ).resolve()
+    old_path = Path("/srv/retired-marketdata/NarrowGate_BTCUSDC/window_cache/day.pkl")
+    assert data_paths.resolve_portable_path(old_path) == old_path
 
 
-def test_relocate_frozen_other_host_marketdata_path(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("NARROWGATE_MARKETDATA_ROOT", "/tmp/current-marketdata")
+def test_other_host_root_mapping_is_rejected(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("NARROWGATE_MARKETDATA_ROOT", raising=False)
     private_pointer = tmp_path / "storage-roots.json"
     private_pointer.write_text(
         '{"visibility":"local_only_do_not_publish",'
@@ -229,17 +219,16 @@ def test_relocate_frozen_other_host_marketdata_path(monkeypatch, tmp_path: Path)
         encoding="utf-8",
     )
     monkeypatch.setattr(data_paths, "PRIVATE_STORAGE_ROOTS_PATH", private_pointer)
-    frozen = Path("/srv/retired-user/MarketData/NarrowGate_BTCUSDC/reports/report.json")
-
-    assert data_paths.relocate_marketdata_path(frozen) == Path(
-        "/tmp/current-marketdata/NarrowGate_BTCUSDC/reports/report.json"
-    ).resolve()
+    with pytest.raises(ValueError, match="retired storage relocation"):
+        data_paths.marketdata_root()
 
 
-def test_relocate_leaves_unrelated_path_unchanged(monkeypatch) -> None:
+def test_literal_path_is_unchanged_and_retired_entry_is_absent(monkeypatch) -> None:
     monkeypatch.setenv("NARROWGATE_MARKETDATA_ROOT", "/srv/current-marketdata")
     path = Path("/tmp/unrelated")
-    assert data_paths.relocate_marketdata_path(path) == path
+    assert data_paths.resolve_portable_path(path) == path
+    assert not hasattr(data_paths, "relocate_marketdata_path")
+    assert not hasattr(data_paths, "legacy_marketdata_roots")
 
 
 def test_resolve_portable_public_paths(monkeypatch, tmp_path: Path) -> None:
@@ -257,10 +246,9 @@ def test_resolve_portable_public_paths(monkeypatch, tmp_path: Path) -> None:
     assert data_paths.resolve_portable_path(
         "${NARROWGATE_DATA_ROOT}/reports/result.json"
     ) == (data / "reports/result.json").resolve()
+    with pytest.raises(ValueError, match="unsupported portable path"):
+        data_paths.resolve_portable_path("${NARROWGATE_RETIRED_DATA_ROOT}/raw/file.csv")
     assert data_paths.resolve_portable_path(
-        "${NARROWGATE_RETIRED_DATA_ROOT}/raw/file.csv"
-    ) == (data / "raw/file.csv").resolve()
-    assert data_paths.relocate_marketdata_path(
         "${NARROWGATE_MARKETDATA_ROOT}/tardis/manifest.json"
     ) == (marketdata / "tardis/manifest.json").resolve()
     assert data_paths.resolve_portable_path(

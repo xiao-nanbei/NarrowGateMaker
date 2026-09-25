@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import LEGACY_MARKETDATA_ROOT, relocate_marketdata_path
+
 from models import backtest_tick as bt
 from models.exchange_book_replay import CryptoHFTExchangeBookTape
 from research.families.f09_campaign_action_uplift.audit.post_cooldown_incremental_inventory_budget import (
@@ -189,14 +189,7 @@ def require_identity(path: Path, expected_sha256: str, label: str) -> None:
         )
 
 
-def _relocate_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _relocate_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_relocate_value(item) for item in value]
-    if isinstance(value, str) and value.startswith(str(LEGACY_MARKETDATA_ROOT)):
-        return str(relocate_marketdata_path(value))
-    return value
+
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -248,7 +241,7 @@ def _runtime_baseline_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
     identity = spec["baseline_contract_identity"]
     baseline_path = Path(identity["path"])
     require_identity(baseline_path, identity["sha256"], "baseline replay contract")
-    baseline = _relocate_value(_load_json(baseline_path))
+    baseline = _load_json(baseline_path)
     expected_days = [str(day) for day in spec["panels"]["development_days"]]
     actual_days = [str(day) for day in baseline["panels"]["development_days"]]
     if expected_days != actual_days:
@@ -268,7 +261,7 @@ def _validate_nonmarket_identities(
     require_identity(Path(state_contract["path"]), state_contract["sha256"], "state contract")
     quality = spec["panels"]["quality_ledger"]
     require_identity(
-        Path(_relocate_value(quality["path"])),
+        Path(quality["path"]),
         quality["sha256"],
         "Development quality ledger",
     )

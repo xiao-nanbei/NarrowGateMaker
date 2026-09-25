@@ -38,10 +38,11 @@ QuoteCoreConfig config() {
     QuoteCoreConfig value;
     value.eta_inventory = 0.046;
     value.risk_per_order = 0.046;
-    value.eta_inventory = 0.046;
     value.a_spread = 0.046;
     value.inventory_reference_qty = 1.0;
-    value.kappa = 0.05;
+    value.execution_intensity_slope = 0.05;
+    value.risk_horizon_s = 1.0;
+    value.trade_intensity_acceleration_spread_mult = 2.0;
     value.tick_size = 0.1;
     value.lot_size = 0.001;
     value.order_size = 0.001;

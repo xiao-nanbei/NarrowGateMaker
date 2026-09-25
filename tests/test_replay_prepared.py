@@ -15,7 +15,8 @@ def parameters():
     return dict(
         inventory_reference_qty=1.0,
         eta_inventory=0.01, a_spread=0.01, risk_per_order=0.01,
-        kappa=1.0,
+        execution_intensity_slope=1.0, risk_horizon_s=1.0,
+        trade_intensity_acceleration_spread_mult=2.0,
         order_size=0.001,
         max_inventory=0.01,
         requote_interval=1.0,
@@ -127,14 +128,14 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
     with pytest.raises(ValueError, match="loaded frozen P3 identity"):
         replay_parameter_candidates(bundle, {"b0": {"eta_inventory": params["eta_inventory"]}},
                                     common_params=params, model_dir=tmp_path / "frozen")
-    params.update(fill_probability_calibrated=True, p3_identity_required=True,
-                  p3_delta_star=1.0, p3_kappa_eff=0.05,
-                  fill_probability_event_type="touch", fill_probability_horizon_s=10.0,
-                  fill_probability_distance_origin="same_side_best_bid_or_ask_at_window_start",
-                  fill_probability_distance_unit="USDC_per_BTC",
-                  fill_probability_side="pooled_buy_sell",
-                  fill_probability_queue_included=False,
-                  fill_probability_artifact_sha256="a" * 64)
+    params.update(touch_probability_calibrated=True, p3_identity_required=True,
+                  p3_distance_touch_product_argmax=1.0, p3_touch_log_probability_distance_slope=0.05,
+                  touch_probability_event_type="touch", touch_probability_horizon_s=10.0,
+                  touch_probability_distance_origin="same_side_best_bid_or_ask_at_window_start",
+                  touch_probability_distance_unit="USDC_per_BTC",
+                  touch_probability_side="pooled_buy_sell",
+                  touch_probability_queue_included=False,
+                  touch_probability_artifact_sha256="a" * 64)
     arms = replay_parameter_candidates(
         bundle, {"b0": {"eta_inventory": params["eta_inventory"]},
                  "candidate": {"eta_inventory": params["eta_inventory"] * 1.2}},
@@ -149,8 +150,8 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
 @pytest.mark.parametrize("change, mask, match", [
     ({"gamma": 0.02}, {"a_spread": 0.01}, "only declared quote parameters"),
     ({"gamma": 0.02}, {"quote_math_mode": "quantity_aware_v1"}, "only declared quote parameters"),
-    ({"kappa": 2.0}, {"execution_intensity_slope": 1.0}, "kappa is masked"),
-    ({"kappa": 2.0}, {"p3_kappa_eff": 3.0}, "kappa is masked"),
+    ({"kappa": 2.0}, {"execution_intensity_slope": 1.0}, "only declared quote parameters"),
+    ({"kappa": 2.0}, {"p3_touch_log_probability_distance_slope": 3.0}, "only declared quote parameters"),
     ({"max_spread_bps": 25.0}, {"dynamic_cap_enabled": True,
                                   "dynamic_cap_base_bps": 20.0}, "max_spread_bps is masked"),
 ])
@@ -163,7 +164,7 @@ def test_f01_rejects_masked_parameter_aliases(bundle, change, mask, match):
         replay_parameter_candidates(bundle, {"candidate": change}, common_params=params)
 
 
-def test_f01_unmasked_aliases_reach_effective_quote_coefficients():
+def test_f01_explicit_parameters_reach_effective_quote_coefficients():
     from research.families.f01_fixed_parameter_racing.public_input import (
         _validate_effective_quote_change,
     )
@@ -182,7 +183,7 @@ def test_f01_unmasked_aliases_reach_effective_quote_coefficients():
     for change, fields in (
         ({"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02},
          ("eta_inventory", "a_spread", "risk_per_order")),
-        ({"kappa": 2.0}, ("execution_intensity_slope",)),
+        ({"execution_intensity_slope": 2.0}, ("execution_intensity_slope",)),
         ({"max_spread_bps": 25.0}, ("max_spread_bps", "dynamic_cap_base_bps")),
     ):
         _validate_effective_quote_change(base, change)

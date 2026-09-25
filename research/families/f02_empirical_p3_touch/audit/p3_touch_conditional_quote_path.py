@@ -64,8 +64,8 @@ def load_spec(path: Path) -> dict[str, Any]:
     mapping = spec["mapping"]
     expected_mapping = {
         "side_aggregation": "equal_opportunity_arithmetic_mean",
-        "delta_star": "smallest_grid_argmax_distance_times_pair_touch_probability",
-        "kappa_eff": "adjacent_grid_central_log_probability_slope",
+        "distance_touch_product_argmax": "smallest_grid_argmax_distance_times_pair_touch_probability",
+        "touch_log_probability_distance_slope": "adjacent_grid_central_log_probability_slope",
         "invalid_or_missing_context": "fallback_current_v2_for_that_10s_bucket",
         "hold_rule": "sample_and_hold_until_next_10s_bucket",
         "parameter_search": False,
@@ -130,8 +130,8 @@ def _overlay_values_at(
     indices = np.searchsorted(source_ts, target_ts, side="right") - 1
     indices = np.clip(indices, 0, source_ts.size - 1)
     return (
-        np.asarray(overlay["delta_star"], dtype=np.float64)[indices],
-        np.asarray(overlay["kappa_eff"], dtype=np.float64)[indices],
+        np.asarray(overlay["distance_touch_product_argmax"], dtype=np.float64)[indices],
+        np.asarray(overlay["touch_log_probability_distance_slope"], dtype=np.float64)[indices],
     )
 
 
@@ -144,25 +144,25 @@ def _quote_side_metrics(
 ) -> list[dict[str, Any]]:
     if frame.empty:
         frame = frame.copy()
-        frame["p3_delta_star"] = pd.Series(dtype=float)
-        frame["p3_kappa_eff"] = pd.Series(dtype=float)
+        frame["p3_distance_touch_product_argmax"] = pd.Series(dtype=float)
+        frame["p3_touch_log_probability_distance_slope"] = pd.Series(dtype=float)
     elif overlay is None:
         frame = frame.assign(
-            p3_delta_star=float(static_delta_star),
-            p3_kappa_eff=float(static_kappa_eff),
+            p3_distance_touch_product_argmax=float(static_delta_star),
+            p3_touch_log_probability_distance_slope=float(static_kappa_eff),
         )
     else:
         delta, kappa = _overlay_values_at(
             overlay,
             frame["quote_ts"].to_numpy(dtype=np.int64),
         )
-        frame = frame.assign(p3_delta_star=delta, p3_kappa_eff=kappa)
+        frame = frame.assign(p3_distance_touch_product_argmax=delta, p3_touch_log_probability_distance_slope=kappa)
     rows = []
     for side in (*SIDES, "POOLED"):
         group = frame if side == "POOLED" else frame[frame["side"].eq(side)]
         raw_half = group["raw_half_spread"].to_numpy(dtype=float)
-        floor = group["p3_delta_star"].to_numpy(dtype=float)
-        kappa = group["p3_kappa_eff"].to_numpy(dtype=float)
+        floor = group["p3_distance_touch_product_argmax"].to_numpy(dtype=float)
+        kappa = group["p3_touch_log_probability_distance_slope"].to_numpy(dtype=float)
         rows.append(
             {
                 "side": side,
@@ -175,10 +175,10 @@ def _quote_side_metrics(
                 "mean_raw_half_spread_usdc_per_btc": float(
                     np.mean(raw_half) if len(group) else 0.0
                 ),
-                "mean_p3_delta_star_usdc_per_btc": float(
+                "mean_p3_distance_touch_product_argmax_usdc_per_btc": float(
                     np.mean(floor) if len(group) else 0.0
                 ),
-                "mean_p3_kappa_eff": float(
+                "mean_p3_touch_log_probability_distance_slope": float(
                     np.mean(kappa) if len(group) else 0.0
                 ),
             }
@@ -188,7 +188,7 @@ def _quote_side_metrics(
 
 def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
     from models import backtest_tick as bt
-    from models.backtest_config import add_fill_probability_params, load_tick_base_params
+    from models.backtest_config import add_touch_probability_params, load_tick_base_params
     from models.data_windows import load_tick_window
 
     day = str(payload["day"])
@@ -199,8 +199,8 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
             str(payload["current_v2_p3_path"]), root=ROOT
         ).read_text(encoding="utf-8")
     )
-    fallback_delta = float(current_payload["delta_star"])
-    fallback_kappa = float(current_payload["kappa_eff"])
+    fallback_delta = float(current_payload["distance_touch_product_argmax"])
+    fallback_kappa = float(current_payload["touch_log_probability_distance_slope"])
     grid_contract = payload["distance_grid"]
     fold_artifacts = payload["fold_artifacts"][str(inputs["fold_id"])]
     distance_grid = np.arange(
@@ -303,19 +303,18 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
     frames: dict[str, pd.DataFrame] = {}
     for arm in ARMS:
         params = dict(base)
-        add_fill_probability_params(
+        add_touch_probability_params(
             params,
             model_path=resolve_portable_path(
                 str(payload["current_v2_p3_path"]), root=ROOT
             ).resolve(),
             label=f"P3 {arm}",
-            strict=True,
         )
         arm_overlay = None
         if arm == "conditional_v4_1_oof":
             params["_conditional_p3_ts_ms"] = overlay["ts_ms"]
-            params["_conditional_p3_delta_star"] = overlay["delta_star"]
-            params["_conditional_p3_kappa_eff"] = overlay["kappa_eff"]
+            params["_conditional_p3_distance_touch_product_argmax"] = overlay["distance_touch_product_argmax"]
+            params["_conditional_p3_touch_log_probability_distance_slope"] = overlay["touch_log_probability_distance_slope"]
             arm_overlay = overlay
         started = time.perf_counter()
         result = bt._simulate_tick_with_engine(
@@ -338,8 +337,8 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         for row in _quote_side_metrics(
             frame,
             overlay=arm_overlay,
-            static_delta_star=float(params["p3_delta_star"]),
-            static_kappa_eff=float(params["p3_kappa_eff"]),
+            static_delta_star=float(params["p3_distance_touch_product_argmax"]),
+            static_kappa_eff=float(params["p3_touch_log_probability_distance_slope"]),
         ):
             side_rows.append(
                 {"day": day, "panel_role": panel_role, "arm": arm, **row}

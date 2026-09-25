@@ -219,7 +219,7 @@ def test_loaded_module_rejects_wrong_lifecycle_abi() -> None:
 def test_explicit_p3_must_equal_config_resolved_path(tmp_path: Path) -> None:
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    configured = model_dir / "fill_prob_params.json"
+    configured = model_dir / "touch_probability.json"
     configured.write_text("{}\n", encoding="utf-8")
     other = tmp_path / "other.json"
     other.write_text("{}\n", encoding="utf-8")

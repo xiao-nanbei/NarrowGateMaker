@@ -108,8 +108,8 @@ def _contract_params(tmp_path):
     (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps({"feature_cols": ["return_1"]}), encoding="utf-8"
     )
-    p3 = tmp_path / "fill_prob_params.json"
-    p3.write_text('{"schema_version":"narrowgate_p3_touch_calibration.v3"}\n')
+    p3 = tmp_path / "touch_probability.json"
+    p3.write_text('{"schema_version":"narrowgate_p3_touch_calibration.v4"}\n')
     p3_sha256 = hashlib.sha256(p3.read_bytes()).hexdigest()
     queue = tmp_path / "queue.json"
     queue.write_text('{"schema_version":"narrowgate_queue_calibration.v3"}\n')
@@ -117,26 +117,30 @@ def _contract_params(tmp_path):
     params = {
         "_config_path": str(config),
         "resolved_model_dir": str(model_dir),
-        "fill_probability_model_path": str(p3),
+        "touch_probability_model_path": str(p3),
         "queue_calibration_path": str(queue),
-        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v3",
-        "fill_probability_model_type": "empirical_survival",
-        "fill_probability_event_type": "touch",
-        "fill_probability_horizon_s": 10.0,
-        "fill_probability_distance_origin": (
+        "touch_probability_schema_version": "narrowgate_p3_touch_calibration.v4",
+        "touch_probability_model_type": "empirical_survival",
+        "touch_probability_event_type": "touch",
+        "touch_probability_horizon_s": 10.0,
+        "touch_probability_distance_origin": (
             "same_side_best_bid_or_ask_at_window_start"
         ),
-        "fill_probability_distance_unit": "USDC_per_BTC",
-        "fill_probability_side": "pooled_buy_sell",
-        "fill_probability_queue_included": False,
-        "fill_probability_artifact_sha256": p3_sha256,
-        "p3_delta_star": 14.0,
-        "p3_kappa_eff": 0.061,
-        "historical_p3_scalar_adapter_enabled": True,
+        "touch_probability_distance_unit": "USDC_per_BTC",
+        "touch_probability_side": "pooled_buy_sell",
+        "touch_probability_queue_included": False,
+        "touch_probability_artifact_sha256": p3_sha256,
+        "p3_distance_touch_product_argmax": 14.0,
+        "p3_touch_log_probability_distance_slope": 0.061,
+        "p3_pair_spread_projection_enabled": True,
         "p3_side_bbo_floor_enabled": False,
         "quote_math_mode": "legacy_v0",
-        "gamma": 0.046,
-        "kappa": 0.05,
+        "eta_inventory": 0.046,
+        "a_spread": 0.046,
+        "risk_per_order": 0.046,
+        "execution_intensity_slope": 0.05,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "inventory_reference_qty": 1.0,
         "order_size": 0.001,
         "quote_horizon_s": 1.0,
@@ -782,7 +786,7 @@ def test_canonical_config_loader_preserves_async_transport(tmp_path):
         "  cross_side_order_lanes_enabled: false\n  async_order_lane_capacity: 3\n"
     )
     params = load_tick_base_params(
-        config_path=config, include_fill_probability=False, include_queue_calibration=False,
+        config_path=config, include_touch_probability=False, include_queue_calibration=False,
     )
     assert params["rest_gateway_timing_mode"] == "sampled_async_fifo"
     assert params["async_order_lane_capacity"] == 3

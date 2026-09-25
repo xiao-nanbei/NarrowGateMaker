@@ -21,8 +21,8 @@ def identity(meaning):
             "feature_cutoff_semantics": "strict_exclusive_completed_bucket_end"}
 
 
-@pytest.mark.parametrize("meaning", ["feature_ready_index", "left_label_bucket_end"])
-def test_actual_train_one_keeps_panel_clock(monkeypatch, meaning):
+def test_actual_train_one_keeps_panel_clock(monkeypatch):
+    meaning = "feature_ready_index"
     monkeypatch.setattr(trainer, "_feature_panel_identity", lambda: identity(meaning))
     frame = pd.DataFrame({"close": np.arange(80, dtype=float),
                           "label_touch_conditioned_price_change_fraction_10000ms": np.arange(80, dtype=float) / 1000})
@@ -33,7 +33,7 @@ def test_actual_train_one_keeps_panel_clock(monkeypatch, meaning):
     assert model.booster_.num_feature() == 1
     assert metadata["feature_timestamp_semantics"] == meaning
     assert metadata["feature_sampling_interval_ms"] == 10_000
-    assert ("feature_bucket_ms" in metadata) == (meaning == "left_label_bucket_end")
+    assert "feature_bucket_ms" not in metadata
 
 
 @pytest.mark.parametrize("mutation", ["timestamp", "bucket", "frame"])
@@ -47,7 +47,7 @@ def test_train_one_rejects_conflict_before_fitting(monkeypatch, mutation):
     else:
         frame.attrs["decision_time_semantics"] = "left_label_bucket_end"
     monkeypatch.setattr(trainer, "_feature_panel_identity", lambda: panel)
-    with pytest.raises(ValueError, match="clock declarations"):
+    with pytest.raises(ValueError, match="clock declarations|feature_ready_index"):
         trainer.train_one("touch_conditioned_price_change_fraction_10000ms", frame, frame)
 
 
@@ -67,13 +67,14 @@ def test_public_signal_and_prediction_use_ready_index_not_cadence(unit, zone):
         public_predictions([replace(frame, max_dependency_ready_ns=ns + 1)], engine, ())
 
 
-def test_weighting_clock_versions_keep_distinct_offsets():
+def test_weighting_clock_rejects_retired_offset_protocol():
     assert trainer._weight_policy_decision_offset({
         "schema_version": "narrowgate.f03.time_half_life_daily.v2",
         "decision_clock": "feature_ready_index"}) == pd.Timedelta(0)
-    assert trainer._weight_policy_decision_offset({
-        "schema_version": "narrowgate.f03.time_half_life_daily.v1"}) == pd.Timedelta(seconds=10)
-    with pytest.raises(ValueError, match="reinterpret"):
+    with pytest.raises(ValueError, match="unsupported sample weight policy"):
+        trainer._weight_policy_decision_offset({
+            "schema_version": "narrowgate.f03.time_half_life_daily.v1"})
+    with pytest.raises(ValueError, match="unsupported sample weight policy"):
         trainer._weight_policy_decision_offset({
             "schema_version": "narrowgate.f03.time_half_life_daily.v1",
             "decision_clock": "feature_ready_index"})
@@ -83,5 +84,5 @@ def test_actual_train_rejects_legacy_weights_on_ready_panel(monkeypatch):
     monkeypatch.setattr(trainer, "_feature_panel_identity", lambda: identity("feature_ready_index"))
     contract = SimpleNamespace(sample_weight_policy={
         "schema_version": "narrowgate.f03.time_half_life_daily.v1"})
-    with pytest.raises(ValueError, match="weighting and panel"):
+    with pytest.raises(ValueError, match="unsupported sample weight policy"):
         trainer.train_one("touch_conditioned_price_change_fraction_10000ms", pd.DataFrame(), pd.DataFrame(), selection_contract=contract)

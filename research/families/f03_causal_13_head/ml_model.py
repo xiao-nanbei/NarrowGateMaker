@@ -58,11 +58,8 @@ from research.families.f03_causal_13_head.feature_variants import (
 from models.symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
 from strategy.model_contract import (
     REQUIRED_FEATURE_DAG_ID,
-    REQUIRED_FEATURE_DAG_SHA256,
     REQUIRED_FEATURE_SEMANTICS_VERSION,
     REQUIRED_MODEL_HEADS,
-    absolute_price_variance_unit_contract,
-    validate_variance_unit_contract,
 )
 from market_fusion import default_reference_symbol
 from calendar_features import legacy_calendar_feature_names
@@ -149,7 +146,7 @@ def _validate_sample_weight_policy(payload, refit_days: tuple[str, ...]) -> dict
     if payload is None:
         return None
     if not isinstance(payload, dict) or payload.get("schema_version") not in {
-        "narrowgate.f03.time_half_life_daily.v1", "narrowgate.f03.time_half_life_daily.v2"
+        "narrowgate.f03.time_half_life_daily.v2"
     }:
         raise ValueError("unsupported sample weight policy")
     _weight_policy_decision_offset(payload)
@@ -186,15 +183,11 @@ def _validate_sample_weight_policy(payload, refit_days: tuple[str, ...]) -> dict
 
 
 def _weight_policy_decision_offset(policy):
-    """Versioned index semantics; never apply legacy bar offset to ready frames."""
+    """Current ready-index semantics; retired left-label policies are rejected."""
     if policy.get("schema_version") == "narrowgate.f03.time_half_life_daily.v2":
         if policy.get("decision_clock") != "feature_ready_index":
             raise ValueError("v2 weighting requires explicit feature_ready_index decision clock")
         return pd.Timedelta(0)
-    if policy.get("schema_version") == "narrowgate.f03.time_half_life_daily.v1":
-        if policy.get("decision_clock", "legacy_left_label_plus_10s") != "legacy_left_label_plus_10s":
-            raise ValueError("legacy weight schema cannot reinterpret its decision clock")
-        return pd.Timedelta(seconds=10)
     raise ValueError("unsupported sample weight policy")
 
 
@@ -432,15 +425,11 @@ def split_train_only_selection(
 def _execution_count_unit_from_panel(payload: dict) -> str:
     """Carry the actual execution-market count unit into every fitted head.
 
-    Legacy manifests predate per-day bar provenance and retain the old packet
-    unit. A manifest that does supply provenance must not hide mixed/unknown
-    measurement units behind that compatibility default.
+    Missing provenance cannot establish a packet or individual-execution unit.
     """
     rows = (payload.get("bar_source") or {}).get("daily_files", [])
     units = {row.get("trade_count_unit", "UNKNOWN") for row in rows}
-    if not rows:
-        return "native_aggregate_packet"
-    if len(units) != 1 or not units <= {"individual_execution", "native_aggregate_packet"}:
+    if not rows or len(units) != 1 or not units <= {"individual_execution", "native_aggregate_packet"}:
         raise ValueError("execution bar inputs have mixed or unknown trade count units")
     return next(iter(units))
 
@@ -448,7 +437,7 @@ def _execution_count_unit_from_panel(payload: dict) -> str:
 def _reference_count_unit_from_panel(payload: dict) -> str:
     source = payload.get("reference_bar_source")
     if source is None:
-        return "native_aggregate_packet"  # Legacy manifests did not bind reference counts.
+        raise ValueError("reference Bar provenance is required")
     rows = source.get("daily_files", [])
     units = {row.get("trade_count_unit", "UNKNOWN") for row in rows}
     if not rows or len(units) != 1 or not units <= {"individual_execution", "native_aggregate_packet"}:
@@ -459,112 +448,12 @@ def _reference_count_unit_from_panel(payload: dict) -> str:
 
 
 def _feature_panel_identity() -> dict:
-    public_path = DATA_DIR / "public_feature_manifest.json"
-    if public_path.exists():
-        from research.families.f03_causal_13_head.public_input_panel import training_identity
-        return training_identity(public_path)
-    manifest_path = DATA_DIR / "causal_feature_manifest.json"
-    if not manifest_path.exists():
-        raise RuntimeError(
-            "Training requires causal_feature_manifest.json; rebuild features "
-            "with the versioned causal feature pipeline first"
-        )
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if int(payload.get("schema_version", 0) or 0) < 2:
-        raise RuntimeError(f"Legacy feature manifest is not trainable: {manifest_path}")
-    if payload.get("feature_timestamp_semantics") != "left_label_bucket_end":
-        raise RuntimeError(f"Invalid feature visibility contract: {manifest_path}")
-    if int(payload.get("feature_semantics_version", 0) or 0) != (
-        REQUIRED_FEATURE_SEMANTICS_VERSION
-    ):
-        raise RuntimeError(
-            f"Training requires feature semantics v{REQUIRED_FEATURE_SEMANTICS_VERSION}: "
-            f"{manifest_path}"
-        )
-    if str(payload.get("feature_dag_id") or "") != REQUIRED_FEATURE_DAG_ID:
-        raise RuntimeError(
-            f"Training requires feature DAG {REQUIRED_FEATURE_DAG_ID}: {manifest_path}"
-        )
-    if str(payload.get("feature_dag_sha256") or "") != REQUIRED_FEATURE_DAG_SHA256:
-        raise RuntimeError(
-            f"Training requires the current feature DAG hash: {manifest_path}"
-        )
-    expected_unit_contract = absolute_price_variance_unit_contract(SYMBOL)
-    if str(payload.get("symbol") or "") != expected_unit_contract["symbol"]:
-        raise RuntimeError(
-            f"Training feature symbol differs from configured symbol: {manifest_path}"
-        )
-    try:
-        volatility_unit_contract = validate_variance_unit_contract(
-            payload.get("volatility_unit_contract"),
-            symbol=SYMBOL,
-        )
-    except ValueError as exc:
-        raise RuntimeError(
-            f"Training requires an explicit volatility unit contract: {manifest_path}"
-        ) from exc
-    if payload.get("label_volatility_units") != volatility_unit_contract["variance_units"]:
-        raise RuntimeError(
-            f"Training feature manifest has inconsistent volatility units: {manifest_path}"
-        )
-    calibration = payload.get("label_quote_calibration") or {}
-    if (
-        calibration.get("schema_version") != "narrowgate_p3_touch_calibration.v3"
-        or calibration.get("model_type") != "empirical_survival"
-        or not str(calibration.get("sha256", "") or "")
-        or float(calibration.get("p3_delta_star", 0.0) or 0.0) <= 0.0
-        or float(calibration.get("p3_kappa_eff", 0.0) or 0.0) <= 0.0
-    ):
-        raise RuntimeError(
-            f"Training requires explicit empirical P3 calibration identity: {manifest_path}"
-        )
-    return {
-        "feature_manifest_path": str(manifest_path),
-        "execution_trade_count_unit": _execution_count_unit_from_panel(payload),
-        "reference_trade_count_unit": _reference_count_unit_from_panel(payload),
-        "reference_trade_symbol": (payload.get("reference_bar_source") or {}).get("symbol"),
-        "reference_observation_limits": {
-            "training_counts": "declared_reference_bar_source_not_reconstructed_live_messages",
-            "live_f_l_counts": "observed_id_range_not_proof_of_internal_id_completeness",
-            "live_child_execution_timestamps_reconstructed": False,
-            "live_173_feature_message_exactness_proven": False,
-            "legacy_business_baseline_requalified": False,
-        },
-        "feature_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-        "feature_timestamp_semantics": payload["feature_timestamp_semantics"],
-        "feature_bucket_ms": 10_000,
-        "feature_sampling_interval_ms": 10_000,
-        "feature_semantics_version": int(
-            payload.get("feature_semantics_version", 0) or 0
-        ),
-        "feature_dag_id": str(payload.get("feature_dag_id", "") or ""),
-        "feature_dag_sha256": str(
-            payload.get("feature_dag_sha256", "") or ""
-        ),
-        "feature_cutoff_semantics": str(
-            payload.get("feature_cutoff_semantics", "") or ""
-        ),
-        "calendar_timestamp_semantics": str(
-            payload.get("calendar_timestamp_semantics", "") or ""
-        ),
-        "microstructure_5s_semantics": str(
-            payload.get("microstructure_5s_semantics", "") or ""
-        ),
-        "label_semantics_version": int(
-            payload.get("label_semantics_version", 0) or 0
-        ),
-        "label_window_semantics": str(
-            payload.get("label_window_semantics", "") or ""
-        ),
-        "feature_daily_manifest_sha256": str(
-            payload.get("daily_manifest_sha256", "") or ""
-        ),
-        "feature_panel_split": payload.get("split", {}),
-        "feature_warmup_policy": str(payload.get("warmup_policy", "") or ""),
-        "volatility_unit_contract": volatility_unit_contract,
-        "feature_label_quote_calibration": calibration,
-        "feature_label_quote_policy": payload.get("label_quote_policy", {}),
-    }
+    """Training consumes the sole current ready-index public panel protocol."""
+    from research.families.f03_causal_13_head.public_input_panel import training_identity
+    path = DATA_DIR / "public_feature_manifest.json"
+    if not path.is_file():
+        raise RuntimeError("Training requires public_feature_manifest.json; retired panels are rejected")
+    return training_identity(path)
 
 
 def release_memory():
@@ -685,7 +574,7 @@ def training_experiment_contract() -> dict:
         "taker_feature_contract": feature_variant_contract(),
         "train_only_selection_options": {
             "schema_version": "narrowgate_13_head_train_only_selection.v1",
-            "sample_weight_policy_schema": "narrowgate.f03.time_half_life_daily.v1",
+            "sample_weight_policy_schema": "narrowgate.f03.time_half_life_daily.v2",
             "half_life_days": ["inf", 240, 120, 60],
             "date_normalization": "effective_head_rows",
             "phase_normalization": "fit_and_refit_separately_mean_one",
@@ -998,7 +887,7 @@ def prepare_time_weighted_xy(
     total = float(reported_weights.sum())
     report = {
         "phase": phase,
-        "decision_clock": policy.get("decision_clock", "legacy_left_label_plus_10s"),
+        "decision_clock": policy["decision_clock"],
         "input_rows": len(df),
         "effective_rows": len(X),
         "valid_label_rows_before_purge": int(valid_label.sum()),
@@ -1142,12 +1031,8 @@ def _training_clock_metadata(identity, frames):
                 or "feature_bucket_ms" in identity):
             raise ValueError("conflicting feature_ready_index clock declarations")
         result = {"feature_timestamp_semantics": meaning}
-    elif meaning == "left_label_bucket_end":
-        if public or cutoff == "feature_ready_index":
-            raise ValueError("conflicting legacy left-label clock declarations")
-        result = {"feature_timestamp_semantics": meaning, "feature_bucket_ms": 10_000}
     else:
-        raise ValueError("explicit panel timestamp semantics required before training")
+        raise ValueError("explicit feature_ready_index panel timestamp semantics required before training")
     for frame in frames:
         if frame is not None and frame.attrs.get("decision_time_semantics", meaning) != meaning:
             raise ValueError("training frame and panel clock declarations differ")
@@ -1647,11 +1532,11 @@ def generate_predictions_from_disk(models_dict):
         release_memory()
 
 
-def _build_backtest_base_params(live_params, p3_delta_star=0.0, p3_kappa_eff=0.0):
+def _build_backtest_base_params(live_params, p3_distance_touch_product_argmax=0.0, p3_touch_log_probability_distance_slope=0.0):
     return build_backtest_base_params(
         live_params,
-        p3_delta_star=p3_delta_star,
-        p3_kappa_eff=p3_kappa_eff,
+        p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+        p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
     )
 
 
@@ -1724,22 +1609,22 @@ def evaluate_bundle_backtest(pred_df, config_path=None,
     )
     del bars
 
-    p3_delta_star = 0.0
-    p3_kappa_eff = 0.0
+    p3_distance_touch_product_argmax = 0.0
+    p3_touch_log_probability_distance_slope = 0.0
     try:
         from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
-        fp_path = MODEL_DIR / "fill_prob_params.json"
+        fp_path = MODEL_DIR / "touch_probability.json"
         if fp_path.exists():
             fp_model = TouchProbabilityModel.load(fp_path)
-            p3_delta_star = fp_model.distance_touch_product_argmax()
-            p3_kappa_eff = fp_model.touch_log_probability_distance_slope()
+            p3_distance_touch_product_argmax = fp_model.distance_touch_product_argmax()
+            p3_touch_log_probability_distance_slope = fp_model.touch_log_probability_distance_slope()
     except Exception as exc:
         print(f"  P3 model not loaded for bundle backtest: {exc}")
 
     base = _build_backtest_base_params(
         live_params,
-        p3_delta_star=p3_delta_star,
-        p3_kappa_eff=p3_kappa_eff,
+        p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+        p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
     )
 
     current = bt.simulate_ml(

@@ -112,10 +112,10 @@ def fit(plan, daily_root, output):
                 "plan": plan, "daily_inputs": inputs,
                 "native_observation_parity": "not_proven"}
     model = TouchProbabilityModel(model_type="empirical_survival", delta_grid=grid.tolist(),
-        probability_grid=curve.tolist(), schema_version="narrowgate_p3_touch_calibration.v3",
+        probability_grid=curve.tolist(), schema_version="narrowgate_p3_touch_calibration.v4",
         metadata=metadata)
-    metadata["delta_star"] = model.distance_touch_product_argmax(delta_max=120.0)
-    metadata["kappa_eff"] = model.touch_log_probability_distance_slope(metadata["delta_star"])
+    metadata["distance_touch_product_argmax"] = model.distance_touch_product_argmax(delta_max=120.0)
+    metadata["touch_log_probability_distance_slope"] = model.touch_log_probability_distance_slope(metadata["distance_touch_product_argmax"])
     output.parent.mkdir(parents=True, exist_ok=True)
     model.save(output)
     return metadata

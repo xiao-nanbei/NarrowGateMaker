@@ -8,5 +8,6 @@ api:
   testnet: true
 
 ml:
+  feature_protocol: execution_v1
   enabled: false
   model_dir: "examples/public_dry_run_model_bundle"
