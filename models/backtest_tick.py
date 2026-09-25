@@ -4110,17 +4110,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     在 UTC 日界或长 gap 处重置 adverse/defense/markout/cooldown 状态；
     正式 daily evidence 应通过 `_simulate_daily_segmented_with_engine()` 进入。
     """
-    if public_strategy is not None and (resume_checkpoint is not None or checkpoint_at_ts_ms is not None):
-        raise ValueError("new action policy checkpoint ownership is not implemented")
     if resume_checkpoint is not None and resume_checkpoint.get("consumed", False):
         raise ValueError("runtime checkpoint ownership has already been consumed")
     _tick_state = SimpleNamespace()
+    _tick_state.public_strategy = public_strategy
     from models.replay.l2_journal import ReplayL2Production
     _tick_state.l2_production = ReplayL2Production()
     _tick_state.l2_decision_links = {}
     _tick_state.l2_journal = params.get("_l2_journal")
-    if _tick_state.l2_journal is not None and (resume_checkpoint is not None or checkpoint_at_ts_ms is not None):
-        raise ValueError("L2 journal requires a complete from-start replay; checkpoint unsupported")
     if _tick_state.l2_journal is not None and (
         params.get("trace_external_market_release", False)
         or params.get("fill_cooldown_clock_mode", "wall_time") != "wall_time"
@@ -26971,6 +26968,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         from itertools import islice
         fresh_book_scheduler = _tick_state.exchange_book_scheduler
         fresh_progress_callback = _tick_state.replay_progress_callback
+        fresh_l2_journal = _tick_state.l2_journal
         fresh_runtime = _tick_state
         if consume_resume_checkpoint:
             # A sequential worker owns this loaded graph exactly once. Transfer
@@ -26984,6 +26982,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 compact_runtime_checkpoint(resume_checkpoint["runtime"])
             )
         _tick_state.replay_progress_callback = fresh_progress_callback
+        saved_strategy = _tick_state.public_strategy
+        if public_strategy is not None and (
+            saved_strategy is None or type(public_strategy) is not type(saved_strategy)
+            or public_strategy.contract != saved_strategy.contract
+        ):
+            raise ValueError("checkpoint action policy identity differs")
+        public_strategy = saved_strategy
+        prefix = resume_checkpoint.get("l2_prefix")
+        if (prefix is None) != (fresh_l2_journal is None):
+            raise ValueError("checkpoint L2 output requires its complete prefix and a fresh writer")
+        if fresh_l2_journal is not None:
+            fresh_l2_journal.restore_prefix(prefix)
+        _tick_state.l2_journal = fresh_l2_journal
         restored_book_scheduler = _tick_state.exchange_book_scheduler
         if restored_book_scheduler is not None and not resume_input_batch:
             if fresh_book_scheduler is None:
@@ -27020,6 +27031,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # Operational notification hooks belong to the resumed process,
             # not to trading state and not in a persisted Python closure.
             captured_runtime.replay_progress_callback = None
+            prefix = None
+            if _tick_state.l2_journal is not None:
+                prefix = _tick_state.l2_journal.checkpoint_prefix(_tick_state.l2_production.receipt())
+            captured_runtime.l2_journal = None
             return {"completed": False, "_replay_checkpoint": {
                 "schema": "tick_replay_runtime.v1",
                 "scope": "same_loaded_window_runtime_resume",
@@ -27027,6 +27042,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "loaded_window": (int(_tick_state.trade_ts[0]),
                                   int(_tick_state.trade_ts[-1]), int(_tick_state.n_trades)),
                 "runtime": captured_runtime, "next_event": _tick_state.replay_event,
+                "l2_prefix": prefix,
             }}
         (_tick_state.i, _tick_state.event_ts_ms, _tick_state.is_market_array_event,
          _tick_state.is_main_loop_wake, _tick_state.is_quote_compute_resume) = _tick_state.replay_event
@@ -35598,6 +35614,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         _tick_state.result["_l2_journal"] = _tick_state.l2_journal.close(production=_tick_state.l2_production.receipt())
         _tick_state.result["_l2_journal"]["exchange_book_stats"] = (
             vars(_tick_state.exchange_book_scheduler_stats) if _tick_state.exchange_book_scheduler_stats else None)
+    if public_strategy is not None:
+        _tick_state.result["public_strategy"] = public_strategy.report()
     return _tick_state.result
 
 
@@ -40992,13 +41010,16 @@ def load_public_inputs(bundle, *, tick_size):
     return load_public_replay_inputs(bundle, tick_size=tick_size)
 
 
-def simulate_public_inputs(bundle, params, *, signal_engine=None, public_strategy=None):
-    """Compatibility wrapper; prepare once explicitly for multiple candidates."""
+def simulate_public_inputs(bundle, params, *, signal_engine=None, public_strategy=None,
+                           checkpoint_at_ts_ms=None, resume_checkpoint=None):
+    """Prepare one explicit bundle; multiple candidates can share prepared inputs."""
     if params.get("cross_market_enabled"):
         raise ValueError("public input replay does not support reference-market observations")
     prepared = prepare_public_inputs(bundle, tick_size=params["tick_size"])
     return simulate_prepared_inputs(prepared, params, signal_engine=signal_engine,
-                                    public_strategy=public_strategy)
+                                    public_strategy=public_strategy,
+                                    checkpoint_at_ts_ms=checkpoint_at_ts_ms,
+                                    resume_checkpoint=resume_checkpoint)
 
 
 def prepare_public_inputs(bundle, *, tick_size, cache_dir=None):
@@ -41012,7 +41033,8 @@ def prepare_public_inputs(bundle, *, tick_size, cache_dir=None):
     return prepared
 
 
-def simulate_prepared_inputs(prepared, params, *, signal_engine=None, public_strategy=None):
+def simulate_prepared_inputs(prepared, params, *, signal_engine=None, public_strategy=None,
+                             checkpoint_at_ts_ms=None, resume_checkpoint=None):
     """Use the existing Python execution engine with bound shared consumers.
 
     No economics are run by data acceptance. A later explicit replay call must
@@ -41055,13 +41077,21 @@ def simulate_prepared_inputs(prepared, params, *, signal_engine=None, public_str
     ml = None if signal_engine is None else public_predictions(inputs["frames"], signal_engine, XMARKET_REPLAY_FEATURE_COLUMNS)
     variance_ts, variance = prepared.variance_ts, prepared.variance
     input_manifest_id = prepared.manifest_id
-    if public_strategy is not None:
+    checkpoint_binding = None
+    if checkpoint_at_ts_ms is not None or resume_checkpoint is not None:
+        from models.replay.runtime_checkpoint_io import public_checkpoint_binding
+        checkpoint_binding = public_checkpoint_binding(input_manifest_id, params, ml)
+        if resume_checkpoint is not None and resume_checkpoint.get("public_binding") != checkpoint_binding:
+            raise ValueError("public checkpoint input, parameters, predictions or implementation changed")
+    if public_strategy is not None and resume_checkpoint is None:
         public_strategy.start(input_manifest_id)
     result = simulate_tick(trades, variance_ts, variance, replay_params, ml_data=ml,
         bbo_data=inputs["bbo"], l2_data=inputs["l2"],
-        exchange_book_event_tape=inputs["exchange_book_event_tape"], public_strategy=public_strategy)
-    if public_strategy is not None:
-        result["public_strategy"] = public_strategy.report()
+        exchange_book_event_tape=inputs["exchange_book_event_tape"], public_strategy=public_strategy,
+        checkpoint_at_ts_ms=checkpoint_at_ts_ms, resume_checkpoint=resume_checkpoint)
+    if "_replay_checkpoint" in result:
+        result["_replay_checkpoint"]["public_binding"] = checkpoint_binding
+        return result
     result["public_input_contract"] = {"input_contract_id": replay_params["input_contract_id"],
         "input_manifest_id": input_manifest_id,
         "observation_contract_id": replay_params["observation_contract_id"],

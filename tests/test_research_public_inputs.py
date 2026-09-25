@@ -170,12 +170,8 @@ def test_keep_cannot_override_safety_or_create_order(enabled, force, has_order, 
         has_order=has_order, force_update=force) == expected
 
 
-def test_configured_actions_reach_real_executor(bundle):
-    from models.backtest_tick import simulate_public_inputs
-    from research.families.f06_placement_fill_cif.public_input import replay_placement_strategy
-    from research.families.f07_active_order_continuation.public_input import replay_continuation_strategy
-
-    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., execution_intensity_slope=1., risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., order_size=.001, max_inventory=.01,
+def public_replay_params():
+    return dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., execution_intensity_slope=1., risk_horizon_s=1., trade_intensity_acceleration_spread_mult=2., order_size=.001, max_inventory=.01,
         requote_interval=.2, rq_min=.2, rq_max=.2, requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",
@@ -184,6 +180,14 @@ def test_configured_actions_reach_real_executor(bundle):
         collect_curves=False, position_timeout=0., markout_ema_span_fills=0,
         account_start_ns=1_200_000_000, trace_fills_max=1000, trace_quotes_max=1000,
         trace_decisions_max=1000, ml_enabled=False)
+
+
+def test_configured_actions_reach_real_executor(bundle):
+    from models.backtest_tick import simulate_public_inputs
+    from research.families.f06_placement_fill_cif.public_input import replay_placement_strategy
+    from research.families.f07_active_order_continuation.public_input import replay_continuation_strategy
+
+    params = public_replay_params()
     kwargs = dict(params=params, initial_capital=100., max_mark_age_ns=10 * SECOND)
     control = replay_placement_strategy(bundle, contract=action_contract(bundle), **kwargs)
     plain = simulate_public_inputs(bundle, params)
@@ -207,6 +211,40 @@ def test_configured_actions_reach_real_executor(bundle):
     assert all(row["feature_cutoff_ns"] <= row["decision_ns"] for row in intents)
     assert cancel["all_in_net_pnl"] is None
     assert cancel["accounting"]["terminal_inventory"] == cancel["final_inventory"]
+
+
+@pytest.mark.parametrize('family,action,mult', [('F06', 'widen', 2.), ('F07', 'keep', 1.), ('F07', 'cancel', 1.)])
+@pytest.mark.parametrize('cut', [1200, 1600, 2100, 3000])
+def test_public_strategy_checkpoint_forks_preserve_actions_l2_and_account(bundle, tmp_path, family, action, mult, cut):
+    from models.backtest_tick import prepare_public_inputs, simulate_prepared_inputs
+    from models.replay.public_strategy import PublicStrategy
+    from models.replay.l2_journal import ReplayL2Journal
+    from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
+    from execution.chunked_parquet_journal import iter_chunked_parquet_journal
+    from tests.test_tick_runtime_checkpoint import assert_same
+
+    params = public_replay_params()
+    prepared = prepare_public_inputs(bundle, tick_size=params['tick_size'])
+    contract = action_contract(bundle, family, action, spread_mult=mult)
+    def run(name, **options):
+        journal = ReplayL2Journal(tmp_path / name, identity={'contract': contract}, chunk_rows=2)
+        return simulate_prepared_inputs(prepared, {**params, '_l2_journal': journal},
+            public_strategy=PublicStrategy(bundle, contract), **options)
+    expected = run('whole')
+    receipt = expected.pop('_l2_journal')
+    rows = list(iter_chunked_parquet_journal(receipt['manifest']))
+    checkpoint = run('prefix', checkpoint_at_ts_ms=cut)['_replay_checkpoint']
+    path = tmp_path / 'state.pickle'
+    save_runtime_checkpoint(path, checkpoint)
+    for name in ('left', 'right'):
+        actual = run(name, resume_checkpoint=load_trusted_runtime_checkpoint(path))
+        branch = actual.pop('_l2_journal')
+        assert_same(actual, expected)
+        assert list(iter_chunked_parquet_journal(branch['manifest'])) == rows
+        assert branch['production'] == receipt['production']
+    params['maker_fee'] = .01
+    with pytest.raises(ValueError, match='input, parameters, predictions or implementation changed'):
+        run('bad-config', resume_checkpoint=load_trusted_runtime_checkpoint(path))
 
 
 def test_reference_uses_ready_frame_and_preserves_missing(bundle):

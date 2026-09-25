@@ -7,6 +7,49 @@ from models.replay.l2_journal import ReplayL2Journal
 from tests.test_tick_runtime_checkpoint import assert_same, scenario
 
 
+@pytest.mark.parametrize('mode', ['ordinary', 'async', 'compute', 'timeout', 'emergency', 'close_replace'])
+@pytest.mark.parametrize('cut', [0, 500, 1100, 2001])
+def test_saved_l2_prefix_and_two_independent_branches_equal_from_start(tmp_path, mode, cut):
+    from models.replay.runtime_checkpoint_io import save_runtime_checkpoint, load_trusted_runtime_checkpoint
+
+    args, kwargs = scenario(mode)
+    def run(directory, **options):
+        writer = ReplayL2Journal(tmp_path / directory, identity={'case': mode}, chunk_rows=3)
+        return simulate_tick(*args[:3], {**args[3], '_l2_journal': writer}, **kwargs, **options)
+
+    expected = run('whole')
+    expected_receipt = expected.pop('_l2_journal')
+    expected_rows = list(iter_chunked_parquet_journal(expected_receipt['manifest']))
+    partial = run('prefix', checkpoint_at_ts_ms=cut)
+    checkpoint = partial['_replay_checkpoint']
+    assert checkpoint['runtime'].l2_journal is None
+    path = tmp_path / 'checkpoint.pickle'
+    save_runtime_checkpoint(path, checkpoint)
+    for branch in ('left', 'right'):
+        actual = run(branch, resume_checkpoint=load_trusted_runtime_checkpoint(path))
+        receipt = actual.pop('_l2_journal')
+        assert_same(actual, expected)
+        assert list(iter_chunked_parquet_journal(receipt['manifest'])) == expected_rows
+        assert receipt['production'] == expected_receipt['production']
+        assert receipt['independent_delivery_verified'] and receipt['dropped'] == 0
+    assert checkpoint['runtime'].l2_production.receipt() == checkpoint['l2_prefix']['production']
+
+
+def test_l2_checkpoint_rejects_changed_prefix_or_missing_output(tmp_path):
+    args, kwargs = scenario('ordinary')
+    writer = ReplayL2Journal(tmp_path / 'prefix', identity={})
+    result = simulate_tick(*args[:3], {**args[3], '_l2_journal': writer}, **kwargs, checkpoint_at_ts_ms=1100)
+    checkpoint = result['_replay_checkpoint']
+    with pytest.raises(ValueError, match='complete prefix'):
+        simulate_tick(*args, **kwargs, resume_checkpoint=checkpoint)
+    from pathlib import Path
+    path = Path(checkpoint['l2_prefix']['manifest'])
+    path.write_text(path.read_text() + ' ')
+    fresh = ReplayL2Journal(tmp_path / 'resume', identity={})
+    with pytest.raises(ValueError, match='prefix changed'):
+        simulate_tick(*args[:3], {**args[3], '_l2_journal': fresh}, **kwargs, resume_checkpoint=checkpoint)
+
+
 @pytest.mark.parametrize("mode", ["ordinary", "async", "compute", "timeout", "emergency", "close_replace"])
 def test_l2_output_does_not_change_execution(mode, tmp_path):
     args, kwargs = scenario(mode)
@@ -46,11 +89,9 @@ def test_capped_memory_views_do_not_cap_research_journal(tmp_path):
         assert counts.get(event, 0) == actual["_trace_coverage"][view]["attempted"]
 
 
-def test_unvalidated_resume_and_deferred_mutation_are_rejected(tmp_path):
+def test_unvalidated_deferred_mutation_is_rejected(tmp_path):
     args, kwargs = scenario("ordinary")
     params = {**args[3], "_l2_journal": ReplayL2Journal(tmp_path / "guard", identity={})}
-    with pytest.raises(ValueError, match="checkpoint unsupported"):
-        simulate_tick(*args[:3], params, **kwargs, checkpoint_at_ts_ms=1000)
     params["trace_external_market_release"] = True
     with pytest.raises(ValueError, match="not validated"):
         simulate_tick(*args[:3], params, **kwargs)

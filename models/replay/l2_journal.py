@@ -3,6 +3,7 @@ from collections import Counter
 import hashlib
 import json
 import math
+from pathlib import Path
 
 from execution.chunked_parquet_journal import ChunkedParquetJournalWriter
 from execution.chunked_parquet_journal import iter_chunked_parquet_journal
@@ -66,6 +67,31 @@ class ReplayL2Journal:
         self.counts = Counter()
         self.delivery = ReplayL2Production()
         self.production_mode = None
+
+    def checkpoint_prefix(self, production):
+        """Seal output only, not the simulated account; branches use new writers."""
+        if self.production_mode and production != self.delivery.receipt():
+            raise ValueError('L2 checkpoint production and delivery differ')
+        self.writer.close()
+        audit_l2_delivery(self.writer.manifest_path, production)
+        return dict(identity=self.identity, manifest=str(self.writer.manifest_path),
+                    manifest_sha256=hashlib.sha256(self.writer.manifest_path.read_bytes()).hexdigest(),
+                    production=production)
+
+    def restore_prefix(self, prefix):
+        """Reproduce a verified immutable prefix in a fresh branch output."""
+        if self.writer.row_count or self.writer.closed or self.identity != prefix['identity']:
+            raise ValueError('L2 resume requires a fresh writer with the same identity')
+        manifest = Path(prefix['manifest'])
+        if manifest.resolve() == self.writer.manifest_path.resolve():
+            raise ValueError('L2 branch cannot overwrite its checkpoint prefix')
+        if hashlib.sha256(manifest.read_bytes()).hexdigest() != prefix['manifest_sha256']:
+            raise ValueError('L2 checkpoint prefix changed')
+        for row in iter_chunked_parquet_journal(manifest):
+            self.emit(row['event_type'], row['event_ts_ns'] // 1_000_000,
+                      side=row['side'], payload=row['record'], production_event=row['production_event'])
+        if self.delivery.receipt() != prefix['production']:
+            raise ValueError('L2 checkpoint prefix coverage differs')
 
     def emit(self, kind, timestamp_ms, *, side='', payload=None, production_event=None):
         mode = production_event is not None
