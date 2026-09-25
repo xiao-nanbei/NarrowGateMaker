@@ -424,7 +424,7 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
     model_dir = Path(model_dir_raw).expanduser()
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
-    fill_prob_path = (model_dir / "fill_prob_params.json").resolve()
+    fill_prob_path = (model_dir / "touch_probability.json").resolve()
 
     from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 
@@ -435,7 +435,7 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
             f"label P3 artifact unavailable: {fill_prob_path}: {exc}"
         ) from exc
     if (
-        fill_model.schema_version != "narrowgate_p3_touch_calibration.v3"
+        fill_model.schema_version != "narrowgate_p3_touch_calibration.v4"
         or fill_model.model_type != "empirical_survival"
     ):
         raise ValueError(
@@ -443,32 +443,27 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
             f"schema={fill_model.schema_version!r} type={fill_model.model_type!r} "
             f"from {fill_prob_path}"
         )
-    p3_delta_star = float(fill_model.distance_touch_product_argmax())
-    p3_kappa_eff = float(fill_model.touch_log_probability_distance_slope(p3_delta_star))
-    if p3_delta_star <= 0.0 or p3_kappa_eff <= 0.0:
+    p3_distance_touch_product_argmax = float(fill_model.distance_touch_product_argmax())
+    p3_touch_log_probability_distance_slope = float(fill_model.touch_log_probability_distance_slope(p3_distance_touch_product_argmax))
+    if p3_distance_touch_product_argmax <= 0.0 or p3_touch_log_probability_distance_slope <= 0.0:
         raise ValueError(f"invalid P3 calibration values in {fill_prob_path}")
 
     if "gamma" in strat:
         raise ValueError("gamma is not a current quote parameter")
     a_spread = finite_positive_quote_coefficient("strategy.a_spread", strat["a_spread"])
     risk_per_order = finite_positive_quote_coefficient("strategy.risk_per_order", strat["risk_per_order"])
-    raw_execution_slope = strat.get("execution_intensity_slope")
-    execution_intensity_slope = (
-        finite_positive_quote_coefficient(
-            "strategy.kappa", strat.get("kappa", 0.073)
-        )
-        if raw_execution_slope is None
-        else finite_positive_quote_coefficient(
-            "strategy.execution_intensity_slope", raw_execution_slope
-        )
+    if "kappa" in strat or "ber_spread_mult" in strat:
+        raise ValueError("retired quote parameter; offline configuration migration required")
+    execution_intensity_slope = finite_positive_quote_coefficient(
+        "strategy.execution_intensity_slope", strat["execution_intensity_slope"]
     )
-    historical_p3_adapter = bool(
-        strat.get("historical_p3_scalar_adapter_enabled", True)
+    p3_pair_spread_projection = bool(
+        strat.get("p3_pair_spread_projection_enabled", True)
     )
     p3_side_bbo_floor_enabled = bool(
         strat.get("p3_side_bbo_floor_enabled", False)
     )
-    if historical_p3_adapter and p3_side_bbo_floor_enabled:
+    if p3_pair_spread_projection and p3_side_bbo_floor_enabled:
         raise ValueError("P3 historical pair and side-BBO modes are mutually exclusive")
     if p3_side_bbo_floor_enabled:
         raise ValueError(
@@ -480,15 +475,10 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         "a_spread": a_spread,
         "risk_per_order": risk_per_order,
         "execution_intensity_slope": execution_intensity_slope,
-        "kappa": float(strat.get("kappa", 0.073)),
         "kappa_ratio": float(strat.get("kappa_ratio", 1.0)),
         "quote_horizon_s": float(strat.get("quote_horizon_s", 1.0)),
-        "risk_horizon_s": float(
-            strat.get("risk_horizon_s")
-            if strat.get("risk_horizon_s") is not None
-            else strat.get("quote_horizon_s", 1.0)
-        ),
-        "historical_p3_scalar_adapter_enabled": historical_p3_adapter,
+        "risk_horizon_s": finite_positive_quote_coefficient("strategy.risk_horizon_s", strat["risk_horizon_s"]),
+        "p3_pair_spread_projection_enabled": p3_pair_spread_projection,
         "p3_side_bbo_floor_enabled": p3_side_bbo_floor_enabled,
         "max_spread_bps": float(strat.get("max_spread_bps", 0.0)),
         "dynamic_cap_enabled": bool(strat.get("dynamic_cap_enabled", False)),
@@ -508,19 +498,19 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         "liquidity_spread_scale_max": float(regime.get("liquidity_spread_scale_max", 3.0)),
         "maker_fee": maker_fee,
         "tick_size": tick_size,
-        "p3_delta_star": p3_delta_star,
-        "p3_kappa_eff": p3_kappa_eff,
-        "fill_probability_model_path": str(fill_prob_path),
+        "p3_distance_touch_product_argmax": p3_distance_touch_product_argmax,
+        "p3_touch_log_probability_distance_slope": p3_touch_log_probability_distance_slope,
+        "touch_probability_model_path": str(fill_prob_path),
         "fill_probability_sha256": _sha256_file(fill_prob_path),
-        "fill_probability_schema_version": fill_model.schema_version,
-        "fill_probability_model_type": fill_model.model_type,
-        "fill_probability_event_type": str(p3_identity["event_type"]),
-        "fill_probability_horizon_s": float(p3_identity["horizon_s"]),
-        "fill_probability_distance_origin": str(p3_identity["distance_origin"]),
-        "fill_probability_distance_unit": str(p3_identity["distance_unit"]),
-        "fill_probability_side": str(p3_identity["side"]),
-        "fill_probability_queue_included": bool(p3_identity["queue_included"]),
-        "fill_probability_artifact_sha256": str(p3_identity["artifact_sha256"]),
+        "touch_probability_schema_version": fill_model.schema_version,
+        "touch_probability_model_type": fill_model.model_type,
+        "touch_probability_event_type": str(p3_identity["event_type"]),
+        "touch_probability_horizon_s": float(p3_identity["horizon_s"]),
+        "touch_probability_distance_origin": str(p3_identity["distance_origin"]),
+        "touch_probability_distance_unit": str(p3_identity["distance_unit"]),
+        "touch_probability_side": str(p3_identity["side"]),
+        "touch_probability_queue_included": bool(p3_identity["queue_included"]),
+        "touch_probability_artifact_sha256": str(p3_identity["artifact_sha256"]),
     }
 
 
@@ -593,25 +583,17 @@ def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
         1e-12,
     )
     kappa_ratio = max(float(quote_params["kappa_ratio"]), 1e-6)
-    historical_p3_adapter = bool(
-        quote_params.get("historical_p3_scalar_adapter_enabled", True)
+    p3_pair_spread_projection = bool(
+        quote_params.get("p3_pair_spread_projection_enabled", True)
     )
     distance_slope = (
-        float(quote_params["p3_kappa_eff"])
-        if historical_p3_adapter
-        else float(
-            quote_params.get(
-                "execution_intensity_slope", quote_params["kappa"]
-            )
-        )
+        float(quote_params["p3_touch_log_probability_distance_slope"])
+        if p3_pair_spread_projection
+        else float(quote_params["execution_intensity_slope"])
     )
     kappa_spread = max(distance_slope * kappa_ratio, 1e-6)
     risk_horizon_s = max(
-        float(
-            quote_params.get(
-                "risk_horizon_s", quote_params["quote_horizon_s"]
-            )
-        ),
+        float(quote_params["risk_horizon_s"]),
         1e-6,
     )
     sigma_sq_horizon = sigma_sq * risk_horizon_s
@@ -643,9 +625,9 @@ def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
         )
         delta *= vol_scale
 
-    p3_delta_star = float(quote_params["p3_delta_star"])
-    if historical_p3_adapter and p3_delta_star > 0:
-        delta = np.maximum(delta, 2.0 * p3_delta_star)
+    p3_distance_touch_product_argmax = float(quote_params["p3_distance_touch_product_argmax"])
+    if p3_pair_spread_projection and p3_distance_touch_product_argmax > 0:
+        delta = np.maximum(delta, 2.0 * p3_distance_touch_product_argmax)
 
     tick_size = float(quote_params["tick_size"])
     fee_floor = 2.0 * abs(float(quote_params["maker_fee"])) * close_ref + tick_size
@@ -2522,12 +2504,12 @@ def write_causal_feature_manifest(
             else ""
         ),
         "label_quote_calibration": {
-            "path": quote_params["fill_probability_model_path"],
+            "path": quote_params["touch_probability_model_path"],
             "sha256": quote_params["fill_probability_sha256"],
-            "schema_version": quote_params["fill_probability_schema_version"],
-            "model_type": quote_params["fill_probability_model_type"],
-            "p3_delta_star": quote_params["p3_delta_star"],
-            "p3_kappa_eff": quote_params["p3_kappa_eff"],
+            "schema_version": quote_params["touch_probability_schema_version"],
+            "model_type": quote_params["touch_probability_model_type"],
+            "p3_distance_touch_product_argmax": quote_params["p3_distance_touch_product_argmax"],
+            "p3_touch_log_probability_distance_slope": quote_params["p3_touch_log_probability_distance_slope"],
         } if quote_params is not None else None,
         "label_quote_policy": {
             "a_spread": quote_params["a_spread"],

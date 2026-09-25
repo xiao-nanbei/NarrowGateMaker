@@ -38,7 +38,7 @@ def _write_binding(root: Path) -> tuple[Path, Path]:
     model.mkdir(parents=True)
     bundle_meta = model / "bundle_meta.json"
     training_summary = model / "training_summary.json"
-    p3 = model / "fill_prob_params.json"
+    p3 = model / "touch_probability.json"
     bundle_meta.write_text("{}\n", encoding="utf-8")
     training_summary.write_text("{}\n", encoding="utf-8")
     p3.write_text("{}\n", encoding="utf-8")
@@ -116,7 +116,7 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
     model.mkdir(parents=True)
     bundle_meta = model / "bundle_meta.json"
     training_summary = model / "training_summary.json"
-    p3 = model / "fill_prob_params.json"
+    p3 = model / "touch_probability.json"
     bundle_meta.write_text("{}\n", encoding="utf-8")
     training_summary.write_text("{}\n", encoding="utf-8")
     p3.write_text("{}\n", encoding="utf-8")

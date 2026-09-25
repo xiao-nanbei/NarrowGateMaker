@@ -88,7 +88,7 @@ def build_campaign_repair_features(
     l2_book_cancel_ratio: float,
     l2_quote_flip_rate: float,
     near_depth_total: float,
-    microprice_shift_bps: float,
+    weighted_mid_proxy_shift_bps: float,
     toxicity: float,
     markout_ema: float,
     side_quote_fill_probability: float,
@@ -99,7 +99,7 @@ def build_campaign_repair_features(
     side = inventory_campaign_side(inventory)
     inventory_sign = 1.0 if side == "LONG" else -1.0 if side == "SHORT" else 0.0
     # A positive value means the microprice is moving against the inventory.
-    microprice_adverse = -inventory_sign * float(microprice_shift_bps)
+    microprice_adverse = -inventory_sign * float(weighted_mid_proxy_shift_bps)
     # Existing maker-signed EMA semantics are side-specific.  For a long
     # campaign the add side is BUY; for a short campaign it is SELL.
     side_markout_risk = (

@@ -42,7 +42,7 @@ NUMERIC_FEATURES = (
     "l2_book_refresh_ratio",
     "l2_book_cancel_ratio",
     "l2_quote_flip_rate",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "toxicity",
     "markout_ema",
     "side_quote_fill_prob",

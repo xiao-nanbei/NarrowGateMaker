@@ -18,9 +18,9 @@ _BASE_TS_MS = 1_700_000_000_000
 
 def _base_params(*, fill_cooldown_s: float, cancel_latency_ms: int) -> dict:
     return {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "taker_fee": 0.0,
         "max_inventory": 0.02,
@@ -310,7 +310,8 @@ def test_cpp_opportunity_census_is_path_noop_when_fork_is_disabled():
         "signed_inventory_time_s",
     ):
         assert census[field] == control[field], field
-    assert census["_fill_trace"] == control["_fill_trace"]
+    from tests.exact_replay_assertions import assert_exact_replay_value
+    assert_exact_replay_value(census["_fill_trace"], control["_fill_trace"])
     assert census["_quote_trace"] == control["_quote_trace"]
     assert census["_cooldown_duration_opportunity_trace"]
     assert census["_cooldown_duration_fill_path"] == []
@@ -532,7 +533,8 @@ def test_python_cpp_right_censored_fork_trace_parity(action: str):
             "signed_inventory_time_s",
         ):
             assert cpp[field] == no_fork[field], field
-        assert cpp["_fill_trace"] == no_fork["_fill_trace"]
+        from tests.exact_replay_assertions import assert_exact_replay_value
+        assert_exact_replay_value(cpp["_fill_trace"], no_fork["_fill_trace"])
         assert cpp["_quote_trace"] == no_fork["_quote_trace"]
 
 

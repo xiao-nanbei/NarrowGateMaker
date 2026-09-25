@@ -269,7 +269,7 @@ def _arm_trace_metrics(
 def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
     from models import backtest_tick as bt
     from models.backtest_config import (
-        add_fill_probability_params,
+        add_touch_probability_params,
         load_tick_base_params,
     )
     from models.data_windows import load_tick_window
@@ -354,11 +354,10 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         p3_path = resolve_portable_path(
             str(payload[f"{arm}_p3_path"]), root=ROOT
         ).resolve()
-        add_fill_probability_params(
+        add_touch_probability_params(
             params,
             model_path=p3_path,
             label=f"P3 {arm}",
-            strict=True,
         )
         started = time.perf_counter()
         result = bt._simulate_tick_with_engine(
@@ -382,7 +381,7 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         frames[arm] = frame
         summaries, counts = _arm_trace_metrics(
             frame,
-            delta_star=float(params["p3_delta_star"]),
+            delta_star=float(params["p3_distance_touch_product_argmax"]),
         )
         for row in summaries:
             side_rows.append(
@@ -398,10 +397,10 @@ def _day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
             "arm": arm,
             "source_authority": window.book_source_authority,
             "p3_artifact_sha256": str(
-                params["fill_probability_artifact_sha256"]
+                params["touch_probability_artifact_sha256"]
             ),
-            "p3_delta_star": float(params["p3_delta_star"]),
-            "p3_kappa_eff": float(params["p3_kappa_eff"]),
+            "p3_distance_touch_product_argmax": float(params["p3_distance_touch_product_argmax"]),
+            "p3_touch_log_probability_distance_slope": float(params["p3_touch_log_probability_distance_slope"]),
             "terminal_mtm_pnl_usdc": float(result["terminal_mtm_pnl"]),
             "fills_bid": int(result["fills_bid"]),
             "fills_ask": int(result["fills_ask"]),

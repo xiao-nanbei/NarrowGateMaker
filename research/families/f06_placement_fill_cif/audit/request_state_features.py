@@ -29,7 +29,7 @@ _VECTOR_OUTPUTS = (
     "mid",
     "bbo_spread_ticks",
     "book_imbalance",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "l2_near_depth_total",
     "l2_quote_flip_rate",
     "l2_book_refresh_ratio",
@@ -223,7 +223,7 @@ def compute_request_state_features_python(
         "mid": np.full(rows, nan),
         "bbo_spread_ticks": np.full(rows, nan),
         "book_imbalance": np.full(rows, nan),
-        "microprice_shift_bps": np.full(rows, nan),
+        "weighted_mid_proxy_shift_bps": np.full(rows, nan),
         "l2_near_depth_total": np.full(rows, nan),
         "l2_quote_flip_rate": np.full(rows, nan),
         "l2_book_refresh_ratio": np.full(rows, nan),
@@ -312,7 +312,7 @@ def compute_request_state_features_python(
                 out["mid"][row] = mid
                 out["bbo_spread_ticks"][row] = (ask - bid) / tick_size
                 out["book_imbalance"][row] = (bid_qty - ask_qty) / total if total > 1e-12 else 0.0
-                out["microprice_shift_bps"][row] = (microprice - mid) / mid * 10_000.0
+                out["weighted_mid_proxy_shift_bps"][row] = (microprice - mid) / mid * 10_000.0
         if l2_end:
             i = l2_end - 1
             out["l2_near_depth_total"][row] = l2_total[i]

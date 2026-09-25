@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Legacy bar-excursion fill probability model — SU Johnson parametrisation.
+Touch probability curves — empirical survival or SU Johnson parametrisation.
 
 Estimates a 10-second bar-excursion touch opportunity at distance δ from the
 same-side BBO at window start.  It does not estimate queue-ahead fill or an
-order-arrival intensity; historical class/field names remain for artifact ABI.
+order-arrival intensity.
 
 Parametric form (Guéant & Manziuk 2019):
     f(δ) = 1 − Φ(ξ + λ · arcsinh((δ − γ) / δ₀))
@@ -64,7 +64,7 @@ P3_HORIZON_S = 10.0
 P3_DISTANCE_UNIT = "USDC_per_BTC"
 P3_DISTANCE_ORIGIN = "same_side_best_bid_or_ask_at_window_start"
 P3_SIDE_IDENTITY = "pooled_buy_sell"
-P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v3"
+P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v4"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -72,30 +72,30 @@ P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v3"
 # ═══════════════════════════════════════════════════════════════════
 
 class TouchProbabilityModel:
-    """Fill-opportunity probability model.
+    """Touch-opportunity probability model.
 
-    Legacy artifacts use the SU Johnson bar-excursion curve. Formal causal-v2
-    artifacts use an empirical survival curve calibrated from exact trade/BBO
+    The parametric model uses the SU Johnson bar-excursion curve. Empirical
+    artifacts use a survival curve calibrated from exact trade/BBO
     windows. Queue position is deliberately excluded and calibrated separately.
 
     Parameters
     ----------
-    xi : float       — location of the normal argument
-    lam : float      — scale of the normal argument  (> 0)
-    gamma : float    — location of the sinh⁻¹ argument
-    delta0 : float   — scale of the sinh⁻¹ argument  (> 0)
+    johnson_transform_location : float       — location of the normal argument
+    johnson_transform_scale : float      — scale of the normal argument  (> 0)
+    johnson_distance_location : float    — location of the sinh⁻¹ argument
+    johnson_distance_scale : float   — scale of the sinh⁻¹ argument  (> 0)
     """
 
-    def __init__(self, xi: float = 0.0, lam: float = 1.0,
-                 gamma: float = 0.0, delta0: float = 1.0, *,
+    def __init__(self, johnson_transform_location: float = 0.0, johnson_transform_scale: float = 1.0,
+                 johnson_distance_location: float = 0.0, johnson_distance_scale: float = 1.0, *,
                  model_type: str = "su_johnson",
                  delta_grid=None, probability_grid=None,
                  schema_version: str = P3_EMPIRICAL_SCHEMA,
                  metadata=None):
-        self.xi = xi
-        self.lam = lam
-        self.gamma = gamma
-        self.delta0 = delta0
+        self.johnson_transform_location = johnson_transform_location
+        self.johnson_transform_scale = johnson_transform_scale
+        self.johnson_distance_location = johnson_distance_location
+        self.johnson_distance_scale = johnson_distance_scale
         self.model_type = str(model_type)
         self.delta_grid = np.asarray(delta_grid or [], dtype=np.float64)
         self.probability_grid = np.asarray(probability_grid or [], dtype=np.float64)
@@ -175,7 +175,7 @@ class TouchProbabilityModel:
                 left=float(self.probability_grid[0]),
                 right=0.0,
             )
-        z = self.xi + self.lam * np.arcsinh((delta - self.gamma) / self.delta0)
+        z = self.johnson_transform_location + self.johnson_transform_scale * np.arcsinh((delta - self.johnson_distance_location) / self.johnson_distance_scale)
         return 1.0 - norm.cdf(z)
 
     def distance_touch_product_argmax(self, delta_min=0.1, delta_max=200.0, n=50_000):
@@ -215,16 +215,16 @@ class TouchProbabilityModel:
 
     def save(self, path=None):
         if path is None:
-            path = MODEL_DIR / "fill_prob_params.json"
+            path = MODEL_DIR / "touch_probability.json"
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema_version": self.schema_version,
             "model_type": self.model_type,
-            "xi": self.xi,
-            "lam": self.lam,
-            "gamma": self.gamma,
-            "delta0": self.delta0,
+            "johnson_transform_location": self.johnson_transform_location,
+            "johnson_transform_scale": self.johnson_transform_scale,
+            "johnson_distance_location": self.johnson_distance_location,
+            "johnson_distance_scale": self.johnson_distance_scale,
         }
         if self.model_type == "empirical_survival":
             # Calibration producers write a complete estimand; readers never infer it.
@@ -237,19 +237,19 @@ class TouchProbabilityModel:
                 "delta_grid": self.delta_grid.tolist(),
                 "probability_grid": self.probability_grid.tolist(),
                 "metadata": self.metadata,
-                "delta_star": self.distance_touch_product_argmax(),
-                "kappa_eff": self.touch_log_probability_distance_slope(),
+                "distance_touch_product_argmax": self.distance_touch_product_argmax(),
+                "touch_log_probability_distance_slope": self.touch_log_probability_distance_slope(),
             })
         with open(path, "w") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
         self.artifact_path = path.resolve()
         self.artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        print(f"  Saved fill probability params → {path}")
+        print(f"  Saved touch probability parameters → {path}")
 
     @classmethod
     def load(cls, path=None, *, require_live_compatible=False):
         if path is None:
-            path = MODEL_DIR / "fill_prob_params.json"
+            path = MODEL_DIR / "touch_probability.json"
         path = Path(path)
         return cls.from_bytes(
             path.read_bytes(),
@@ -265,6 +265,9 @@ class TouchProbabilityModel:
             raise ValueError("P3 artifact must be a JSON object")
         if d.get("schema_version") != P3_EMPIRICAL_SCHEMA:
             raise ValueError("unsupported P3 schema; explicit offline migration required")
+        retired = {"xi", "lam", "gamma", "delta0", "delta_star", "kappa_eff"} & d.keys()
+        if retired:
+            raise ValueError(f"retired P3 fields: {sorted(retired)}")
         if d.get("model_type") not in {"empirical_survival", "su_johnson"}:
             raise ValueError("unsupported P3 model_type")
         if require_live_compatible:
@@ -273,7 +276,7 @@ class TouchProbabilityModel:
                 raise ValueError("P3 metadata must be a JSON object")
             if metadata.get("authority") == "public_dry_run_only":
                 raise ValueError("public_dry_run_only P3 fixture cannot enter live deployment")
-            for name in ("kappa_eff", "delta_star"):
+            for name in ("touch_log_probability_distance_slope", "distance_touch_product_argmax"):
                 value = d.get(name)
                 try:
                     scalar = float(value)
@@ -284,10 +287,10 @@ class TouchProbabilityModel:
                     raise ValueError(f"P3 artifact {name} must be positive and finite")
         if d.get("model_type") == "empirical_survival":
             model = cls(
-                xi=float(d.get("xi", 0.0)),
-                lam=float(d.get("lam", 1.0)),
-                gamma=float(d.get("gamma", 0.0)),
-                delta0=float(d.get("delta0", 1.0)),
+                johnson_transform_location=float(d.get("johnson_transform_location", 0.0)),
+                johnson_transform_scale=float(d.get("johnson_transform_scale", 1.0)),
+                johnson_distance_location=float(d.get("johnson_distance_location", 0.0)),
+                johnson_distance_scale=float(d.get("johnson_distance_scale", 1.0)),
                 model_type="empirical_survival",
                 delta_grid=d.get("delta_grid"),
                 probability_grid=d.get("probability_grid"),
@@ -296,10 +299,10 @@ class TouchProbabilityModel:
             )
         else:
             model = cls(
-                xi=float(d["xi"]),
-                lam=float(d["lam"]),
-                gamma=float(d["gamma"]),
-                delta0=float(d["delta0"]),
+                johnson_transform_location=float(d["johnson_transform_location"]),
+                johnson_transform_scale=float(d["johnson_transform_scale"]),
+                johnson_distance_location=float(d["johnson_distance_location"]),
+                johnson_distance_scale=float(d["johnson_distance_scale"]),
                 schema_version=str(d["schema_version"]),
             )
         model.artifact_path = Path(artifact_path).resolve() if artifact_path is not None else None
@@ -319,8 +322,8 @@ class TouchProbabilityModel:
                 f"FillProb(type=empirical_survival, points={len(self.delta_grid)}, "
                 f"schema={self.schema_version})"
             )
-        return (f"FillProb(ξ={self.xi:.4f}, λ={self.lam:.4f}, "
-                f"γ={self.gamma:.4f}, δ₀={self.delta0:.4f})")
+        return (f"FillProb(ξ={self.johnson_transform_location:.4f}, λ={self.johnson_transform_scale:.4f}, "
+                f"γ={self.johnson_distance_location:.4f}, δ₀={self.johnson_distance_scale:.4f})")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -382,13 +385,13 @@ def fit_from_data(excursions: np.ndarray) -> TouchProbabilityModel:
     #              − ½ log(1 + z²) − ½ (ξ + λ·arcsinh(z))²
     # where z = (x − γ) / δ₀
     def neg_ll(params):
-        xi, lam, gam, d0 = params
-        if lam <= 0.05 or d0 <= 1.0:
+        johnson_transform_location, johnson_transform_scale, gam, d0 = params
+        if johnson_transform_scale <= 0.05 or d0 <= 1.0:
             return 1e15
         z = (data - gam) / d0
         arcsinh_z = np.arcsinh(z)
-        arg = xi + lam * arcsinh_z
-        ll = (np.log(lam) - np.log(d0) - 0.5 * np.log(2 * np.pi)
+        arg = johnson_transform_location + johnson_transform_scale * arcsinh_z
+        ll = (np.log(johnson_transform_scale) - np.log(d0) - 0.5 * np.log(2 * np.pi)
               - 0.5 * np.log(1 + z ** 2) - 0.5 * arg ** 2)
         return -np.sum(ll)
 
@@ -402,10 +405,10 @@ def fit_from_data(excursions: np.ndarray) -> TouchProbabilityModel:
     if not result.success:
         print(f"  Warning: optimiser did not converge: {result.message}")
 
-    xi, lam, gam, d0 = result.x
-    lam = abs(lam)
+    johnson_transform_location, johnson_transform_scale, gam, d0 = result.x
+    johnson_transform_scale = abs(johnson_transform_scale)
     d0 = max(abs(d0), 1.0)
-    return TouchProbabilityModel(xi=xi, lam=lam, gamma=gam, delta0=d0)
+    return TouchProbabilityModel(johnson_transform_location=johnson_transform_location, johnson_transform_scale=johnson_transform_scale, johnson_distance_location=gam, johnson_distance_scale=d0)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -503,10 +506,10 @@ def main():
             ax = axes[2]
             ax.hist(excursions, bins=200, density=True, alpha=0.6, color="steelblue")
             # SU Johnson PDF
-            z = (d_grid - model.gamma) / model.delta0
+            z = (d_grid - model.johnson_distance_location) / model.johnson_distance_scale
             arcsinh_z = np.arcsinh(z)
-            arg = model.xi + model.lam * arcsinh_z
-            pdf = (model.lam / model.delta0 / np.sqrt(2 * np.pi)
+            arg = model.johnson_transform_location + model.johnson_transform_scale * arcsinh_z
+            pdf = (model.johnson_transform_scale / model.johnson_distance_scale / np.sqrt(2 * np.pi)
                    / np.sqrt(1 + z ** 2) * np.exp(-0.5 * arg ** 2))
             ax.plot(d_grid, pdf, "r-", linewidth=2, label="SU Johnson PDF")
             ax.set_xlabel("Excursion (USDT)")

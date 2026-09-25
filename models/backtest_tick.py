@@ -4607,8 +4607,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         params.get(name) is not None
         for name in (
             "_conditional_p3_ts_ms",
-            "_conditional_p3_delta_star",
-            "_conditional_p3_kappa_eff",
+            "_conditional_p3_distance_touch_product_argmax",
+            "_conditional_p3_touch_log_probability_distance_slope",
         )
     ):
         raise ValueError(
@@ -4819,7 +4819,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     # ── Unpack params ──
     _tick_state.eta_inventory = params["eta_inventory"]
     _tick_state.risk_per_order = params["risk_per_order"]
-    _tick_state.kappa = params["kappa"]
+    _tick_state.execution_intensity_slope = params["execution_intensity_slope"]
     _tick_state.order_size = params["order_size"]
     _tick_state.max_inv = params["max_inventory"]
     _tick_state.max_daily_loss, _tick_state.max_position_value, _tick_state.emergency_close_dd = replay_hard_risk_limits(params)
@@ -8430,7 +8430,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     )
     _tick_state.adverse_dir_threshold = abs(float(params.get("adverse_dir_threshold", 0.0)))
     _tick_state.adverse_ret_bps_threshold = abs(float(params.get("adverse_ret_bps_threshold", 0.0)))
-    _tick_state.adverse_microprice_shift_bps = abs(float(params.get("adverse_microprice_shift_bps", 0.0)))
+    _tick_state.adverse_weighted_mid_proxy_shift_bps = abs(float(params.get("adverse_weighted_mid_proxy_shift_bps", 0.0)))
     _tick_state.adverse_spread_mult = max(1.0, float(params.get("adverse_spread_mult", 1.10)))
     _tick_state.adverse_thin_depth_threshold = max(0.0, float(params.get("adverse_thin_depth_threshold", 0.0)))
     _tick_state.adverse_thin_depth_mult = max(1.0, float(params.get("adverse_thin_depth_mult", 1.0)))
@@ -8460,7 +8460,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.defense_markout_threshold = abs(float(params.get("defense_markout_threshold", 2.0)))
     _tick_state.defense_dir_threshold = abs(float(params.get("defense_dir_threshold", 0.05)))
     _tick_state.defense_ret_bps_threshold = abs(float(params.get("defense_ret_bps_threshold", 0.0)))
-    _tick_state.defense_microprice_shift_bps = abs(float(params.get("defense_microprice_shift_bps", 0.0)))
+    _tick_state.defense_weighted_mid_proxy_shift_bps = abs(float(params.get("defense_weighted_mid_proxy_shift_bps", 0.0)))
     _tick_state.defense_spread_mult = max(1.0, float(params.get("defense_spread_mult", 1.35)))
     _tick_state.defense_pause = bool(params.get("defense_pause", True))
     _tick_state.defense_emergency_inventory_ratio = max(0.0, float(params.get("defense_emergency_inventory_ratio", 0.50)))
@@ -8501,7 +8501,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         tick_size=_tick_state.TICK,
         lot_size=_tick_state.LOT_SIZE,
         use_ml=_tick_state.use_ml,
-        use_depth_microprice=_tick_state.quote_use_depth_microprice,
+        use_depth_weighted_mid_proxy=_tick_state.quote_use_depth_microprice,
         use_depth_kappa=_tick_state.quote_use_depth_kappa,
     )
     _tick_state.spread_cap_action_code = int(_tick_state.quote_core_cfg.spread_cap_mode)
@@ -11293,8 +11293,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "queue_ahead_asof_ts_ns": int(
                 order.get("decision_queue_ahead_asof_ts_ns", 0) or 0
             ),
-            "microprice_shift_bps": float(
-                diag.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                diag.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_book_refresh_ratio": float(
                 diag.get("l2_book_refresh_ratio", 0.0) or 0.0
@@ -11564,8 +11564,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "queue_ahead_asof_ts_ns": int(
                 order.get("decision_queue_ahead_asof_ts_ns", 0) or 0
             ),
-            "microprice_shift_bps": float(
-                diag.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                diag.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "book_imbalance": float(diag.get("book_imb", 0.0) or 0.0),
             "near_depth_total_btc": float(
@@ -15806,7 +15806,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "tox_bid": float(diag.get("tox_bid", 0.5)),
             "tox_ask": float(diag.get("tox_ask", 0.5)),
             "book_imb": float(diag.get("book_imb", 0.0)),
-            "microprice_shift_bps": float(diag.get("microprice_shift_bps", 0.0)),
+            "weighted_mid_proxy_shift_bps": float(diag.get("weighted_mid_proxy_shift_bps", 0.0)),
             "near_depth_total": float(diag.get("near_depth_total", 0.0)),
             "l2_near_depth_total": float(diag.get("l2_near_depth_total", diag.get("near_depth_total", 0.0))),
             "l2_quote_flip_rate": float(diag.get("l2_quote_flip_rate", 0.0)),
@@ -15843,7 +15843,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "adverse_markout": bool(diag.get("adverse_markout", False)),
             "adverse_direction": bool(diag.get("adverse_direction", False)),
             "adverse_ret": bool(diag.get("adverse_ret", False)),
-            "adverse_microprice": bool(diag.get("adverse_microprice", False)),
+            "adverse_weighted_mid_proxy": bool(diag.get("adverse_weighted_mid_proxy", False)),
             "adverse_thin_depth": bool(diag.get("adverse_thin_depth", False)),
             "local_extreme_guard": bool(diag.get("local_extreme_guard", False)),
             "local_extreme_pause": bool(diag.get("local_extreme_pause", False)),
@@ -15856,7 +15856,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "defense_markout": bool(diag.get("defense_markout", False)),
             "defense_direction": bool(diag.get("defense_direction", False)),
             "defense_ret": bool(diag.get("defense_ret", False)),
-            "defense_microprice": bool(diag.get("defense_microprice", False)),
+            "defense_weighted_mid_proxy": bool(diag.get("defense_weighted_mid_proxy", False)),
             "defense_spread_mult": float(diag.get("defense_spread_mult", 1.0)),
             "final_compressed": bool(diag.get("final_compressed", False)),
             "bid_adverse": bool(diag.get("bid_adverse", False)),
@@ -16643,7 +16643,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "kappa_used": float(
                 quote_diag.get("kappa_used", 0.0) or 0.0
             ),
-            "microprice_shift_bps": float(side_ctx.get("microprice_shift_bps", 0.0)),
+            "weighted_mid_proxy_shift_bps": float(side_ctx.get("weighted_mid_proxy_shift_bps", 0.0)),
             "l2_quote_flip_rate": float(side_ctx.get("l2_quote_flip_rate", 0.0)),
             "l2_book_refresh_ratio": float(side_ctx.get("l2_book_refresh_ratio", 0.0)),
             "l2_book_cancel_ratio": float(side_ctx.get("l2_book_cancel_ratio", 0.0)),
@@ -16805,8 +16805,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "defense_markout": int(bool(side_ctx.get("defense_markout", False))),
             "defense_direction": int(bool(side_ctx.get("defense_direction", False))),
             "defense_ret": int(bool(side_ctx.get("defense_ret", False))),
-            "defense_microprice": int(
-                bool(side_ctx.get("defense_microprice", False))
+            "defense_weighted_mid_proxy": int(
+                bool(side_ctx.get("defense_weighted_mid_proxy", False))
             ),
             "local_extreme_pause": int(bool(side_ctx.get("local_extreme_pause", False))),
             **decision_feature_values,
@@ -18310,7 +18310,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ),
                 "toxicity": float(_tick_state.cur_tox_bid if side == "BUY" else _tick_state.cur_tox_ask),
                 "markout_ema": float(_tick_state.mo_ema_bid if side == "BUY" else _tick_state.mo_ema_ask),
-                "microprice_shift_bps": float(side_ctx.get("microprice_shift_bps", 0.0)),
+                "weighted_mid_proxy_shift_bps": float(side_ctx.get("weighted_mid_proxy_shift_bps", 0.0)),
                 "l2_quote_flip_rate": float(side_ctx.get("l2_quote_flip_rate", 0.0)),
                 "l2_book_refresh_ratio": float(side_ctx.get("l2_book_refresh_ratio", 0.0)),
                 "l2_book_cancel_ratio": float(side_ctx.get("l2_book_cancel_ratio", 0.0)),
@@ -19021,8 +19021,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "campaign_add_count_so_far": int(
                 _tick_state.campaign_exposure_increasing_fills
             ),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_book_cancel_ratio": float(
                 side_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0
@@ -19308,8 +19308,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "book_state_resolution_ms": float(
                 _tick_state.book_state_resolution_ms
             ),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_book_cancel_ratio": float(
                 side_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0
@@ -21515,8 +21515,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "best_ask": float(features["best_ask"]),
             "bid_qty": float(features["bid_qty"]),
             "ask_qty": float(features["ask_qty"]),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_book_cancel_ratio": float(
                 side_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0
@@ -21669,8 +21669,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "campaign_reducing_fills_so_far": int(_tick_state.campaign_reducing_fills),
             "toxicity": float(_tick_state.cur_tox_bid if side == "BUY" else _tick_state.cur_tox_ask),
             "markout_ema": float(_tick_state.mo_ema_bid if side == "BUY" else _tick_state.mo_ema_ask),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_quote_flip_rate": float(
                 side_ctx.get("l2_quote_flip_rate", 0.0) or 0.0
@@ -21709,8 +21709,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             mid=float(_tick_state.mid),
             best_bid=float(_tick_state.cur_best_bid),
             best_ask=float(_tick_state.cur_best_ask),
-            microprice_shift_bps=float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            weighted_mid_proxy_shift_bps=float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             tick=float(_tick_state.TICK),
             max_pair_spread=float(max_pair_spread),
@@ -21838,7 +21838,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             mid=float(_tick_state.mid),
             best_bid=float(_tick_state.cur_best_bid),
             best_ask=float(_tick_state.cur_best_ask),
-            microprice_shift_bps=float(side_ctx.get("microprice_shift_bps", 0.0) or 0.0),
+            weighted_mid_proxy_shift_bps=float(side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0),
             tick=float(_tick_state.TICK),
             max_pair_spread=float(max_pair_spread),
         )
@@ -21939,7 +21939,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "decision_mtm": float(_campaign_pnl(_tick_state.mid)),
             "toxicity": float(_tick_state.cur_tox_bid if side == "BUY" else _tick_state.cur_tox_ask),
             "markout_ema": float(_tick_state.mo_ema_bid if side == "BUY" else _tick_state.mo_ema_ask),
-            "microprice_shift_bps": float(side_ctx.get("microprice_shift_bps", 0.0) or 0.0),
+            "weighted_mid_proxy_shift_bps": float(side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0),
             "l2_quote_flip_rate": float(side_ctx.get("l2_quote_flip_rate", 0.0) or 0.0),
             "l2_book_refresh_ratio": float(side_ctx.get("l2_book_refresh_ratio", 0.0) or 0.0),
             "l2_book_cancel_ratio": float(side_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0),
@@ -22227,8 +22227,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             ),
             "toxicity": float(side_toxicity),
             "markout_ema": float(side_markout),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_quote_flip_rate": float(
                 side_ctx.get("l2_quote_flip_rate", 0.0) or 0.0
@@ -22646,8 +22646,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "decision_mid": float(_tick_state.mid),
             "toxicity": float(_tick_state.cur_tox_bid if side == "BUY" else _tick_state.cur_tox_ask),
             "markout_ema": float(_tick_state.mo_ema_bid if side == "BUY" else _tick_state.mo_ema_ask),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_quote_flip_rate": float(
                 side_ctx.get("l2_quote_flip_rate", 0.0) or 0.0
@@ -22909,8 +22909,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "decision_mtm": float(_campaign_pnl(_tick_state.mid)),
             "toxicity": float(_tick_state.cur_tox_bid if side == "BUY" else _tick_state.cur_tox_ask),
             "markout_ema": float(_tick_state.mo_ema_bid if side == "BUY" else _tick_state.mo_ema_ask),
-            "microprice_shift_bps": float(
-                side_ctx.get("microprice_shift_bps", 0.0) or 0.0
+            "weighted_mid_proxy_shift_bps": float(
+                side_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
             ),
             "l2_quote_flip_rate": float(
                 side_ctx.get("l2_quote_flip_rate", 0.0) or 0.0
@@ -23828,7 +23828,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 markout_ema=markout_ema,
                 markout_spread_scale=_tick_state.markout_spread_scale,
                 markout_reference=_tick_state.mo_ref,
-                microprice_shift_bps=float(quote_ctx.get("microprice_shift_bps", 0.0) or 0.0),
+                weighted_mid_proxy_shift_bps=float(quote_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0),
                 l2_quote_flip_rate=float(quote_ctx.get("l2_quote_flip_rate", 0.0) or 0.0),
                 l2_book_cancel_ratio=float(quote_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0),
                 l2_near_depth_total=near_depth,
@@ -23949,8 +23949,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     )
                     or 0.0
                 ),
-                microprice_shift_bps=float(
-                    add_ctx.get("microprice_shift_bps", 0.0) or 0.0
+                weighted_mid_proxy_shift_bps=float(
+                    add_ctx.get("weighted_mid_proxy_shift_bps", 0.0) or 0.0
                 ),
                 toxicity=float(add_toxicity),
                 markout_ema=float(add_markout_ema),
@@ -29300,7 +29300,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _tick_state.bid_adverse_direction_count += 1
                 if bool(_tick_state.diag.get("bid_adverse_ret_active", False)):
                     _tick_state.bid_adverse_ret_count += 1
-                if bool(_tick_state.diag.get("bid_adverse_microprice_active", False)):
+                if bool(_tick_state.diag.get("bid_adverse_weighted_mid_proxy_active", False)):
                     _tick_state.bid_adverse_microprice_count += 1
                 if bool(_tick_state.diag.get("bid_adverse_thin_depth_active", False)):
                     _tick_state.bid_adverse_thin_depth_count += 1
@@ -29318,7 +29318,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _tick_state.ask_adverse_direction_count += 1
                 if bool(_tick_state.diag.get("ask_adverse_ret_active", False)):
                     _tick_state.ask_adverse_ret_count += 1
-                if bool(_tick_state.diag.get("ask_adverse_microprice_active", False)):
+                if bool(_tick_state.diag.get("ask_adverse_weighted_mid_proxy_active", False)):
                     _tick_state.ask_adverse_microprice_count += 1
                 if bool(_tick_state.diag.get("ask_adverse_thin_depth_active", False)):
                     _tick_state.ask_adverse_thin_depth_count += 1
@@ -31216,11 +31216,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             _tick_state.p3_floor_enabled = bool(
                 _tick_state.diag.get("p3_side_bbo_floor_enabled", False)
             )
-            _tick_state.p3_delta_star = float(_tick_state.diag.get("p3_touch_delta_star", 0.0) or 0.0)
+            _tick_state.p3_distance_touch_product_argmax = float(_tick_state.diag.get("p3_distance_touch_product_argmax", 0.0) or 0.0)
             _tick_state.p3_floor_active = bool(
                 _tick_state.p3_floor_enabled
-                and math.isfinite(_tick_state.p3_delta_star)
-                and _tick_state.p3_delta_star > 0.0
+                and math.isfinite(_tick_state.p3_distance_touch_product_argmax)
+                and _tick_state.p3_distance_touch_product_argmax > 0.0
             )
             (
                 _tick_state.nbid,
@@ -31233,7 +31233,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _tick_state.nbid,
                 _tick_state.nask,
                 enabled=_tick_state.p3_floor_active,
-                delta_star=_tick_state.p3_delta_star,
+                delta_star=_tick_state.p3_distance_touch_product_argmax,
                 best_bid=float(_tick_state.cur_best_bid),
                 best_ask=float(_tick_state.cur_best_ask),
                 tick_size=float(_tick_state.TICK),
@@ -31516,7 +31516,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         "toxicity": float(_tick_state.cur_tox_bid if _tick_state.side == "BUY" else _tick_state.cur_tox_ask),
                         "markout_ema": float(_tick_state.mo_ema_bid if _tick_state.side == "BUY" else _tick_state.mo_ema_ask),
                         **{name: _tick_state.side_ctx[name] for name in (
-                            "microprice_shift_bps", "l2_quote_flip_rate",
+                            "weighted_mid_proxy_shift_bps", "l2_quote_flip_rate",
                             "l2_book_refresh_ratio", "l2_book_cancel_ratio",
                             "l2_near_depth_total",
                         ) if name in _tick_state.side_ctx},
@@ -33792,7 +33792,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             for action in STATE_CONDITIONED_REARM_ACTIONS
         },
-        "kappa": _tick_state.kappa,
+        "execution_intensity_slope": _tick_state.execution_intensity_slope,
         "queue_base": _tick_state.queue_base,
         "queue_decay": _tick_state.queue_decay,
         "queue_ahead_mode": _tick_state.queue_ahead_mode,
@@ -34432,7 +34432,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "adverse_markout_max_resolve_gap_s": _tick_state.adverse_markout_max_resolve_gap_s,
         "adverse_dir_threshold": _tick_state.adverse_dir_threshold,
         "adverse_ret_bps_threshold": _tick_state.adverse_ret_bps_threshold,
-        "adverse_microprice_shift_bps": _tick_state.adverse_microprice_shift_bps,
+        "adverse_weighted_mid_proxy_shift_bps": _tick_state.adverse_weighted_mid_proxy_shift_bps,
         "adverse_spread_mult": _tick_state.adverse_spread_mult,
         "thin_depth_threshold": _tick_state.thin_depth_threshold,
         "adverse_thin_depth_threshold": _tick_state.adverse_thin_depth_threshold,
@@ -34470,7 +34470,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "defense_markout_threshold": _tick_state.defense_markout_threshold,
         "defense_dir_threshold": _tick_state.defense_dir_threshold,
         "defense_ret_bps_threshold": _tick_state.defense_ret_bps_threshold,
-        "defense_microprice_shift_bps": _tick_state.defense_microprice_shift_bps,
+        "defense_weighted_mid_proxy_shift_bps": _tick_state.defense_weighted_mid_proxy_shift_bps,
         "defense_spread_mult": _tick_state.defense_spread_mult,
         "defense_pause": _tick_state.defense_pause,
         "defense_emergency_inventory_ratio": _tick_state.defense_emergency_inventory_ratio,
@@ -35686,7 +35686,7 @@ _F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ABS_TOLERANCE = 1.0e-10
 _F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ALLOWLIST = (
     "asym",
     "fair",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "raw_asym_shift",
     "raw_distance_to_mid",
     "raw_mid_shift",
@@ -36218,7 +36218,7 @@ _CPP_BUY_FILL_DYNAMIC_NUMERIC_FEATURES = frozenset({
     "l2_book_refresh_ratio",
     "l2_near_depth_total",
     "markout_ema",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "near_depth_total",
     "order_exposure_increasing",
     "queue_local_rank",
@@ -36619,8 +36619,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     ber_exposure_add_only = bool(params.get("ber_exposure_add_only", False))
     conditional_p3_requested = bool(
         _as_i64_array(params.get("_conditional_p3_ts_ms")).size
-        or _as_f64_array(params.get("_conditional_p3_delta_star")).size
-        or _as_f64_array(params.get("_conditional_p3_kappa_eff")).size
+        or _as_f64_array(params.get("_conditional_p3_distance_touch_product_argmax")).size
+        or _as_f64_array(params.get("_conditional_p3_touch_log_probability_distance_slope")).size
     )
     p3_reach_gate_enabled = bool(
         params.get("conditional_p3_reach_gate_enabled", False)
@@ -36918,7 +36918,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         tick_size=TICK,
         lot_size=LOT_SIZE,
         use_ml=use_ml,
-        use_depth_microprice=not use_bar_pricing and historical_l2,
+        use_depth_weighted_mid_proxy=not use_bar_pricing and historical_l2,
         use_depth_kappa=not use_bar_pricing and historical_l2,
     )
 
@@ -37958,10 +37958,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         _as_f64_array(sell_queue_deplete_mult_by_trade),
     )
     p3_ts = _as_i64_array(params.get("_conditional_p3_ts_ms"))
-    p3_delta_star = _as_f64_array(params.get("_conditional_p3_delta_star"))
-    p3_kappa_eff = _as_f64_array(params.get("_conditional_p3_kappa_eff"))
+    p3_distance_touch_product_argmax = _as_f64_array(params.get("_conditional_p3_distance_touch_product_argmax"))
+    p3_touch_log_probability_distance_slope = _as_f64_array(params.get("_conditional_p3_touch_log_probability_distance_slope"))
     has_conditional_p3 = bool(
-        p3_ts.size or p3_delta_star.size or p3_kappa_eff.size
+        p3_ts.size or p3_distance_touch_product_argmax.size or p3_touch_log_probability_distance_slope.size
     )
     if has_conditional_p3 != conditional_p3_requested:
         raise RuntimeError("conditional P3 overlay request identity changed during replay")
@@ -38015,8 +38015,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         cpp_result = cpp.simulate_tick_arrays_ext_policy_v4(
             *replay_args,
             p3_ts,
-            p3_delta_star,
-            p3_kappa_eff,
+            p3_distance_touch_product_argmax,
+            p3_touch_log_probability_distance_slope,
             cpp_params,
         )
     else:
@@ -38122,7 +38122,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "order_id", "side", "submit_ts", "activate_ts", "quote_ts", "price", "quantity",
         "raw_half_spread", "capped_half_spread", "raw_mid_shift", "raw_reservation_shift",
         "raw_asym_shift", "asym", "inventory", "dir_signal", "pred_dir", "pred_ret",
-        "tox_bid", "tox_ask", "book_imb", "microprice_shift_bps", "near_depth_total",
+        "tox_bid", "tox_ask", "book_imb", "weighted_mid_proxy_shift_bps", "near_depth_total",
         "l2_near_depth_total", "l2_quote_flip_rate", "l2_book_refresh_ratio", "l2_book_cancel_ratio",
         "mo_ema_bid", "mo_ema_ask", "fair", "mid", "best_bid", "best_ask",
         "raw_pair_spread", "capped_pair_spread", "final_pair_spread", "raw_price",
@@ -38131,11 +38131,11 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "final_distance_to_mid", "raw_quote_skew", "final_quote_skew", "raw_bias_side",
         "final_bias_side", "favored_by_raw_shift", "delta_cap", "mid_guard",
         "post_only", "side_adverse", "side_adverse_pause", "adverse_toxicity",
-        "adverse_markout", "adverse_direction", "adverse_ret", "adverse_microprice",
+        "adverse_markout", "adverse_direction", "adverse_ret", "adverse_weighted_mid_proxy",
         "adverse_thin_depth", "local_extreme_guard", "local_extreme_pause",
         "local_extreme_rank", "local_extreme_window_s", "defense_guard",
         "defense_pause", "defense_reducing", "defense_emergency", "defense_markout",
-        "defense_direction", "defense_ret", "defense_microprice", "defense_spread_mult",
+        "defense_direction", "defense_ret", "defense_weighted_mid_proxy", "defense_spread_mult",
         "final_compressed", "bid_adverse", "ask_adverse",
         "buy_fill_selection_live_score", "buy_fill_selection_live_hit",
         "buy_fill_selection_live_missing_features", "random_passive_mirrored",
@@ -38646,7 +38646,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         ),
         "eta_inventory": float(params["eta_inventory"]),
         "risk_per_order": float(params["risk_per_order"]),
-        "kappa": float(params.get("kappa", 0.0)),
+        "execution_intensity_slope": float(params.get("execution_intensity_slope", 0.0)),
         "queue_base": float(params.get("queue_base", 5.0)),
         "queue_decay": float(params.get("queue_decay", 0.1)),
         "queue_ahead_mode": queue_mode,
@@ -39069,7 +39069,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         ),
         "adverse_dir_threshold": abs(float(params.get("adverse_dir_threshold", 0.0))),
         "adverse_ret_bps_threshold": abs(float(params.get("adverse_ret_bps_threshold", 0.0))),
-        "adverse_microprice_shift_bps": abs(float(params.get("adverse_microprice_shift_bps", 0.0))),
+        "adverse_weighted_mid_proxy_shift_bps": abs(float(params.get("adverse_weighted_mid_proxy_shift_bps", 0.0))),
         "adverse_spread_mult": max(1.0, float(params.get("adverse_spread_mult", 1.10))),
         "thin_depth_threshold": max(0.0, float(params.get("thin_depth_threshold", 0.0))),
         "adverse_thin_depth_threshold": max(0.0, float(params.get("adverse_thin_depth_threshold", 0.0))),
@@ -39080,7 +39080,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "defense_markout_threshold": abs(float(params.get("defense_markout_threshold", 2.0))),
         "defense_dir_threshold": abs(float(params.get("defense_dir_threshold", 0.05))),
         "defense_ret_bps_threshold": abs(float(params.get("defense_ret_bps_threshold", 0.0))),
-        "defense_microprice_shift_bps": abs(float(params.get("defense_microprice_shift_bps", 0.0))),
+        "defense_weighted_mid_proxy_shift_bps": abs(float(params.get("defense_weighted_mid_proxy_shift_bps", 0.0))),
         "defense_spread_mult": max(1.0, float(params.get("defense_spread_mult", 1.35))),
         "defense_pause": bool(params.get("defense_pause", True)),
         "defense_emergency_inventory_ratio": max(0.0, float(params.get("defense_emergency_inventory_ratio", 0.50))),
@@ -39613,20 +39613,20 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
 # ═══════════════════════════════════════════════════════════════════
 
 # Legacy AS-only sweep grid (without ML).  Do not use this as the live
-# parameter surface: current live/tick quotes use p3_kappa_eff when available,
-# so raw kappa is only a fallback/legacy AS diagnostic.
+# parameter surface: current live/tick quotes use p3_touch_log_probability_distance_slope when available,
+# so raw execution_intensity_slope is only a fallback/legacy AS diagnostic.
 SWEEP_GRID = {
     "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.02, 0.05, 0.1, 0.5],
+    "execution_intensity_slope": [0.02, 0.05, 0.1, 0.5],
     "queue_base": [3.0, 5.0, 10.0],
     "queue_decay": [0.05, 0.1],
 }
 
-# ML-enhanced legacy sweep grid. Keep fallback kappa fixed; effective-kappa
-# experiments belong in parameter_racing_sweep.py via p3_kappa_eff/cap arms.
+# ML-enhanced legacy sweep grid. Keep fallback execution_intensity_slope fixed; effective-execution_intensity_slope
+# experiments belong in parameter_racing_sweep.py via p3_touch_log_probability_distance_slope/cap arms.
 SWEEP_GRID_ML = {
     "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
-    "kappa": [0.05],
+    "execution_intensity_slope": [0.05],
     "queue_base": [5.0],
     "queue_decay": [0.1],
     "vol_blend": [0.0, 0.3, 0.7],
@@ -40845,7 +40845,7 @@ _HDR = (f"{'Rk':>3s}  {'γ':>6s}  {'κ':>6s}  {'QBase':>6s}  {'QDec':>5s}  {'Cap
 
 
 def _row(i, r):
-    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['kappa']:6.3f}  "
+    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['execution_intensity_slope']:6.3f}  "
             f"{r.get('queue_base', 5.0):6.1f}  {r.get('queue_decay', 0.1):5.2f}  "
             f"{_cap_cell(r):>4s}  "
             f"{r.get('eta', 0.0):4.1f}  "
@@ -40891,7 +40891,7 @@ def _format_pick(label, r):
                   f"Asy={r.get('asym', 0)}, "
                   f"GD={r.get('gdir', 0)}, "
                   f"RS={r.get('ret_skew', 0)}")
-    print(f"  {label}: Cap={_cap_cell(r)}, spread-risk={r['risk_per_order']}, κ={r['kappa']}, "
+    print(f"  {label}: Cap={_cap_cell(r)}, spread-risk={r['risk_per_order']}, κ={r['execution_intensity_slope']}, "
           f"QB={r.get('queue_base', 5)}, QD={r.get('queue_decay', 0.1)}"
           f"{ml_str}")
     print(f"         InvAdj=${r.get('inventory_adjusted_pnl', 0.0):.2f}, PnL=${r['pnl']:.2f}, "
@@ -40918,7 +40918,7 @@ def print_results(results, top_n=30, sort_by="selection_score"):
         print(f"\n  Selection-robust (displayed top-{k} by {metric_label}): "
               f"median {metric_label}={np.median(metric_values):.2f}, "
               f"median PnL=${np.median(pnl):.2f}")
-        print(f"  Robust pick: Cap={_cap_cell(robust)}, spread-risk={robust['risk_per_order']}, κ={robust['kappa']}, "
+        print(f"  Robust pick: Cap={_cap_cell(robust)}, spread-risk={robust['risk_per_order']}, κ={robust['execution_intensity_slope']}, "
               f"{metric_label}={robust.get(metric_field, 0.0):.2f}, "
               f"InvAdj=${robust.get('inventory_adjusted_pnl', 0.0):.2f}, "
               f"PnL=${robust['pnl']:.2f}, Sharpe={robust['sharpe']:.2f}")
@@ -41171,7 +41171,7 @@ def run_cli(argv=None):
     ap.add_argument("--eta-inventory", type=float, default=None)
     ap.add_argument("--a-spread", type=float, default=None)
     ap.add_argument("--risk-per-order", type=float, default=None)
-    ap.add_argument("--kappa", type=float, default=None)
+    ap.add_argument("--execution-intensity-slope", type=float, default=None)
     ap.add_argument("--order-size", type=float, default=None)
     ap.add_argument("--max-inventory", type=float, default=None)
     ap.add_argument("--initial-inventory", type=float, default=None,
@@ -41403,7 +41403,7 @@ def run_cli(argv=None):
     ap.add_argument("--pricing-mode", choices=["config", "bar", "microprice"],
                     default="config",
                     help="Pricing mode A/B: config=live config, bar=1s/trade bar pricing, microprice=depth microprice")
-    ap.add_argument("--depth-kappa-ratio", type=float, default=None,
+    ap.add_argument("--depth-execution_intensity_slope-ratio", type=float, default=None,
                     help="Live-style depth κ ratio used when pricing mode uses depth but only bookDepth buckets are available (default 0.3)")
     ap.add_argument("--l2-refill-cancel-lookback-s", type=float, default=None,
                     help="Quote-time lookback window for exact-L2 refill/cancel trace fields (default: 10s)")
@@ -41554,7 +41554,7 @@ def run_cli(argv=None):
 
     # Apply CLI overrides
     _cli_map = {
-        "eta_inventory": "eta_inventory", "a_spread": "a_spread", "risk_per_order": "risk_per_order", "kappa": "kappa", "order_size": "order_size",
+        "eta_inventory": "eta_inventory", "a_spread": "a_spread", "risk_per_order": "risk_per_order", "execution_intensity_slope": "execution_intensity_slope", "order_size": "order_size",
         "max_inventory": "max_inventory", "requote_interval": "requote_interval",
         "initial_inventory": "initial_inventory",
         "initial_entry_price": "initial_entry_price",
@@ -41616,7 +41616,7 @@ def run_cli(argv=None):
         "adverse_markout_max_resolve_gap_s": "adverse_markout_max_resolve_gap_s",
         "adverse_dir_threshold": "adverse_dir_threshold",
         "adverse_ret_bps_threshold": "adverse_ret_bps_threshold",
-        "adverse_microprice_shift_bps": "adverse_microprice_shift_bps",
+        "adverse_weighted_mid_proxy_shift_bps": "adverse_weighted_mid_proxy_shift_bps",
         "adverse_spread_mult": "adverse_spread_mult",
         "thin_depth_threshold": "thin_depth_threshold",
         "adverse_thin_depth_threshold": "adverse_thin_depth_threshold",
@@ -41626,7 +41626,7 @@ def run_cli(argv=None):
         "defense_markout_threshold": "defense_markout_threshold",
         "defense_dir_threshold": "defense_dir_threshold",
         "defense_ret_bps_threshold": "defense_ret_bps_threshold",
-        "defense_microprice_shift_bps": "defense_microprice_shift_bps",
+        "defense_weighted_mid_proxy_shift_bps": "defense_weighted_mid_proxy_shift_bps",
         "defense_spread_mult": "defense_spread_mult",
         "defense_emergency_inventory_ratio": "defense_emergency_inventory_ratio",
         "defense_emergency_loss": "defense_emergency_loss",
@@ -41767,7 +41767,7 @@ def run_cli(argv=None):
             f"jitter={float(base.get('exec_book_visibility_delay_jitter_ms', 0.0)):.1f}ms,"
             f"seed={int(base.get('exec_book_visibility_delay_seed', 20260718))}]"
         )
-    print(f"  Key params: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
+    print(f"  Key params: spread-risk={base['risk_per_order']}, κ={base['execution_intensity_slope']}, "
           f"regime={base.get('regime_enabled', False)}, "
             f"pricing={'bar' if base.get('use_bar_pricing', True) else 'microprice'}, "
             f"exit_urg={base.get('exit_urgency_strength', 0)}, "
@@ -41969,7 +41969,7 @@ def run_cli(argv=None):
             if args.quality_segment_aware is not None
             else False
         )
-        print(f"\nRunning single backtest: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
+        print(f"\nRunning single backtest: spread-risk={base['risk_per_order']}, κ={base['execution_intensity_slope']}, "
               f"QB={base['queue_base']}, QD={base['queue_decay']}, "
               f"QMode={base.get('queue_ahead_mode', 'exact_level')}")
         if run_ml and ml_data is not None:

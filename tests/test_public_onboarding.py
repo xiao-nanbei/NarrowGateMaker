@@ -114,7 +114,6 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
             "XDG_CACHE_HOME": "/example-owner/private-xdg-cache",
             "NARROWGATE_TICK_WINDOW_CACHE_DIR": "/example-owner/private-window-cache",
             "NARROWGATE_LIVE_CONFIG": "/example-owner/private-live-config.yaml",
-            "MM_DATA_ROOT": "/example-owner/legacy-data",
         }
         with patch.dict(os.environ, configured, clear=False):
             doctor_output = io.StringIO()

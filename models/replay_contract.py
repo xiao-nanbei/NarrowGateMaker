@@ -616,7 +616,7 @@ def _sync_event_tape_metadata(path: Path | None) -> dict[str, Any]:
 
 def _artifact_identity(params: Mapping[str, Any], *, root: Path | None) -> dict[str, Any]:
     config_path = _resolve_path(params.get("_config_path"), root=root)
-    p3_path = _resolve_path(params.get("fill_probability_model_path"), root=root)
+    p3_path = _resolve_path(params.get("touch_probability_model_path"), root=root)
     queue_path = _resolve_path(params.get("queue_calibration_path"), root=root)
     formal_l2_manifest_path = _resolve_path(
         params.get("formal_l2_manifest_path"),
@@ -718,28 +718,19 @@ def build_replay_contract(
         (not sync_enabled and sync_mode == "disabled")
         or (sync_enabled and sync_mode == "frozen_tape")
     )
-    legacy_gamma = float(params.get("gamma", 0.0) or 0.0)
+    if any(name in params for name in ("gamma", "kappa", "ber_spread_mult")):
+        raise ValueError("retired quote coefficients require offline configuration migration")
     inventory_reference_qty = float(
         params.get("inventory_reference_qty", 1.0) or 0.0
     )
-    eta_inventory = params.get("eta_inventory")
-    if eta_inventory is None:
-        eta_inventory = legacy_gamma * inventory_reference_qty
-    a_spread = params.get("a_spread")
-    if a_spread is None:
-        a_spread = legacy_gamma
-    risk_per_order = params.get("risk_per_order")
-    if risk_per_order is None:
-        risk_per_order = a_spread
-    execution_intensity_slope = params.get("execution_intensity_slope")
-    if execution_intensity_slope is None:
-        execution_intensity_slope = params.get("kappa", 0.0)
+    eta_inventory = params["eta_inventory"]
+    a_spread = params["a_spread"]
+    risk_per_order = params["risk_per_order"]
+    execution_intensity_slope = params["execution_intensity_slope"]
     quote_horizon_s = float(params.get("quote_horizon_s", 1.0) or 0.0)
-    risk_horizon_s = params.get("risk_horizon_s")
-    if risk_horizon_s is None:
-        risk_horizon_s = quote_horizon_s
-    historical_p3_adapter = bool(
-        params.get("historical_p3_scalar_adapter_enabled", True)
+    risk_horizon_s = params["risk_horizon_s"]
+    p3_pair_spread_projection = bool(
+        params.get("p3_pair_spread_projection_enabled", True)
     )
     p3_side_bbo_floor = bool(params.get("p3_side_bbo_floor_enabled", False))
     private_fill_samples = _finite_samples(
@@ -1095,26 +1086,26 @@ def build_replay_contract(
         ),
         "artifacts": artifacts,
         "p3": {
-            "schema_version": str(params.get("fill_probability_schema_version", "")),
-            "model_type": str(params.get("fill_probability_model_type", "")),
-            "event_type": str(params.get("fill_probability_event_type", "")),
-            "horizon_s": float(params.get("fill_probability_horizon_s", 0.0) or 0.0),
+            "schema_version": str(params.get("touch_probability_schema_version", "")),
+            "model_type": str(params.get("touch_probability_model_type", "")),
+            "event_type": str(params.get("touch_probability_event_type", "")),
+            "horizon_s": float(params.get("touch_probability_horizon_s", 0.0) or 0.0),
             "distance_origin": str(
-                params.get("fill_probability_distance_origin", "")
+                params.get("touch_probability_distance_origin", "")
             ),
-            "distance_unit": str(params.get("fill_probability_distance_unit", "")),
-            "side": str(params.get("fill_probability_side", "")),
-            "queue_included": params.get("fill_probability_queue_included"),
+            "distance_unit": str(params.get("touch_probability_distance_unit", "")),
+            "side": str(params.get("touch_probability_side", "")),
+            "queue_included": params.get("touch_probability_queue_included"),
             "artifact_sha256": str(
-                params.get("fill_probability_artifact_sha256", "") or ""
+                params.get("touch_probability_artifact_sha256", "") or ""
             ),
-            "delta_star": float(params.get("p3_delta_star", 0.0) or 0.0),
-            "kappa_eff": float(params.get("p3_kappa_eff", 0.0) or 0.0),
-            "historical_scalar_adapter_enabled": historical_p3_adapter,
+            "distance_touch_product_argmax": float(params.get("p3_distance_touch_product_argmax", 0.0) or 0.0),
+            "touch_log_probability_distance_slope": float(params.get("p3_touch_log_probability_distance_slope", 0.0) or 0.0),
+            "historical_scalar_adapter_enabled": p3_pair_spread_projection,
             "side_bbo_floor_enabled": p3_side_bbo_floor,
             "consumer_mode": (
                 "historical_pair_projection"
-                if historical_p3_adapter
+                if p3_pair_spread_projection
                 else "same_side_bbo_floor"
                 if p3_side_bbo_floor
                 else "inactive"
@@ -1506,9 +1497,9 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
     ):
         errors.append("paired serial REST gateway timing profile identity is missing")
     if purpose == "formal":
-        p3_delta_star = float(p3_contract.get("delta_star", 0.0) or 0.0)
-        p3_kappa_eff = float(p3_contract.get("kappa_eff", 0.0) or 0.0)
-        if p3_delta_star > 0.0 or p3_kappa_eff > 0.0:
+        p3_distance_touch_product_argmax = float(p3_contract.get("distance_touch_product_argmax", 0.0) or 0.0)
+        p3_touch_log_probability_distance_slope = float(p3_contract.get("touch_log_probability_distance_slope", 0.0) or 0.0)
+        if p3_distance_touch_product_argmax > 0.0 or p3_touch_log_probability_distance_slope > 0.0:
             try:
                 from strategy.quote_core import validate_p3_touch_identity
 

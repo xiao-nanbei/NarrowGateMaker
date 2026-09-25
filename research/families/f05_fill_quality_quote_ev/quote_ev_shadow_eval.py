@@ -9,19 +9,13 @@ filled-quote adverse markout ranking before it is worth wiring into policy.
 
 from __future__ import annotations
 
-import argparse
-import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from models.symbol_paths import DEFAULT_SYMBOL, paths_for  # noqa: E402
 from research.families.f05_fill_quality_quote_ev.quote_ev import (  # noqa: E402
     QuoteEVModel,
-    quote_side_prefix,
 )
-from research.families.f05_fill_quality_quote_ev.train_quote_ev import build_labels  # noqa: E402
 
 PREDICTED_VALUE_COLUMN = (
     "pred_expected_maker_markout_bps_per_opportunity_30s"
@@ -131,9 +125,9 @@ def _metric_rows(
     scored[PREDICTED_VALUE_COLUMN] = [
         pred.expected_maker_markout_bps_per_opportunity_30s for pred in preds
     ]
-    scored["pred_fill_prob"] = [pred.fill_prob for pred in preds]
-    scored["pred_fill_markout_30s"] = [pred.fill_markout_30s for pred in preds]
-    scored["pred_extreme_adverse"] = [pred.extreme_adverse_given_fill for pred in preds]
+    scored["pred_fill_prob"] = [pred.lifecycle_fill_probability for pred in preds]
+    scored["pred_fill_markout_30s"] = [pred.maker_markout_bps_given_fill_30000ms for pred in preds]
+    scored["pred_extreme_adverse"] = [pred.extreme_adverse_probability_given_fill_30000ms for pred in preds]
     fill_actual = pd.to_numeric(scored[filled_col], errors="coerce").fillna(0.0).clip(0.0, 1.0)
     filled = scored.loc[fill_actual > 0].copy()
     if filled.empty:
@@ -197,56 +191,3 @@ def _metric_rows(
         "best_bucket_extreme_rate": float(pd.to_numeric(best[extreme_col], errors="coerce").fillna(0.0).mean()) if len(best) else 0.0,
         "ev_bucket_realized_vs_pred": _ev_bucket_rows(filled, markout_col, extreme_col),
     }
-
-
-def run(args: argparse.Namespace) -> pd.DataFrame:
-    if not getattr(args, "legacy_input", False):
-        raise ValueError("historical quote EV shadow evaluation requires --legacy-input")
-    side_prefix = quote_side_prefix(args.side)
-    side_upper = "BUY" if side_prefix == "bid" else "SELL"
-    orders = pd.read_csv(args.orders)
-    fills = pd.read_csv(args.fills)
-    labels = build_labels(orders, fills, max_inventory=args.max_inventory, side=side_upper)
-    if args.days:
-        labels = labels.loc[labels["day"].astype(str).isin(args.days)].copy()
-    current = QuoteEVModel.load_legacy(args.current_model_dir, side=side_prefix)
-    candidate = QuoteEVModel.load_legacy(args.candidate_model_dir, side=side_prefix)
-    rows = [
-        _metric_rows(labels, current, side_prefix, "current", args.bootstrap_samples),
-        _metric_rows(labels, candidate, side_prefix, "candidate", args.bootstrap_samples),
-    ]
-    frame = pd.DataFrame(rows)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(args.out, index=False)
-    args.out.with_suffix(".json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    return frame
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--legacy-input", action="store_true",
-                        help="Use the historical zero-imputation model ABI explicitly; not Tardis acceptance.")
-    parser.add_argument("--symbol", default=DEFAULT_SYMBOL)
-    parser.add_argument("--side", choices=["bid", "ask", "BUY", "SELL"], required=True)
-    parser.add_argument("--orders", type=Path, required=True)
-    parser.add_argument("--fills", type=Path, required=True)
-    parser.add_argument("--days", nargs="+", default=[])
-    parser.add_argument("--current-model-dir", type=Path, default=None)
-    parser.add_argument("--candidate-model-dir", type=Path, required=True)
-    parser.add_argument("--max-inventory", type=float, default=None)
-    parser.add_argument("--bootstrap-samples", type=int, default=200)
-    parser.add_argument("--out", type=Path, default=None)
-    args = parser.parse_args()
-    args.current_model_dir = args.current_model_dir or paths_for(args.symbol).model_dir
-    args.out = args.out or (
-        paths_for(args.symbol).results_dir
-        / f"quote_ev_shadow_eval_{quote_side_prefix(args.side)}_{args.symbol.lower()}.csv"
-    )
-    frame = run(args)
-    print(frame.to_string(index=False))
-    print(f"Saved {args.out}")
-    print(f"Saved {args.out.with_suffix('.json')}")
-
-
-if __name__ == "__main__":
-    main()

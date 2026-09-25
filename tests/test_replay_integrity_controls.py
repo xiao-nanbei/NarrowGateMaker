@@ -28,28 +28,28 @@ from strategy.replay_controls import subtract_lot_quantity
 
 
 def _strict_params(config_path: Path) -> dict:
-    p3_path = config_path.parent / "fill_prob_params.json"
+    p3_path = config_path.parent / "touch_probability.json"
     p3_path.write_text("frozen-p3-fixture\n", encoding="utf-8")
     return {
         "_config_explicit": True,
         "_config_path": str(config_path),
-        "fill_probability_calibrated": True,
-        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v3",
-        "fill_probability_model_type": "empirical_survival",
-        "fill_probability_event_type": "touch",
-        "fill_probability_horizon_s": 10.0,
-        "fill_probability_distance_origin": (
+        "touch_probability_calibrated": True,
+        "touch_probability_schema_version": "narrowgate_p3_touch_calibration.v4",
+        "touch_probability_model_type": "empirical_survival",
+        "touch_probability_event_type": "touch",
+        "touch_probability_horizon_s": 10.0,
+        "touch_probability_distance_origin": (
             "same_side_best_bid_or_ask_at_window_start"
         ),
-        "fill_probability_distance_unit": "USDC_per_BTC",
-        "fill_probability_side": "pooled_buy_sell",
-        "fill_probability_queue_included": False,
-        "fill_probability_artifact_sha256": hashlib.sha256(
+        "touch_probability_distance_unit": "USDC_per_BTC",
+        "touch_probability_side": "pooled_buy_sell",
+        "touch_probability_queue_included": False,
+        "touch_probability_artifact_sha256": hashlib.sha256(
             p3_path.read_bytes()
         ).hexdigest(),
-        "fill_probability_model_path": str(p3_path),
-        "p3_delta_star": 20.0,
-        "p3_kappa_eff": 0.05,
+        "touch_probability_model_path": str(p3_path),
+        "p3_distance_touch_product_argmax": 20.0,
+        "p3_touch_log_probability_distance_slope": 0.05,
         "queue_calibration_loaded": True,
         "queue_calibration_schema_version": "narrowgate_queue_calibration.v3",
         "queue_calibration_apply_mode": "frozen_default",
@@ -259,12 +259,12 @@ def test_strict_calibration_rejects_p3_identity_or_byte_drift(tmp_path):
     config = tmp_path / "live.current.yaml"
     config.write_text("project_name: NarrowGate\n", encoding="utf-8")
     params = _strict_params(config)
-    params["fill_probability_event_type"] = "fill"
+    params["touch_probability_event_type"] = "fill"
     with pytest.raises(RuntimeError, match="event_type=touch"):
         validate_formal_replay_calibration(params)
 
     params = _strict_params(config)
-    Path(params["fill_probability_model_path"]).write_text(
+    Path(params["touch_probability_model_path"]).write_text(
         "mutated-p3-fixture\n", encoding="utf-8"
     )
     with pytest.raises(RuntimeError, match="SHA256 does not match"):

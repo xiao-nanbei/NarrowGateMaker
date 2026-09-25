@@ -11,7 +11,7 @@ from strategy.campaign_repair import (
 )
 
 
-def _features(inventory: float, *, microprice_shift_bps: float, markout_ema: float):
+def _features(inventory: float, *, weighted_mid_proxy_shift_bps: float, markout_ema: float):
     return build_campaign_repair_features(
         inventory=inventory,
         order_size=0.001,
@@ -26,7 +26,7 @@ def _features(inventory: float, *, microprice_shift_bps: float, markout_ema: flo
         l2_book_cancel_ratio=0.10,
         l2_quote_flip_rate=0.05,
         near_depth_total=2.0,
-        microprice_shift_bps=microprice_shift_bps,
+        weighted_mid_proxy_shift_bps=weighted_mid_proxy_shift_bps,
         toxicity=0.40,
         markout_ema=markout_ema,
         side_quote_fill_probability=0.20,
@@ -35,8 +35,8 @@ def _features(inventory: float, *, microprice_shift_bps: float, markout_ema: flo
 
 
 def test_campaign_repair_features_use_inventory_relative_directions():
-    long_features = _features(0.003, microprice_shift_bps=-1.5, markout_ema=-2.0)
-    short_features = _features(-0.003, microprice_shift_bps=1.5, markout_ema=2.0)
+    long_features = _features(0.003, weighted_mid_proxy_shift_bps=-1.5, markout_ema=-2.0)
+    short_features = _features(-0.003, weighted_mid_proxy_shift_bps=1.5, markout_ema=2.0)
 
     assert long_features["microprice_shift_inventory_adverse_bps"] == pytest.approx(1.5)
     assert short_features["microprice_shift_inventory_adverse_bps"] == pytest.approx(1.5)

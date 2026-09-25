@@ -35,7 +35,7 @@ struct CommonSidePolicyInputPod {
     double markout_ema = 0.0;
     double markout_spread_scale = 0.0;
     double markout_reference = 1.0;
-    double microprice_shift_bps = 0.0;
+    double weighted_mid_proxy_shift_bps = 0.0;
     double l2_quote_flip_rate = 0.0;
     double l2_book_cancel_ratio = 0.0;
     double l2_near_depth_total = 0.0;

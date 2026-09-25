@@ -152,7 +152,7 @@ def test_queue_value_ope_features_are_trace_native_and_registered() -> None:
         "queue_local_rank",
         "spread_ticks",
         "book_imbalance",
-        "microprice_shift_bps",
+        "weighted_mid_proxy_shift_bps",
         "l2_book_cancel_ratio",
         "l2_book_refresh_ratio",
         "l2_quote_flip_rate",

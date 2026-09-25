@@ -347,11 +347,11 @@ def test_policy_l2_metrics_use_frozen_history_cutoff() -> None:
     frozen_metrics = engine._current_l2_policy_metrics(frozen.mid, frozen)
     current_metrics = engine._current_l2_policy_metrics(frozen.mid)
 
-    assert frozen_metrics["microprice_shift_bps"] > 0.0
+    assert frozen_metrics["weighted_mid_proxy_shift_bps"] > 0.0
     assert frozen_metrics["depth_age_s"] == pytest.approx(
         frozen.depth_visible_age_s
     )
-    assert current_metrics["microprice_shift_bps"] < 0.0
+    assert current_metrics["weighted_mid_proxy_shift_bps"] < 0.0
     bad_mid = replace(frozen, mid=frozen.mid + 0.1)
     assert (
         engine._quote_snapshot_contract_error(
@@ -460,7 +460,7 @@ def test_compute_quotes_does_not_read_mutable_signal_depth(monkeypatch) -> None:
         "kappa_used",
         "asym",
         "p3_side_bbo_floor_enabled",
-        "p3_touch_delta_star",
+        "p3_distance_touch_product_argmax",
     ):
         engine._last_quote_diagnostic_value(key)
     engine._set_last_quote_side_value(
@@ -911,7 +911,7 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
 ) -> None:
     import strategy.maker_engine as engine_module
 
-    calls = {"delta": 0, "kappa": 0, "identity": 0, "config": 0, "stage": 0}
+    calls = {"delta": 0, "execution_intensity_slope": 0, "identity": 0, "config": 0, "stage": 0}
 
     class FillModel:
         def __init__(self, artifact):
@@ -923,7 +923,7 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
 
         def touch_log_probability_distance_slope(self, delta):
             assert delta == 2.0
-            calls["kappa"] += 1
+            calls["execution_intensity_slope"] += 1
             return 0.1
 
         def semantic_identity(self, *, require_artifact_hash):
@@ -978,7 +978,7 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
     assert first_cfg is second_cfg
     assert first_stage is second_stage
     assert (first_stage is not None) is native_enabled
-    assert calls == {"delta": 1, "kappa": 1, "identity": 1, "config": 1,
+    assert calls == {"delta": 1, "execution_intensity_slope": 1, "identity": 1, "config": 1,
                      "stage": int(native_enabled)}
     assert all(vars(engine)[key] is value for key, value in previous.items())
     assert set(vars(engine)) - set(previous) == (
@@ -990,11 +990,13 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
     # Runtime reload replaces cfg and invalidates the existing cache; warmup
     # must not pin old strategy parameters or a replaced model object forever.
     engine.cfg = copy.deepcopy(engine.cfg)
-    engine.cfg.strategy.gamma *= 2.0
+    for name in ("eta_inventory", "a_spread", "risk_per_order"):
+        setattr(engine.cfg.strategy, name, getattr(engine.cfg.strategy, name) * 2.0)
     engine._quote_core_config_cache = None
     reloaded_cfg, reloaded_stage = engine._prepare_quote_runtime()
     assert reloaded_cfg is not first_cfg
-    assert reloaded_cfg.gamma == first_cfg.gamma * 2.0
+    for name in ("eta_inventory", "a_spread", "risk_per_order"):
+        assert getattr(reloaded_cfg, name) == getattr(first_cfg, name) * 2.0
     assert calls["delta"] == 1
     assert calls["config"] == 2
     if native_enabled:
@@ -1003,7 +1005,7 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
     model = FillModel("b" * 64)
     replaced_cfg, _ = engine._prepare_quote_runtime()
     assert replaced_cfg is not reloaded_cfg
-    assert calls == {"delta": 2, "kappa": 2, "identity": 2, "config": 3,
+    assert calls == {"delta": 2, "execution_intensity_slope": 2, "identity": 2, "config": 3,
                      "stage": 3 * int(native_enabled)}
 
 

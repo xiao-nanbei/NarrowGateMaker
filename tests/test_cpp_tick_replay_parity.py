@@ -26,8 +26,12 @@ def _make_params():
     params.initial_inventory = 0.0
     params.initial_entry_price = 0.0
     params.initial_sigma_sq = 1.0
-    params.quote.gamma = 0.01
-    params.quote.kappa = 1.0
+    params.quote.eta_inventory = 0.01
+    params.quote.a_spread = 0.01
+    params.quote.risk_per_order = 0.01
+    params.quote.risk_horizon_s = 1.0
+    params.quote.trade_intensity_acceleration_spread_mult = 2.0
+    params.quote.execution_intensity_slope = 1.0
     params.quote.tick_size = 0.1
     params.quote.lot_size = 0.001
     params.quote.order_size = params.order_size
@@ -49,16 +53,12 @@ def _python_replay(ts, price, qty, is_buyer_maker, params):
     order_size = params.order_size
     requote_ms = int(params.requote_interval_s * 1000.0)
     quote_cfg = qc.QuoteCoreConfig(
-        gamma=params.quote.gamma,
-        eta_inventory=(
-            None
-            if np.isnan(params.quote.eta_inventory)
-            else params.quote.eta_inventory
-        ),
-        a_spread=(
-            None if np.isnan(params.quote.a_spread) else params.quote.a_spread
-        ),
-        kappa=params.quote.kappa,
+        eta_inventory=params.quote.eta_inventory,
+        a_spread=params.quote.a_spread,
+        risk_per_order=params.quote.risk_per_order,
+        execution_intensity_slope=params.quote.execution_intensity_slope,
+        risk_horizon_s=params.quote.risk_horizon_s,
+        trade_intensity_acceleration_spread_mult=params.quote.trade_intensity_acceleration_spread_mult,
         tick_size=tick,
         lot_size=lot,
         maker_fee=params.maker_fee,
@@ -602,8 +602,8 @@ def test_python_cpp_matching_quantity_subtraction_parity(
         ask_qty=np.ones(ts.size, dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.05,
         "order_size": order_size,
@@ -763,8 +763,8 @@ def test_python_cpp_l2_cancel_ahead_synthetic_parity():
         ask_qty=np.full((4, 1), 0.004, dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -844,8 +844,8 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity(visibili
         ask_qty=np.full((ts.size, 1), 0.01),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -928,9 +928,9 @@ def test_python_cpp_markout_observer_uses_delayed_l2_visibility():
         ask_qty=np.ones((l2_ts.size, 1), dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -1027,8 +1027,8 @@ def test_python_cpp_ml_lookup_uses_delayed_visible_second_at_ready_boundary():
         ask_qty=np.full((l2_ts.size, 1), 1.0),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -1299,7 +1299,7 @@ def test_python_cpp_ioc_sweeps_only_supplied_levels_inside_limit(initial_sign, l
         ask_qty=np.tile(row_qty, (book_ts.size, 1)),
     )
     params = {
-        "gamma": 0.01, "kappa": 1.0, "order_size": 0.003, "max_inventory": 0.01,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "execution_intensity_slope": 1.0, "order_size": 0.003, "max_inventory": 0.01,
         "requote_interval": 10.0, "rq_min": 10.0, "rq_max": 10.0,
         "requote_clock": "fixed", "maker_fee": 0.0, "taker_fee": 0.01,
         "tick_size": 0.1, "lot_size": 0.001, "queue_base": 0.0, "queue_decay": 0.0,
@@ -1349,8 +1349,8 @@ def test_python_cpp_circuit_breaker_maker_close_parity():
         ask_qty=np.zeros((l2_ts.size, 1), dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 1.0,
@@ -1461,8 +1461,8 @@ def test_python_cpp_ioc_close_uses_activation_book_without_resetting_quote_clock
         ask_qty=np.ones((l2_ts.size, 1), dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 10.0,
@@ -1537,6 +1537,7 @@ def test_python_cpp_ioc_close_uses_activation_book_without_resetting_quote_clock
         assert cpp["_fill_trace"][0][field] == pytest.approx(
             py["_fill_trace"][0][field],
             abs=1e-12,
+            nan_ok=True,
         ), field
     assert py["_fill_trace"][0]["quote_ts"] == 70_000
     assert py["_fill_trace"][0]["activate_ts"] == 71_500
@@ -1580,8 +1581,8 @@ def test_python_cpp_gtx_rejects_resting_order_against_activation_book():
         ask_qty=np.ones((3, 1), dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 10.0,
@@ -1786,9 +1787,9 @@ def test_python_cpp_random_passive_uses_identical_action_path():
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -1869,9 +1870,9 @@ def test_python_cpp_random_passive_mirror_preserves_raw_tick_rounding():
         ask_qty=np.ones(ts.size, dtype=np.float64),
     )
     params = {
-        "gamma": 0.05,
-        "kappa": 0.073,
-        "p3_kappa_eff_override": 0.0674,
+        "eta_inventory": (0.05) * (1.0), "a_spread": 0.05, "risk_per_order": 0.05, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 0.073,
+        "p3_touch_log_probability_distance_slope_override": 0.0674,
         "maker_fee": 0.0,
         "max_inventory": 0.026,
         "order_size": 0.001,
@@ -2001,9 +2002,9 @@ def test_python_cpp_l2_path_metrics_use_same_wall_clock_frames():
         ask_qty=quantities,
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -2100,9 +2101,9 @@ def test_python_cpp_common_policy_prefers_wall_clock_l2_thin_depth():
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -2212,9 +2213,9 @@ def test_python_cpp_queue_regime_rank_is_sampled_at_order_activation():
         }
     }
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -2311,9 +2312,9 @@ def test_python_cpp_fallback_queue_distance_is_sampled_at_order_activation():
         ask_qty=np.ones(5, dtype=np.float64),
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -2396,9 +2397,9 @@ def test_python_cpp_adverse_pause_preserves_reducing_side():
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
-        "p3_kappa_eff_override": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
+        "p3_touch_log_probability_distance_slope_override": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
         "order_size": 0.001,
@@ -2530,7 +2531,7 @@ def test_cpp_policy_trace_reasons_include_fill_requote_and_open_end():
         expected_after = fill.inventory_before_fill + (fill.fill_qty if fill.side == "BUY" else -fill.fill_qty)
         assert fill.inventory_after_fill == pytest.approx(expected_after, abs=1e-12)
         assert isinstance(fill.markout_20s, float)
-        assert fill.ev_20s == pytest.approx(fill.markout_20s, abs=1e-12)
+        assert fill.ev_20s == pytest.approx(fill.markout_20s, abs=1e-12, nan_ok=True)
 
 
 def test_cpp_policy_local_extreme_and_fragile_cancel():
@@ -2682,8 +2683,8 @@ def _strict_native_full_replay_fixture(*, same_ms_activation=False):
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 100.0,

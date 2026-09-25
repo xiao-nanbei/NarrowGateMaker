@@ -455,8 +455,8 @@ def enrich_live_mechanism_samples(
     cooldown_samples: pd.DataFrame,
     campaigns: pd.DataFrame,
     *,
-    p3_delta_star: float,
-    p3_kappa_eff: float,
+    p3_distance_touch_product_argmax: float,
+    p3_touch_log_probability_distance_slope: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     quote_samples = _assign_campaign_by_interval(quote_samples, campaigns)
     depth_samples = _assign_campaign_by_interval(depth_samples, campaigns)
@@ -465,7 +465,7 @@ def enrich_live_mechanism_samples(
         quote_samples["regime_spread_scale"] = quote_samples["delta_after_regime"] / quote_samples[
             "delta_raw"
         ].clip(lower=1e-12)
-        floor = 2.0 * p3_delta_star
+        floor = 2.0 * p3_distance_touch_product_argmax
         quote_samples["p3_floor_bound"] = (
             (quote_samples["delta_pre_cap"] - floor).abs() <= 0.03
         ).astype(int)
@@ -473,7 +473,7 @@ def enrich_live_mechanism_samples(
             quote_samples["max_spread"] / quote_samples["mid"].clip(lower=1e-12) * 10_000.0
         )
     if not depth_samples.empty:
-        depth_samples["kappa_vs_p3_ratio"] = depth_samples["kappa_used"] / max(p3_kappa_eff, 1e-12)
+        depth_samples["kappa_vs_p3_ratio"] = depth_samples["kappa_used"] / max(p3_touch_log_probability_distance_slope, 1e-12)
     return quote_samples, depth_samples, cooldown_samples
 
 
@@ -665,8 +665,8 @@ def summarize_campaign_decisions(
     campaigns: pd.DataFrame,
     decisions: pd.DataFrame,
     *,
-    p3_delta_star: float,
-    p3_kappa_eff: float,
+    p3_distance_touch_product_argmax: float,
+    p3_touch_log_probability_distance_slope: float,
 ) -> pd.DataFrame:
     result = campaigns.copy()
     if decisions.empty:
@@ -732,13 +732,13 @@ def summarize_campaign_decisions(
         frame["regime_spread_scale"] = frame["delta_after_regime"] / frame["delta_raw"].clip(
             lower=1e-12
         )
-    floor = 2.0 * p3_delta_star
+    floor = 2.0 * p3_distance_touch_product_argmax
     frame["p3_floor_bound"] = np.where(
         frame["delta_pre_cap"].notna(),
         ((frame["delta_pre_cap"] - floor).abs() <= 0.03).astype(float),
         math.nan,
     )
-    frame["kappa_vs_p3_ratio"] = frame["kappa_used"] / max(p3_kappa_eff, 1e-12)
+    frame["kappa_vs_p3_ratio"] = frame["kappa_used"] / max(p3_touch_log_probability_distance_slope, 1e-12)
     active = frame[pd.to_numeric(frame["campaign_id"], errors="coerce").fillna(0).gt(0)]
 
     rows: list[dict[str, Any]] = []
@@ -1099,8 +1099,8 @@ def _run_development_day(task: tuple[str, dict[str, Any]]) -> dict[str, Any]:
         campaigns = summarize_campaign_decisions(
             campaigns,
             decisions,
-            p3_delta_star=float(base["p3_delta_star"]),
-            p3_kappa_eff=float(base["p3_kappa_eff"]),
+            p3_distance_touch_product_argmax=float(base["p3_distance_touch_product_argmax"]),
+            p3_touch_log_probability_distance_slope=float(base["p3_touch_log_probability_distance_slope"]),
         )
         campaigns = classify_add_failure(campaigns)
     intervals = defense_pause_intervals(decisions, campaigns, window["trades"])
@@ -1199,7 +1199,7 @@ def run_development_replay(
     campaigns = pd.concat(campaign_parts, ignore_index=True) if campaign_parts else pd.DataFrame()
     defense = pd.concat(defense_parts, ignore_index=True) if defense_parts else pd.DataFrame()
     decisions = pd.DataFrame()
-    p3_model_path = Path(str(base["fill_probability_model_path"])).expanduser().resolve()
+    p3_model_path = Path(str(base["touch_probability_model_path"])).expanduser().resolve()
     metadata = {
         "days": days,
         "split_identity": split_identity,
@@ -1208,8 +1208,8 @@ def run_development_replay(
         "queue_sha256": _sha256(queue),
         "telemetry_sha256": _sha256(telemetry),
         "replay_contract_sha256": contract["contract_sha256"],
-        "p3_delta_star": float(base["p3_delta_star"]),
-        "p3_kappa_eff": float(base["p3_kappa_eff"]),
+        "p3_distance_touch_product_argmax": float(base["p3_distance_touch_product_argmax"]),
+        "p3_touch_log_probability_distance_slope": float(base["p3_touch_log_probability_distance_slope"]),
     }
     return campaigns, decisions, defense, metadata
 
@@ -1404,9 +1404,9 @@ def main(argv: list[str] | None = None) -> int:
     live_dir = args.live_dir.expanduser().resolve()
     config_payload = yaml.safe_load((live_dir / "live_config.yaml").read_text(encoding="utf-8"))
     strategy = config_payload["strategy"]
-    p3_payload = json.loads((live_dir / "fill_prob_params.json").read_text(encoding="utf-8"))
-    p3_delta_star = float(p3_payload["delta_star"])
-    p3_kappa_eff = float(p3_payload["kappa_eff"])
+    p3_payload = json.loads((live_dir / "touch_probability.json").read_text(encoding="utf-8"))
+    p3_distance_touch_product_argmax = float(p3_payload["distance_touch_product_argmax"])
+    p3_touch_log_probability_distance_slope = float(p3_payload["touch_log_probability_distance_slope"])
 
     trades = pd.read_csv(live_dir / "trades.csv.gz")
     quotes = pd.read_csv(live_dir / "quote_decisions.csv.gz")
@@ -1429,14 +1429,14 @@ def main(argv: list[str] | None = None) -> int:
         depth_samples,
         cooldown_samples,
         live_campaigns,
-        p3_delta_star=p3_delta_star,
-        p3_kappa_eff=p3_kappa_eff,
+        p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+        p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
     )
     live_campaigns = summarize_campaign_decisions(
         live_campaigns,
         live_decisions,
-        p3_delta_star=p3_delta_star,
-        p3_kappa_eff=p3_kappa_eff,
+        p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+        p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
     )
     for samples, prefix in (
         (quote_samples, "logged"),
@@ -1559,7 +1559,7 @@ def main(argv: list[str] | None = None) -> int:
             "fills": len(live_fills) - 1,
         },
         "config_sha256": _sha256(args.config.expanduser().resolve()),
-        "p3_sha256": _sha256(live_dir / "fill_prob_params.json"),
+        "p3_sha256": _sha256(live_dir / "touch_probability.json"),
         "queue_sha256": _sha256(args.queue_calibration_artifact.expanduser().resolve()),
         "replay_contract_sha256": development_metadata.get("replay_contract_sha256", ""),
         "development": development_metadata,

@@ -24,7 +24,7 @@ def test_common_side_policy_composes_live_guards():
             markout_ema=-5.0,
             markout_spread_scale=0.2,
             markout_reference=10.0,
-            microprice_shift_bps=0.6,
+            weighted_mid_proxy_shift_bps=0.6,
             l2_quote_flip_rate=0.40,
             l2_book_cancel_ratio=0.05,
             l2_near_depth_total=0.4,

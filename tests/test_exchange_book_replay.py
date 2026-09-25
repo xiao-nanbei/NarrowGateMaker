@@ -2010,8 +2010,13 @@ def test_tick_replay_seeds_queue_and_path_from_native_exchange_book() -> None:
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": 0.01,
+        "a_spread": 0.01,
+        "risk_per_order": 0.01,
+        "inventory_reference_qty": 1.0,
+        "execution_intensity_slope": 1.0,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 100.0,
@@ -2113,8 +2118,13 @@ def test_native_exchange_book_accepts_empirical_live_alignment_clock() -> None:
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": 0.01,
+        "a_spread": 0.01,
+        "risk_per_order": 0.01,
+        "inventory_reference_qty": 1.0,
+        "execution_intensity_slope": 1.0,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 100.0,
@@ -2197,8 +2207,13 @@ def test_order_activation_between_outer_events_uses_pre_activation_book() -> Non
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": 0.01,
+        "a_spread": 0.01,
+        "risk_per_order": 0.01,
+        "inventory_reference_qty": 1.0,
+        "execution_intensity_slope": 1.0,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 100.0,
@@ -2325,8 +2340,13 @@ def test_native_queue_updates_preserve_fill_and_ambiguity(
         }
     )
     params = {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": 0.01,
+        "a_spread": 0.01,
+        "risk_per_order": 0.01,
+        "inventory_reference_qty": 1.0,
+        "execution_intensity_slope": 1.0,
+        "risk_horizon_s": 1.0,
+        "trade_intensity_acceleration_spread_mult": 2.0,
         "order_size": order_qty,
         "max_inventory": 0.1 if partial_fill else 0.01,
         "requote_interval": 100.0,

@@ -158,8 +158,8 @@ def map_context_curves(
         mapping_valid[target] = valid.astype(np.uint8)
 
     return {
-        "delta_star": delta,
-        "kappa_eff": kappa,
+        "distance_touch_product_argmax": delta,
+        "touch_log_probability_distance_slope": kappa,
         "p_buy_at_delta_star": p_buy_at_delta,
         "p_sell_at_delta_star": p_sell_at_delta,
         "mapping_valid": mapping_valid,
@@ -200,8 +200,8 @@ def materialize_day_overlay(
     context_valid[positions] = 1
     mapped_valid = np.asarray(mapped_context["mapping_valid"], dtype=np.uint8) == 1
     valid_positions = positions[mapped_valid]
-    delta[valid_positions] = np.asarray(mapped_context["delta_star"])[mapped_valid]
-    kappa[valid_positions] = np.asarray(mapped_context["kappa_eff"])[mapped_valid]
+    delta[valid_positions] = np.asarray(mapped_context["distance_touch_product_argmax"])[mapped_valid]
+    kappa[valid_positions] = np.asarray(mapped_context["touch_log_probability_distance_slope"])[mapped_valid]
     mapping_valid[valid_positions] = 1
     p_buy[positions] = np.asarray(mapped_context["p_buy_at_delta_star"])
     p_sell[positions] = np.asarray(mapped_context["p_sell_at_delta_star"])
@@ -211,8 +211,8 @@ def materialize_day_overlay(
         raise ValueError(f"{day} conditional P3 kappa overlay is invalid")
     return {
         "ts_ms": timeline,
-        "delta_star": delta,
-        "kappa_eff": kappa,
+        "distance_touch_product_argmax": delta,
+        "touch_log_probability_distance_slope": kappa,
         "context_valid": context_valid,
         "mapping_valid": mapping_valid,
         "p_buy_at_delta_star": p_buy,
@@ -223,8 +223,8 @@ def materialize_day_overlay(
 def overlay_summary(overlay: Mapping[str, np.ndarray]) -> dict[str, Any]:
     context_valid = np.asarray(overlay["context_valid"], dtype=bool)
     mapping_valid = np.asarray(overlay["mapping_valid"], dtype=bool)
-    delta = np.asarray(overlay["delta_star"], dtype=np.float64)[mapping_valid]
-    kappa = np.asarray(overlay["kappa_eff"], dtype=np.float64)[mapping_valid]
+    delta = np.asarray(overlay["distance_touch_product_argmax"], dtype=np.float64)[mapping_valid]
+    kappa = np.asarray(overlay["touch_log_probability_distance_slope"], dtype=np.float64)[mapping_valid]
     side_gap = np.abs(
         np.asarray(overlay["p_buy_at_delta_star"], dtype=np.float64)[mapping_valid]
         - np.asarray(overlay["p_sell_at_delta_star"], dtype=np.float64)[mapping_valid]

@@ -61,13 +61,13 @@ def test_buy_actions_are_bounded_and_leave_other_side_implicit() -> None:
     }
 
     keep = apply_local_add_action(
-        action="prevent_over_widen", microprice_shift_bps=0.0, **common
+        action="prevent_over_widen", weighted_mid_proxy_shift_bps=0.0, **common
     )
     widen = apply_local_add_action(
-        action="widen_1tick", microprice_shift_bps=0.0, **common
+        action="widen_1tick", weighted_mid_proxy_shift_bps=0.0, **common
     )
     recenter = apply_local_add_action(
-        action="recenter_1tick", microprice_shift_bps=1.0, **common
+        action="recenter_1tick", weighted_mid_proxy_shift_bps=1.0, **common
     )
 
     assert keep.selected_price == pytest.approx(99.1)
@@ -87,7 +87,7 @@ def test_baseline_never_moves_an_already_valid_replay_price() -> None:
         mid=63_436.0,
         best_bid=63_435.8,
         best_ask=63_436.2,
-        microprice_shift_bps=1.0,
+        weighted_mid_proxy_shift_bps=1.0,
         tick=0.1,
         max_pair_spread=2.0,
     )
@@ -106,7 +106,7 @@ def test_sell_recenter_follows_local_price_direction_and_is_post_only() -> None:
         mid=100.0,
         best_bid=99.9,
         best_ask=100.2,
-        microprice_shift_bps=-1.0,
+        weighted_mid_proxy_shift_bps=-1.0,
         tick=0.1,
         max_pair_spread=2.0,
     )

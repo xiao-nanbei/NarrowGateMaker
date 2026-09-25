@@ -543,9 +543,9 @@ def _resolve_repo_or_relocated_path(raw: object) -> Path:
     if path.exists():
         return path
     try:
-        from data_paths import relocate_marketdata_path
+        from data_paths import resolve_portable_path
 
-        relocated = Path(relocate_marketdata_path(path)).expanduser().resolve()
+        relocated = Path(resolve_portable_path(path)).expanduser().resolve()
     except Exception:
         return path
     return relocated

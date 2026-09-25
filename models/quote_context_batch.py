@@ -30,7 +30,7 @@ COMMON_CPP_COLUMNS = [
     "raw_quote_skew",
     "near_depth_total",
     "book_imb",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "kappa_before_depth",
     "kappa_used",
     "depth_tox_mult",
@@ -58,7 +58,7 @@ SIDE_CPP_COLUMNS = [
     "adverse_markout",
     "adverse_direction",
     "adverse_ret",
-    "adverse_microprice",
+    "adverse_weighted_mid_proxy",
     "adverse_thin_depth",
     "defense_guard",
     "defense_pause",
@@ -185,7 +185,7 @@ def _add_diffs(enriched: pd.DataFrame) -> None:
         ("raw_half_spread", "cpp_raw_half_spread", "cpp_raw_half_spread_diff"),
         ("near_depth_total", "cpp_near_depth_total", "cpp_near_depth_total_diff"),
         ("book_imb", "cpp_book_imb", "cpp_book_imb_diff"),
-        ("microprice_shift_bps", "cpp_microprice_shift_bps", "cpp_microprice_shift_bps_diff"),
+        ("weighted_mid_proxy_shift_bps", "cpp_microprice_shift_bps", "cpp_microprice_shift_bps_diff"),
     ]
     for left, right, diff in comparisons:
         if left in enriched and right in enriched:
@@ -238,7 +238,7 @@ def enrich_orders_with_cpp_quote_context(
         tick_size=bt.TICK,
         lot_size=bt.LOT_SIZE,
         use_ml=True,
-        use_depth_microprice=use_depth,
+        use_depth_weighted_mid_proxy=use_depth,
         use_depth_kappa=use_depth,
     )
     work["cpp_quote_context_available"] = False

@@ -4,8 +4,8 @@
     14.0,
     30.0
   ],
-  "delta_star": 14.0,
-  "kappa_eff": 0.067,
+  "distance_touch_product_argmax": 14.0,
+  "touch_log_probability_distance_slope": 0.067,
   "metadata": {
     "authority": "public_dry_run_only",
     "distance_unit": "USDC_per_BTC",
@@ -21,5 +21,5 @@
     0.2,
     0.01
   ],
-  "schema_version": "narrowgate_p3_touch_calibration.v3"
+  "schema_version": "narrowgate_p3_touch_calibration.v4"
 }

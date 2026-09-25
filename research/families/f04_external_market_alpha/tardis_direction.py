@@ -377,6 +377,8 @@ class DirectionModel:
                 != plan["prediction"]["frozen_F03_inf_model_manifest_sha256"]):
             raise ValueError("F04 model does not belong to this frozen plan")
         spec = manifest["arms"][arm]
+        if spec.get("target") != LABEL:
+            raise ValueError("F04 model requires the current touch-conditioned direction target")
         path = root / f"{arm}.txt"
         if _sha(path) != spec["model_sha256"]:
             raise ValueError("F04 model bytes changed")

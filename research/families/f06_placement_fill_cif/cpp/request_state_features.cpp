@@ -134,7 +134,7 @@ RequestStateFeatureResult compute_request_state_features(
     out.mid.assign(rows, nan);
     out.bbo_spread_ticks.assign(rows, nan);
     out.book_imbalance.assign(rows, nan);
-    out.microprice_shift_bps.assign(rows, nan);
+    out.weighted_mid_proxy_shift_bps.assign(rows, nan);
     out.l2_near_depth_total.assign(rows, nan);
     out.l2_quote_flip_rate.assign(rows, nan);
     out.l2_book_refresh_ratio.assign(rows, nan);
@@ -287,7 +287,7 @@ RequestStateFeatureResult compute_request_state_features(
                 out.book_imbalance[row] = safe_ratio(
                     bid_size - ask_size, size_total
                 );
-                out.microprice_shift_bps[row] =
+                out.weighted_mid_proxy_shift_bps[row] =
                     (microprice - mid) / mid * 10'000.0;
             }
         }

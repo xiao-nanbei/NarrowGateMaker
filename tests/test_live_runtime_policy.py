@@ -1663,7 +1663,7 @@ def test_duration_contracts_reject_nonfinite_values(
 
 def test_side_bbo_floor_rejects_later_inward_spread_compression() -> None:
     cfg = Config()
-    cfg.strategy.historical_p3_scalar_adapter_enabled = False
+    cfg.strategy.p3_pair_spread_projection_enabled = False
     cfg.strategy.p3_side_bbo_floor_enabled = True
     cfg.strategy.spread_cap_mode = "compress"
 

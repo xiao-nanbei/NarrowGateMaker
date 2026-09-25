@@ -13,6 +13,7 @@ import data_paths
 from live.config import Config, to_backtest_params
 from models.backtest_config import (
     COOLDOWN_POLICY_PARAM_KEYS,
+    add_touch_probability_params,
     build_backtest_base_params,
     load_live_config_as_params,
     load_tick_base_params,
@@ -240,7 +241,7 @@ def test_replay_locators_preserve_original_config_and_strategy(tmp_path, monkeyp
     monkeypatch.delenv("MM_MODEL_DIR", raising=False)
     params = load_tick_base_params(
         config_path=config, locator_projection_path=projection,
-        include_fill_probability=False, include_queue_calibration=False,
+        include_touch_probability=False, include_queue_calibration=False,
     )
     assert config.read_bytes() == before
     assert params["eta_inventory"] == params["a_spread"] == params["risk_per_order"] == 0.023
@@ -285,5 +286,19 @@ def test_replay_locators_reject_environment_model_replacement(tmp_path, monkeypa
     with pytest.raises(ValueError, match="MM_MODEL_DIR conflicts"):
         load_tick_base_params(
             config_path=config, locator_projection_path=projection,
-            include_fill_probability=False, include_queue_calibration=False,
+            include_touch_probability=False, include_queue_calibration=False,
         )
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_touch_calibration_admission_never_disables_invalid_model(tmp_path, present):
+    path = tmp_path / "touch_probability.json"
+    if present:
+        path.write_text(json.dumps({"schema_version": "fill_probability.v1"}))
+    with pytest.raises(RuntimeError, match="touch calibration unavailable"):
+        add_touch_probability_params({}, model_path=path)
+
+
+def test_retired_touch_loader_name_is_absent():
+    from models import backtest_config
+    assert not hasattr(backtest_config, "add_fill_probability_params")

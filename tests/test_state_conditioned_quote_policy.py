@@ -30,7 +30,7 @@ def _artifact(*, status: str = "shadow_only", uplift_lcb: float = 0.2) -> dict:
         "actions": list(LOCAL_QUOTE_ACTIONS),
         "features": [
             {"name": "inventory_ratio", "mean": 0.0, "scale": 1.0},
-            {"name": "microprice_shift_bps", "mean": 0.0, "scale": 2.0},
+            {"name": "weighted_mid_proxy_shift_bps", "mean": 0.0, "scale": 2.0},
         ],
         "gates": {
             "min_support_rows": 100,
@@ -49,7 +49,7 @@ def _artifact(*, status: str = "shadow_only", uplift_lcb: float = 0.2) -> dict:
                 },
                 "recenter_1tick": {
                     "intercept": 0.1,
-                    "coefficients": {"microprice_shift_bps": 0.5},
+                    "coefficients": {"weighted_mid_proxy_shift_bps": 0.5},
                     "support_rows": 500,
                     "behavior_probability_floor": 0.1,
                     "uplift_lcb": uplift_lcb,
@@ -67,7 +67,7 @@ def test_shadow_reports_candidate_but_executes_baseline() -> None:
     decision = policy.decide(
         side="BUY",
         inventory_role="add",
-        features={"inventory_ratio": 0.4, "microprice_shift_bps": 2.0},
+        features={"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0},
         decision_ts_ns=1_000_000_000,
         feature_ready_ts_ns=990_000_000,
     )
@@ -87,7 +87,7 @@ def test_active_mechanics_do_not_interpret_research_annotation_as_permission(sta
     decision = policy.decide(
         side="BUY",
         inventory_role="add",
-        features={"inventory_ratio": 0.4, "microprice_shift_bps": 2.0},
+        features={"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0},
         decision_ts_ns=1_000_000_000,
         feature_ready_ts_ns=990_000_000,
     )
@@ -99,10 +99,10 @@ def test_active_mechanics_do_not_interpret_research_annotation_as_permission(sta
 @pytest.mark.parametrize(
     ("role", "ready_ts", "features", "reason"),
     [
-        ("reducing", 990_000_000, {"inventory_ratio": 0.4, "microprice_shift_bps": 2.0}, "unsupported_surface"),
-        ("add", 1_001_000_000, {"inventory_ratio": 0.4, "microprice_shift_bps": 2.0}, "future_feature"),
-        ("add", 900_000_000, {"inventory_ratio": 0.4, "microprice_shift_bps": 2.0}, "stale_feature"),
-        ("add", 990_000_000, {"inventory_ratio": 0.4}, "missing_feature:microprice_shift_bps"),
+        ("reducing", 990_000_000, {"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0}, "unsupported_surface"),
+        ("add", 1_001_000_000, {"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0}, "future_feature"),
+        ("add", 900_000_000, {"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0}, "stale_feature"),
+        ("add", 990_000_000, {"inventory_ratio": 0.4}, "missing_feature:weighted_mid_proxy_shift_bps"),
     ],
 )
 def test_invalid_or_unsupported_state_falls_back_to_baseline(
@@ -136,7 +136,7 @@ def test_overlap_and_uplift_lower_bound_are_hard_gates() -> None:
     decision = policy.decide(
         side="BUY",
         inventory_role="add",
-        features={"inventory_ratio": 0.4, "microprice_shift_bps": 2.0},
+        features={"inventory_ratio": 0.4, "weighted_mid_proxy_shift_bps": 2.0},
         decision_ts_ns=1_000_000_000,
         feature_ready_ts_ns=990_000_000,
     )
@@ -239,7 +239,7 @@ def test_live_shadow_uses_same_surface_and_does_not_move_quote() -> None:
         side="BUY",
         toxicity=0.4,
         markout_ema=-0.2,
-        microprice_shift_bps=2.0,
+        weighted_mid_proxy_shift_bps=2.0,
         l2_near_depth_total=2.0,
     )
 

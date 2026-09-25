@@ -95,7 +95,7 @@ PARAMETER_SPECS: tuple[ParameterSpec, ...] = (
                   note="Joint (eta_inventory, a_spread, risk_per_order) points; inventory_reference_qty=1 BTC. Not independent axes."),
     ParameterSpec("strategy.a_spread", "a_spread", "active", "spread", True, True, note="Declared coefficient; varied only in the joint quote points."),
     ParameterSpec("strategy.risk_per_order", "risk_per_order", "active", "spread", True, True, note="Explicit spread coefficient; varied only in the joint quote points."),
-    ParameterSpec("strategy.kappa", "kappa", "fallback", "spread", True, True, search_values=(), note="Fallback inverse-price distance-decay coefficient. Current live/tick quote path uses the local P3 log-touch slope when available; it is not an event arrival rate."),
+    ParameterSpec("strategy.execution_intensity_slope", "execution_intensity_slope", "fallback", "spread", True, True, search_values=(), note="Fallback inverse-price distance-decay coefficient. Current live/tick quote path uses the local P3 log-touch slope when available; it is not an event arrival rate."),
     ParameterSpec("strategy.order_size", "order_size", "active", "sizing", True, True, search_values=(0.001, 0.002), note="Per-order size; compare with risk-normalized campaign metrics, not raw PnL alone."),
     ParameterSpec("strategy.max_inventory", "max_inventory", "active", "sizing", True, True, search_values=(0.01, 0.016, 0.02, 0.026, 0.03), note="Inventory hard budget."),
     ParameterSpec("strategy.kappa_ratio", "kappa_ratio", "active", "spread", True, True, search_values=(1.0, 1.1, 1.25, 1.5, 1.75), note="Primary half-spread shape parameter."),
@@ -150,10 +150,10 @@ MODEL_DIR_VARIANTS: tuple[str, ...] = (
 )
 
 LIVE_ACTIVE_SOBOL_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
-    # Quote/spread/fill-intensity axes.  p3_kappa_eff is not a live YAML leaf:
-    # it normally comes from fill_prob_params.json.  We still sample it here
-    # because the live quote path uses it ahead of the fallback `strategy.kappa`.
-    ("p3_kappa_eff", (0.040, 0.045, 0.049923, 0.055, 0.060, 0.065)),
+    # Quote/spread/fill-intensity axes.  p3_touch_log_probability_distance_slope is not a live YAML leaf:
+    # it normally comes from touch_probability.json.  We still sample it here
+    # because the live quote path uses it ahead of the fallback `strategy.execution_intensity_slope`.
+    ("p3_touch_log_probability_distance_slope", (0.040, 0.045, 0.049923, 0.055, 0.060, 0.065)),
     ("quote_coefficients", ((.040, .040, .040), (.046, .046, .046), (.050, .050, .050), (.056, .056, .056), (.062, .062, .062), (.068, .068, .068))),
     ("kappa_ratio", (1.10, 1.25, 1.50, 1.65, 1.75)),
     ("depth_kappa_ratio", (0.50, 0.75, 1.00)),
@@ -200,7 +200,7 @@ LIVE_ACTIVE_SOBOL_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
 # to change the fill/campaign distribution.  Keep those axes fixed here and
 # search only the closest quote/guard neighborhood before any retained run.
 LOCAL_MECHANISM_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
-    ("p3_kappa_eff", (0.0475, 0.049923, 0.0525)),
+    ("p3_touch_log_probability_distance_slope", (0.0475, 0.049923, 0.0525)),
     ("quote_coefficients", ((.047, .047, .047), (.050, .050, .050), (.053, .053, .053))),
     ("kappa_ratio", (1.40, 1.50, 1.60)),
     ("depth_kappa_ratio", (0.75,)),
@@ -752,7 +752,7 @@ def live_active_sobol_arms(
     This is the broad-search surface used after the live/replay baseline repair.
     It differs from ``sampled_arms`` in three important ways:
 
-    * it includes ``p3_kappa_eff`` because the quote path uses effective kappa
+    * it includes ``p3_touch_log_probability_distance_slope`` because the quote path uses effective kappa
       from the fill-probability model rather than the legacy YAML fallback kappa;
     * it samples ``max_spread_bps`` and ``dynamic_cap_base_bps`` as one paired
       cap axis, avoiding artificial cap/base mismatches;
@@ -945,7 +945,7 @@ def _local_mechanism_axis_values(
             or 0.0
         )
         return _local_numeric_triplet(center, rel=0.0, abs_step=2.0, floor=1.0)
-    if key == "p3_kappa_eff":
+    if key == "p3_touch_log_probability_distance_slope":
         center = float(baseline_hints.get(key, 0.0) or 0.0)
         if center <= 0.0:
             return (0.0, 0.025, 0.05)

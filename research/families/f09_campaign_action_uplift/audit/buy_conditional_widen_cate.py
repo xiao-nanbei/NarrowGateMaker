@@ -68,7 +68,7 @@ FEATURES = (
     "quote_delta_to_bbo_ticks",
     "exact_l2_spread_bps",
     "queue_log1p_ahead",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "toxicity",
     "markout_ema",
     "l2_quote_flip_rate",

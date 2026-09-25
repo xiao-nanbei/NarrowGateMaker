@@ -31,7 +31,7 @@ def _policy_authority(paths: dict[str, Path]) -> dict[str, dict[str, str]]:
 
 def _write_live_p3(path: Path) -> None:
     path.write_text(json.dumps({
-        "schema_version": "narrowgate_p3_touch_calibration.v3",
+        "schema_version": "narrowgate_p3_touch_calibration.v4",
         "model_type": "empirical_survival",
         "delta_grid": [0.1, 14.0, 30.0],
         "probability_grid": [0.8, 0.2, 0.01],
@@ -41,8 +41,8 @@ def _write_live_p3(path: Path) -> None:
             "side": "pooled_buy_sell",
             "queue_included": False,
         },
-        "delta_star": 14.0,
-        "kappa_eff": 0.067,
+        "distance_touch_product_argmax": 14.0,
+        "touch_log_probability_distance_slope": 0.067,
     }), encoding="utf-8")
 
 
@@ -319,7 +319,7 @@ def test_ml_off_startup_rejects_unusable_p3_without_optional_preflight(
         p3["metadata"]["horizon_s"] = 0.0
         error = "horizon_s"
     else:
-        p3["delta_star"] = -1.0
+        p3["distance_touch_product_argmax"] = -1.0
         error = "positive"
     p3_path.write_text(json.dumps(p3), encoding="utf-8")
     with pytest.raises(ValueError, match=error):
@@ -398,7 +398,7 @@ def _engine_with_active_fill_cooldowns() -> MakerEngine:
     engine._toxicity_probs = lambda pred: (0.0, 0.0)
     engine._current_l2_policy_metrics = lambda mid: {
         "depth_age_s": 0.0,
-        "microprice_shift_bps": 0.0,
+        "weighted_mid_proxy_shift_bps": 0.0,
         "l2_quote_flip_rate": 0.0,
         "l2_book_refresh_ratio": 1.0,
         "l2_book_cancel_ratio": 0.0,

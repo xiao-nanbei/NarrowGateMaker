@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import LEGACY_MARKETDATA_ROOT, relocate_marketdata_path
+
 from models import backtest_tick as bt
 from models.exchange_book_replay import CryptoHFTExchangeBookTape
 from research.families.f09_campaign_action_uplift.audit import (
@@ -112,14 +112,7 @@ def canonical_spec_sha256(payload: Mapping[str, Any]) -> str:
     return canonical_sha256(normalized)
 
 
-def _relocate_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _relocate_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_relocate_value(item) for item in value]
-    if isinstance(value, str) and value.startswith(str(LEGACY_MARKETDATA_ROOT)):
-        return str(relocate_marketdata_path(value))
-    return value
+
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -266,7 +259,7 @@ def _runtime_source_contract(spec: Mapping[str, Any]) -> dict[str, Any]:
     identity = spec["source_contract_identity"]
     source_path = Path(str(identity["path"])).expanduser().resolve()
     _require_identity(source_path, str(identity["sha256"]), "source replay contract")
-    source = _relocate_value(_load_json(source_path))
+    source = _load_json(source_path)
     expected_days = list(map(str, spec["panels"]["development_days"]))
     if list(map(str, source["panels"]["development_days"])) != expected_days:
         raise ValueError("BUY q90 Development denominator drifted from source contract")

@@ -75,7 +75,7 @@ DEFAULT_FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     FeatureSpec("toxicity"),
     FeatureSpec("markout_ema"),
     FeatureSpec("depth_age_s"),
-    FeatureSpec("microprice_shift_bps"),
+    FeatureSpec("weighted_mid_proxy_shift_bps"),
     FeatureSpec("l2_quote_flip_rate"),
     FeatureSpec("l2_book_refresh_ratio"),
     FeatureSpec("l2_book_cancel_ratio"),

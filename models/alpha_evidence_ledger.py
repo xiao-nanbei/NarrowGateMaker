@@ -165,7 +165,7 @@ def _guard_state(frame: pd.DataFrame) -> pd.Series:
         | _bool_col(frame, "defense_pause")
         | _bool_col(frame, "defense_markout")
         | _bool_col(frame, "defense_direction")
-        | _bool_col(frame, "defense_microprice")
+        | _bool_col(frame, "defense_weighted_mid_proxy")
     )
     local = _bool_col(frame, "local_extreme_guard") | _bool_col(frame, "local_extreme_pause")
     out = pd.Series("none", index=frame.index, dtype=object)

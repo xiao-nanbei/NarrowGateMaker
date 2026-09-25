@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from semantic_bundle_fixtures import write_bundle, bind_changed_metadata
 
 from features.feature_engineer import (
     _TS_NS,
@@ -18,9 +19,6 @@ from models.backtest_tick import simulate_tick
 from strategy.inventory_manager import InventoryManager
 from strategy.maker_engine import _commission_in_quote_asset
 from strategy.model_contract import (
-    REQUIRED_FEATURE_DAG_ID,
-    REQUIRED_FEATURE_DAG_SHA256,
-    REQUIRED_FEATURE_SEMANTICS_VERSION,
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
     validate_model_bundle,
@@ -224,41 +222,20 @@ def test_order_manager_preserves_commission_asset_for_fill_callback() -> None:
 
 
 def _write_contract_bundle(root: Path, *, vol_semantics: str) -> None:
-    root.mkdir(parents=True)
-    for head in REQUIRED_MODEL_HEADS:
-        (root / f"{head}.txt").write_text("placeholder", encoding="utf-8")
-        metadata = {
-            "symbol": "BTCUSDC",
-            "feature_cols": ["close"],
-            "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
-            "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-            "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
-            "calendar_timestamp_semantics": (
-                "preserve_datetime_physical_unit_ms_us_ns_before_epoch_conversion"
-            ),
-            "label_semantics_version": 3,
-            "label_window_semantics": "left_closed_right_open_[t,t+h)",
-            "feature_manifest_sha256": "feature-manifest-sha",
-            "volatility_unit_contract": absolute_price_variance_unit_contract(
-                "BTCUSDC"
-            ),
-        }
-        if head.startswith("absolute_price_variance_rate_"):
-            metadata["label_semantics"] = vol_semantics
-        (root / f"{head}_meta.json").write_text(json.dumps(metadata), encoding="utf-8")
+    write_bundle(root, variance_semantics=vol_semantics)
 
 
 def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path) -> None:
     valid = tmp_path / "valid"
     _write_contract_bundle(valid, vol_semantics="fixed_forward_h_absolute_price_variance")
-    assert set(validate_model_bundle(valid)) == set(REQUIRED_MODEL_HEADS)
-    with pytest.raises(ValueError, match="runtime symbol ETHUSDC"):
-        validate_model_bundle(valid, expected_symbol="ETHUSDC")
+    assert set(validate_model_bundle(valid, allow_research_only=True)) == set(REQUIRED_MODEL_HEADS)
+    with pytest.raises(ValueError, match="input contract mismatch"):
+        validate_model_bundle(valid, expected_symbol="ETHUSDC", allow_research_only=True)
 
     invalid = tmp_path / "invalid"
     _write_contract_bundle(invalid, vol_semantics="log_return_variance")
-    with pytest.raises(ValueError, match="label_semantics"):
-        validate_model_bundle(invalid)
+    with pytest.raises(ValueError, match="variance label mismatch"):
+        validate_model_bundle(invalid, allow_research_only=True)
 
     invalid_units = tmp_path / "invalid_units"
     _write_contract_bundle(
@@ -269,17 +246,19 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["volatility_unit_contract"]["base_asset"] = "ETH"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+    bind_changed_metadata(invalid_units, "absolute_price_variance_rate_10000ms")
     with pytest.raises(ValueError, match="volatility_unit_contract"):
-        validate_model_bundle(invalid_units)
+        validate_model_bundle(invalid_units, allow_research_only=True)
 
     mixed = tmp_path / "mixed"
     _write_contract_bundle(mixed, vol_semantics="fixed_forward_h_absolute_price_variance")
     meta_path = mixed / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-    metadata["feature_manifest_sha256"] = "different-feature-manifest"
+    metadata["train_only_selection"]["feature_manifest_sha256"] = "different-feature-manifest"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
-    with pytest.raises(ValueError, match="one feature manifest"):
-        validate_model_bundle(mixed)
+    bind_changed_metadata(mixed, "touch_conditioned_up_probability_10000ms")
+    with pytest.raises(ValueError, match="mixed training identity"):
+        validate_model_bundle(mixed, allow_research_only=True)
 
 
 def test_ml_off_prediction_does_not_reuse_dimensionless_realized_volatility() -> None:

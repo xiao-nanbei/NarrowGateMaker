@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 
 from live.config import Config  # noqa: E402
 from strategy.maker_engine import MakerEngine  # noqa: E402
-from strategy.quote_core import microprice_from_book  # noqa: E402
+from strategy.quote_core import weighted_mid_proxy_from_book  # noqa: E402
 from strategy.signal import SignalEngine  # noqa: E402
 
 
@@ -129,7 +129,7 @@ def run_synthetic(iterations: int) -> dict[str, object]:
             expected_mid = 0.5 * (snapshot.best_bid + snapshot.best_ask)
             if abs(snapshot.mid - expected_mid) > tolerance:
                 mid_identity_violations += 1
-            microprice = microprice_from_book(snapshot.bids, snapshot.asks, levels=3)
+            microprice = weighted_mid_proxy_from_book(snapshot.bids, snapshot.asks, levels=3)
             if not (
                 snapshot.best_bid - tolerance
                 <= microprice

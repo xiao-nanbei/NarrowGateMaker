@@ -317,7 +317,7 @@ def resolve_config_p3(quote_config_path: Path) -> dict[str, Any]:
     model_dir = Path(model_dir_raw).expanduser()
     if not model_dir.is_absolute():
         model_dir = REPO_ROOT / model_dir
-    p3_path = (model_dir / "fill_prob_params.json").resolve(strict=True)
+    p3_path = (model_dir / "touch_probability.json").resolve(strict=True)
     return file_identity(p3_path)
 
 
@@ -329,7 +329,7 @@ def validate_explicit_p3_identity(
     resolved = resolve_config_p3(quote_config_path)
     if explicit != resolved:
         raise ExecutionIdentityError(
-            "explicit P3 artifact differs from config-resolved ml.model_dir/fill_prob_params.json"
+            "explicit P3 artifact differs from config-resolved ml.model_dir/touch_probability.json"
         )
     return explicit
 

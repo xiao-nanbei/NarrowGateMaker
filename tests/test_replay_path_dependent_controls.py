@@ -36,8 +36,8 @@ def _canonical_sha256(value) -> str:
 
 def _base_params() -> dict[str, object]:
     return {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 1.0,
@@ -119,7 +119,7 @@ def test_replay_final_p3_floor_survives_post_fill_shift_and_forces_unsafe_replac
     params = _base_params()
     params.update(
         {
-            "kappa": 100.0,
+            "execution_intensity_slope": 100.0,
             "initial_inventory": 0.004,
             "initial_entry_price": 100.0,
             "requote_threshold_bps": 100.0,
@@ -130,19 +130,19 @@ def test_replay_final_p3_floor_survives_post_fill_shift_and_forces_unsafe_replac
             "post_fill_quote_response_mode": "inventory_shift",
             "post_fill_inventory_ticks_per_order_unit": 2.0,
             "post_fill_inventory_max_ticks": 20.0,
-            "p3_delta_star": 0.5,
-            "p3_kappa_eff": 100.0,
+            "p3_distance_touch_product_argmax": 0.5,
+            "p3_touch_log_probability_distance_slope": 100.0,
             "p3_side_bbo_floor_enabled": True,
-            "historical_p3_scalar_adapter_enabled": False,
-            "fill_probability_event_type": "touch",
-            "fill_probability_horizon_s": 10.0,
-            "fill_probability_distance_origin": (
+            "p3_pair_spread_projection_enabled": False,
+            "touch_probability_event_type": "touch",
+            "touch_probability_horizon_s": 10.0,
+            "touch_probability_distance_origin": (
                 "same_side_best_bid_or_ask_at_window_start"
             ),
-            "fill_probability_distance_unit": "USDC_per_BTC",
-            "fill_probability_side": "pooled_buy_sell",
-            "fill_probability_queue_included": False,
-            "fill_probability_artifact_sha256": "b" * 64,
+            "touch_probability_distance_unit": "USDC_per_BTC",
+            "touch_probability_side": "pooled_buy_sell",
+            "touch_probability_queue_included": False,
+            "touch_probability_artifact_sha256": "b" * 64,
         }
     )
     trades = _trades(

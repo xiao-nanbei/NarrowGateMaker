@@ -42,8 +42,8 @@ def test_pair_curve_mapping_matches_exponential_optimum_and_slope():
     )
 
     assert mapped["mapping_valid"].tolist() == [1, 1]
-    assert mapped["delta_star"].tolist() == [10.0, 10.0]
-    np.testing.assert_allclose(mapped["kappa_eff"], 0.1, atol=1e-12)
+    assert mapped["distance_touch_product_argmax"].tolist() == [10.0, 10.0]
+    np.testing.assert_allclose(mapped["touch_log_probability_distance_slope"], 0.1, atol=1e-12)
     assert np.all(
         mapped["p_buy_at_delta_star"] > mapped["p_sell_at_delta_star"]
     )
@@ -66,8 +66,8 @@ def test_day_overlay_uses_v2_fallback_outside_valid_context():
 
     assert len(overlay["ts_ms"]) == 8640
     assert int(overlay["mapping_valid"].sum()) == 2
-    assert np.count_nonzero(overlay["delta_star"] == 14.0) == 8638
-    assert np.count_nonzero(overlay["kappa_eff"] == 0.067) == 8638
+    assert np.count_nonzero(overlay["distance_touch_product_argmax"] == 14.0) == 8638
+    assert np.count_nonzero(overlay["touch_log_probability_distance_slope"] == 0.067) == 8638
 
 
 def test_grid_edge_optimum_is_invalid_for_central_slope_mapping():
@@ -77,5 +77,5 @@ def test_grid_edge_optimum_is_invalid_for_central_slope_mapping():
         distance_grid=np.arange(0.5, 20.0 + 0.5, 0.5),
     )
 
-    assert mapped["delta_star"].tolist() == [20.0, 20.0]
+    assert mapped["distance_touch_product_argmax"].tolist() == [20.0, 20.0]
     assert mapped["mapping_valid"].tolist() == [0, 0]

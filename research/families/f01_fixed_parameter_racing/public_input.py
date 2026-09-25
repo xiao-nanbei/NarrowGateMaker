@@ -16,14 +16,13 @@ def _validate_effective_quote_change(common_params, changes):
             raise ValueError(f"{name} must be finite")
         if value == common_params[name]:
             continue  # The explicitly named B0 arm is allowed.
-        if name in {"eta_inventory", "risk_per_order", "a_spread", "kappa"} and value <= 0:
+        if name in {"eta_inventory", "risk_per_order", "a_spread", "execution_intensity_slope"} and value <= 0:
             raise ValueError(f"{name} must be positive")
-        if name == "kappa" and (
-            common_params.get("execution_intensity_slope") is not None
-            or (common_params.get("historical_p3_scalar_adapter_enabled", True)
-                and float(common_params.get("p3_kappa_eff", 0.0)) > 0.0)
+        if name == "execution_intensity_slope" and (
+            common_params.get("p3_pair_spread_projection_enabled", True)
+            and float(common_params.get("p3_touch_log_probability_distance_slope", 0.0)) > 0.0
         ):
-            raise ValueError("kappa is masked by the effective distance-decay coefficient")
+            raise ValueError("execution_intensity_slope is masked by the P3 touch projection")
         if name == "max_spread_bps" and (
             common_params.get("dynamic_cap_enabled", False)
             and float(common_params.get("dynamic_cap_base_bps", 0.0)) > 0.0
@@ -34,11 +33,11 @@ def _validate_effective_quote_change(common_params, changes):
 def _require_frozen_f03_p3(common_params):
     """An F03-model comparison must not silently lose its frozen P3 projection."""
     if not (
-        common_params.get("fill_probability_calibrated") is True
+        common_params.get("touch_probability_calibrated") is True
         and common_params.get("p3_identity_required") is True
-        and float(common_params.get("p3_delta_star", 0.0)) > 0.0
-        and float(common_params.get("p3_kappa_eff", 0.0)) > 0.0
-        and len(str(common_params.get("fill_probability_artifact_sha256", ""))) == 64
+        and float(common_params.get("p3_distance_touch_product_argmax", 0.0)) > 0.0
+        and float(common_params.get("p3_touch_log_probability_distance_slope", 0.0)) > 0.0
+        and len(str(common_params.get("touch_probability_artifact_sha256", ""))) == 64
     ):
         raise ValueError("F03 model replay requires the loaded frozen P3 identity")
 
@@ -56,7 +55,7 @@ def iter_parameter_candidates(root, candidates, *, common_params, model_dir=None
     bundle.source_paths()
     if not candidates:
         raise ValueError("explicit candidates required")
-    allowed = {"eta_inventory", "a_spread", "risk_per_order", "kappa", "max_spread_bps"}
+    allowed = {"eta_inventory", "a_spread", "risk_per_order", "execution_intensity_slope", "max_spread_bps"}
     for name, changes in candidates.items():
         if not name or not changes or set(changes) - allowed:
             raise ValueError("candidate may vary only declared quote parameters")

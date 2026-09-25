@@ -344,12 +344,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -834,7 +834,7 @@ void bind_request_state_features(py::module_& m) {
             out["mid"] = vector_array(result.mid);
             out["bbo_spread_ticks"] = vector_array(result.bbo_spread_ticks);
             out["book_imbalance"] = vector_array(result.book_imbalance);
-            out["microprice_shift_bps"] = vector_array(result.microprice_shift_bps);
+            out["weighted_mid_proxy_shift_bps"] = vector_array(result.weighted_mid_proxy_shift_bps);
             out["l2_near_depth_total"] = vector_array(result.l2_near_depth_total);
             out["l2_quote_flip_rate"] = vector_array(result.l2_quote_flip_rate);
             out["l2_book_refresh_ratio"] = vector_array(result.l2_book_refresh_ratio);

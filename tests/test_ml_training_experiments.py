@@ -19,17 +19,9 @@ from research.families.f03_causal_13_head.ml_model import (
     validate_training_request,
 )
 from strategy.model_contract import (
-    ABSOLUTE_PRICE_VARIANCE_SEMANTICS,
-    DEPLOYMENT_AUTHORIZATION_SCHEMA,
-    LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA,
-    LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
-    PRIVATE_DEPLOYMENT_AUTHORITY,
-    REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
     REQUIRED_FEATURE_DAG_ID,
     REQUIRED_FEATURE_DAG_SHA256,
     REQUIRED_FEATURE_SEMANTICS_VERSION,
-    REQUIRED_LABEL_SEMANTICS_VERSION,
-    REQUIRED_LABEL_WINDOW_SEMANTICS,
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
     resolve_model_authorization_manifest,
@@ -41,7 +33,8 @@ from strategy.model_contract import (
 def test_training_metadata_keeps_execution_count_unit_from_actual_bar_inputs(unit):
     payload = {"bar_source": {"daily_files": [{"trade_count_unit": unit}, {"trade_count_unit": unit}]}}
     assert ml_model._execution_count_unit_from_panel(payload) == unit
-    assert ml_model._execution_count_unit_from_panel({}) == "native_aggregate_packet"
+    with pytest.raises(ValueError, match="mixed or unknown"):
+        ml_model._execution_count_unit_from_panel({})
 
 
 @pytest.mark.parametrize("units", [["individual_execution", "native_aggregate_packet"], ["UNKNOWN"], [None]])
@@ -56,7 +49,8 @@ def test_reference_count_unit_is_independent_and_preserved(unit):
     source = {"symbol": "BTCUSDT", "daily_files": [
         {"symbol": "BTCUSDT", "trade_count_unit": unit}]}
     assert ml_model._reference_count_unit_from_panel({"reference_bar_source": source}) == unit
-    assert ml_model._reference_count_unit_from_panel({}) == "native_aggregate_packet"
+    with pytest.raises(ValueError, match="provenance"):
+        ml_model._reference_count_unit_from_panel({})
 
 
 @pytest.mark.parametrize("rows", [[], [{"symbol": "BTCUSDT", "trade_count_unit": "UNKNOWN"}],
@@ -68,29 +62,23 @@ def test_reference_count_unknown_mixed_or_wrong_symbol_cannot_be_fitted_as_indiv
         ml_model._reference_count_unit_from_panel({"reference_bar_source": {"symbol": "BTCUSDT", "daily_files": rows}})
 
 
-def test_model_identity_keeps_reference_observation_limits_without_fitting(tmp_path, monkeypatch):
+def test_retired_reference_panel_is_not_implicitly_admitted(tmp_path, monkeypatch):
     units = absolute_price_variance_unit_contract("BTCUSDC")
     payload = {
         "schema_version": 3, "symbol": "BTCUSDC", "feature_timestamp_semantics": "left_label_bucket_end",
         "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
         "feature_dag_id": REQUIRED_FEATURE_DAG_ID, "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
         "volatility_unit_contract": units, "label_volatility_units": units["variance_units"],
-        "label_quote_calibration": {"schema_version": "narrowgate_p3_touch_calibration.v3",
-            "model_type": "empirical_survival", "sha256": "synthetic", "p3_delta_star": 1, "p3_kappa_eff": 1},
+        "label_quote_calibration": {"schema_version": "narrowgate_p3_touch_calibration.v4",
+            "model_type": "empirical_survival", "sha256": "synthetic", "p3_distance_touch_product_argmax": 1, "p3_touch_log_probability_distance_slope": 1},
         "reference_bar_source": {"symbol": "BTCUSDT", "daily_files": [
             {"symbol": "BTCUSDT", "trade_count_unit": "individual_execution"}]},
     }
     (tmp_path / "causal_feature_manifest.json").write_text(json.dumps(payload))
     monkeypatch.setattr(ml_model, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ml_model, "SYMBOL", "BTCUSDC")
-    identity = ml_model._feature_panel_identity()
-    assert identity["reference_trade_count_unit"] == "individual_execution"
-    assert identity["reference_trade_symbol"] == "BTCUSDT"
-    limits = identity["reference_observation_limits"]
-    assert limits["live_f_l_counts"] == "observed_id_range_not_proof_of_internal_id_completeness"
-    assert limits["live_child_execution_timestamps_reconstructed"] is False
-    assert limits["live_173_feature_message_exactness_proven"] is False
-    assert limits["legacy_business_baseline_requalified"] is False
+    with pytest.raises(RuntimeError, match="public_feature_manifest"):
+        ml_model._feature_panel_identity()
 
 
 def test_predictive_ablation_contract_preserves_source_and_taker_definitions() -> None:
@@ -355,7 +343,8 @@ def _weighted_contract(half_life="inf"):
         train_source_identity_sha256="identity",
         feature_cols=("x",),
         sample_weight_policy={
-            "schema_version": "narrowgate.f03.time_half_life_daily.v1",
+            "schema_version": "narrowgate.f03.time_half_life_daily.v2",
+            "decision_clock": "feature_ready_index",
             "half_life_days": half_life,
             "reference_date": "2025-08-12",
             "date_normalization": "effective_head_rows",
@@ -443,7 +432,7 @@ def test_weighted_helpers_never_enter_features_or_allow_ambiguous_clock():
     frame[endpoint] = frame.index.astype("int64")
     with pytest.raises(ValueError, match="explicit datetime UTC units"):
         ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
-    frame[endpoint] = frame.index
+    frame[endpoint] = frame.index - pd.Timedelta(nanoseconds=1)
     with pytest.raises(ValueError, match="before its decision is visible"):
         ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
 
@@ -504,8 +493,9 @@ def test_time_weighted_main_only_reads_train_and_refits_all_heads(tmp_path, monk
     monkeypatch.setattr(ml_model.lgb, "LGBMClassifier", FakeModel)
     monkeypatch.setattr(ml_model.lgb, "LGBMRegressor", FakeModel)
     reference_identity = {"reference_trade_count_unit": "individual_execution", "reference_trade_symbol": "BTCUSDT",
-        "feature_timestamp_semantics": "left_label_bucket_end",
-        "feature_cutoff_semantics": "strict_exclusive_completed_bucket_end"}
+        "feature_timestamp_semantics": "feature_ready_index",
+        "feature_cutoff_semantics": "feature_ready_index",
+        "public_input_contract": {"decision_time_semantics": "feature_ready_index"}}
     monkeypatch.setattr(ml_model, "_feature_panel_identity", lambda: reference_identity)
     monkeypatch.setattr(ml_model, "release_memory", lambda: None)
     monkeypatch.setattr(ml_model, "save_model", lambda model, name, meta: saved.append((name, meta)))
@@ -609,152 +599,36 @@ def test_weighted_train_loader_preserves_calendar_but_legacy_still_filters(tmp_p
 
 
 def test_research_only_predictive_bundle_cannot_enter_live(tmp_path: Path) -> None:
-    for name in REQUIRED_MODEL_HEADS:
-        (tmp_path / f"{name}.txt").write_text("model", encoding="utf-8")
-        metadata = {
-            "symbol": "BTCUSDC",
-            "feature_cols": ["close"],
-            "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
-            "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-            "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
-            "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
-            "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
-            "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
-            "feature_manifest_sha256": "manifest-sha",
-            "source_profile": "local_only",
-            "feature_variant": "base",
-            "training_experiment_id": "source-local-v1",
-            "promotion_authority": "research_only",
-            "volatility_unit_contract": absolute_price_variance_unit_contract(
-                "BTCUSDC"
-            ),
-        }
-        if name.startswith("absolute_price_variance_rate_"):
-            metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
-        (tmp_path / f"{name}_meta.json").write_text(
-            json.dumps(metadata),
-            encoding="utf-8",
-        )
-
-    with pytest.raises(ValueError, match="research_only"):
-        validate_model_bundle(tmp_path)
-
+    from semantic_bundle_fixtures import write_bundle
+    write_bundle(tmp_path)
     assert len(validate_model_bundle(tmp_path, allow_research_only=True)) == 13
+    with pytest.raises(ValueError, match="regular model artifact"):
+        validate_model_bundle(tmp_path, require_live_authorization=True)
 
 
-@pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy-canary"])
-def test_private_deployment_authorization_binds_every_head_hash(
-    tmp_path: Path,
-    legacy: bool,
-) -> None:
-    training_experiment_id = (
-        "causal_v12_expanded_source_aware_semantics_v6"
-        if legacy
-        else "canary-v1"
-    )
-    feature_manifest_sha256 = (
-        "legacy-fixture-manifest"
-        if legacy
-        else "manifest-sha"
-    )
-    promotion_authority = (
-        LEGACY_OWNER_AUTHORIZED_LIVE_CANARY
-        if legacy
-        else PRIVATE_DEPLOYMENT_AUTHORITY
-    )
-    tree_hashes = {}
-    metadata_hashes = {}
-    for name in REQUIRED_MODEL_HEADS:
-        model_path = tmp_path / f"{name}.txt"
-        model_path.write_text("model", encoding="utf-8")
-        tree_hashes[name] = hashlib.sha256(model_path.read_bytes()).hexdigest()
-        metadata = {
-            "symbol": "BTCUSDC",
-            "feature_cols": ["close"],
-            "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
-            "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-            "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
-            "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
-            "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
-            "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
-            "feature_manifest_sha256": feature_manifest_sha256,
-            "source_profile": "all",
-            "feature_variant": "base",
-            "training_experiment_id": training_experiment_id,
-            "promotion_authority": promotion_authority,
-        }
-        if not legacy:
-            metadata["volatility_unit_contract"] = (
-                absolute_price_variance_unit_contract("BTCUSDC")
-            )
-        if name.startswith("absolute_price_variance_rate_"):
-            metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
-        metadata_path = tmp_path / f"{name}_meta.json"
-        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-        metadata_hashes[name] = hashlib.sha256(metadata_path.read_bytes()).hexdigest()
-
-    authorization_file = (
-        "live_canary_authorization.json"
-        if legacy
-        else "deployment_authorization.json"
-    )
-    initial_error = (
-        "volatility_unit_contract"
-        if legacy
-        else authorization_file
-    )
-    with pytest.raises(ValueError, match=initial_error):
-        validate_model_bundle(tmp_path)
-
-    authorization = {
-        "schema_version": (
-            LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA
-            if legacy
-            else DEPLOYMENT_AUTHORIZATION_SCHEMA
-        ),
-        "training_experiment_id": training_experiment_id,
-        "baseline_promotion_authorized": False,
-        "derived_bundle": {
-            "model_tree_sha256": tree_hashes,
-            "head_metadata_sha256": metadata_hashes,
-        },
-    }
-    if legacy:
-        authorization["owner_authorized"] = True
-        authorization["active_live_inference_authorized"] = True
-        authorization["volatility_unit_contract"] = (
-            absolute_price_variance_unit_contract("BTCUSDC")
-        )
-    else:
-        authorization["private_deployment_authorized"] = True
-        authorization["active_runtime_inference_authorized"] = True
-    (tmp_path / authorization_file).write_text(
-        json.dumps(authorization), encoding="utf-8"
-    )
-    metadata = validate_model_bundle(
-        tmp_path,
-        require_live_authorization=True,
-        expected_symbol="BTCUSDC",
-    )
+@pytest.mark.parametrize("head", REQUIRED_MODEL_HEADS)
+@pytest.mark.parametrize("suffix", [".txt", "_meta.json"])
+def test_private_deployment_authorization_binds_every_head_hash(tmp_path, head, suffix):
+    from semantic_bundle_fixtures import write_bundle, authorize_current_bundle
+    write_bundle(tmp_path)
+    authorize_current_bundle(tmp_path)
+    metadata = validate_model_bundle(tmp_path, require_live_authorization=True, expected_symbol="BTCUSDC")
     assert len(metadata) == 13
-    assert {head["promotion_authority"] for head in metadata.values()} == {
-        PRIVATE_DEPLOYMENT_AUTHORITY
-    }
-    expected_origin = (
-        {LEGACY_OWNER_AUTHORIZED_LIVE_CANARY}
-        if legacy
-        else {None}
-    )
-    assert {
-        head.get("promotion_authority_origin") for head in metadata.values()
-    } == expected_origin
-    assert resolve_model_authorization_manifest(tmp_path, metadata) == (
-        tmp_path / authorization_file
-    )
+    assert resolve_model_authorization_manifest(tmp_path, metadata) == tmp_path / "live_input_authorization.json"
+    (tmp_path / (head + suffix)).write_text("changed")
+    with pytest.raises(ValueError, match="artifact identity mismatch"):
+        validate_model_bundle(tmp_path, require_live_authorization=True)
 
-    (tmp_path / "touch_conditioned_up_probability_10000ms.txt").write_text("changed", encoding="utf-8")
-    with pytest.raises(ValueError, match="model hash mismatch"):
-        validate_model_bundle(tmp_path)
+
+@pytest.mark.parametrize("authorization_file", ["deployment_authorization.json", "live_canary_authorization.json"])
+def test_retired_authorization_and_head_files_do_not_create_current_bundle(tmp_path, authorization_file):
+    for head in REQUIRED_MODEL_HEADS:
+        (tmp_path / (head + ".txt")).write_text("retired-model")
+        (tmp_path / (head + "_meta.json")).write_text(json.dumps({"owner_authorized": True}))
+    (tmp_path / authorization_file).write_text(json.dumps({"owner_authorized": True}))
+    with pytest.raises(ValueError, match="retired model bundle rejected"):
+        validate_model_bundle(tmp_path, allow_research_only=True)
+
 
 
 def _utc_results(b_changes=None, *, independent=True, phase="development", capital=1000.0):

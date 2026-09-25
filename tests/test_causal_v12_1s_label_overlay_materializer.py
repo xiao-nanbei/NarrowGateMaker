@@ -145,7 +145,7 @@ def admitted_inputs(tmp_path_factory: pytest.TempPathFactory):
     )
     model_dir = root / "model"
     model_dir.mkdir()
-    p3 = model_dir / "fill_prob_params.json"
+    p3 = model_dir / "touch_probability.json"
     p3.write_text('{"identity":"empirical_p3_v2"}\n', encoding="utf-8")
     quote_config = root / "label_quote_config.yaml"
     quote_config.write_text(
@@ -246,7 +246,7 @@ def test_failure_never_admits_partial_output(
 
     def malformed(*args, **kwargs):
         frame = _fake_overlay(*args, **kwargs)
-        return frame.drop(columns=["sample_weight__dir_10s"])
+        return frame.drop(columns=["sample_weight__touch_conditioned_up_probability_10000ms"])
 
     monkeypatch.setattr(labels, "generate_daily_1s_labels", malformed)
     with pytest.raises(

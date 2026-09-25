@@ -734,7 +734,7 @@ def build_manifest(
 ) -> dict[str, Any]:
     artifacts: dict[str, str] = {}
     for raw_path in (
-        params.get("fill_probability_model_path", ""),
+        params.get("touch_probability_model_path", ""),
         params.get("queue_calibration_path", ""),
         params.get("live_perf_telemetry_path", ""),
         params.get("dynamic_fill_hazard_action_policy_path", ""),

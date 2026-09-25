@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from data_paths import data_root, relocate_marketdata_path
+from data_paths import data_root, resolve_portable_path
 from research.families.f06_placement_fill_cif.audit.paired_lifecycle_contract import (
     PAIRED_ACTIONS,
     common_clock_diagnostics,
@@ -73,7 +73,7 @@ def _atomic_json(payload: dict[str, Any], path: Path) -> None:
 
 
 def _verify_identity(identity: dict[str, Any]) -> None:
-    path = relocate_marketdata_path(identity["path"]).resolve()
+    path = resolve_portable_path(identity["path"]).resolve()
     actual = _sha256(path)
     if actual != str(identity["sha256"]):
         raise RuntimeError(f"identity hash mismatch for {path}: {actual}")

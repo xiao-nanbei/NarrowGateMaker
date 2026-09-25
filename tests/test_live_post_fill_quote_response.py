@@ -57,7 +57,7 @@ def test_live_final_p3_floor_clamps_shifted_quote_and_flags_unsafe_keep() -> Non
     engine._last_quote_diagnostics.update(
         {
             "p3_side_bbo_floor_enabled": True,
-            "p3_touch_delta_star": 0.5,
+            "p3_distance_touch_product_argmax": 0.5,
         }
     )
 
@@ -81,7 +81,7 @@ def test_live_zero_p3_delta_is_inactive_for_existing_orders() -> None:
     engine._last_quote_diagnostics.update(
         {
             "p3_side_bbo_floor_enabled": True,
-            "p3_touch_delta_star": 0.0,
+            "p3_distance_touch_product_argmax": 0.0,
         }
     )
 

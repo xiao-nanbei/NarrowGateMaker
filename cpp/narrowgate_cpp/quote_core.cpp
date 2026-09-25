@@ -18,9 +18,9 @@ bool is_lower_hex_sha256(const std::string& value) {
 
 void validate_p3_touch_identity(const QuoteCoreConfig& cfg) {
     const bool projection_active = (
-        cfg.historical_p3_scalar_adapter_enabled &&
-        (cfg.p3_delta_star > 0.0 || cfg.p3_kappa_eff > 0.0)
-    ) || (cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0);
+        cfg.p3_pair_spread_projection_enabled &&
+        (cfg.p3_distance_touch_product_argmax > 0.0 || cfg.p3_touch_log_probability_distance_slope > 0.0)
+    ) || (cfg.p3_side_bbo_floor_enabled && cfg.p3_distance_touch_product_argmax > 0.0);
     const bool identity_present =
         !cfg.p3_event_type.empty() || cfg.p3_horizon_s != 0.0 ||
         !cfg.p3_distance_origin.empty() || !cfg.p3_distance_unit.empty() ||
@@ -211,7 +211,7 @@ double depth_tox_mult(
         micro_shift_bps = (fair - mid) / mid * 10000.0;
     }
     if (std::abs(imb) >= std::abs(cfg.depth_tox_imbalance_threshold) ||
-        std::abs(micro_shift_bps) >= std::abs(cfg.depth_tox_microprice_shift_bps)) {
+        std::abs(micro_shift_bps) >= std::abs(cfg.depth_tox_weighted_mid_proxy_shift_bps)) {
         return std::max(1.0, cfg.depth_tox_spread_mult);
     }
     return 1.0;
@@ -261,7 +261,7 @@ SideAdverseState side_adverse_state(
     double toxicity,
     double markout_ema,
     bool markout_pause_latch,
-    double microprice_shift_bps,
+    double weighted_mid_proxy_shift_bps,
     double near_depth,
     const QuoteCoreConfig& cfg
 ) {
@@ -290,8 +290,8 @@ SideAdverseState side_adverse_state(
     if (cfg.adverse_ret_bps_threshold > 0.0) {
         out.ret = sign * pred_ret * 10000.0 >= std::abs(cfg.adverse_ret_bps_threshold);
     }
-    if (cfg.adverse_microprice_shift_bps > 0.0) {
-        out.microprice = sign * microprice_shift_bps >= std::abs(cfg.adverse_microprice_shift_bps);
+    if (cfg.adverse_weighted_mid_proxy_shift_bps > 0.0) {
+        out.microprice = sign * weighted_mid_proxy_shift_bps >= std::abs(cfg.adverse_weighted_mid_proxy_shift_bps);
     }
     out.thin_depth = cfg.adverse_thin_depth_threshold > 0.0 &&
         near_depth > 0.0 && near_depth < cfg.adverse_thin_depth_threshold;
@@ -325,7 +325,7 @@ SideDefenseState side_defense_state(
     double dir_signal,
     double pred_ret,
     double markout_ema,
-    double microprice_shift_bps,
+    double weighted_mid_proxy_shift_bps,
     double unrealized_pnl,
     const QuoteCoreConfig& cfg
 ) {
@@ -355,13 +355,13 @@ SideDefenseState side_defense_state(
     if (cfg.defense_ret_bps_threshold > 0.0) {
         out.ret = sign * pred_ret * 10000.0 >= std::abs(cfg.defense_ret_bps_threshold);
     }
-    if (cfg.defense_microprice_shift_bps > 0.0) {
-        out.microprice = sign * microprice_shift_bps >= std::abs(cfg.defense_microprice_shift_bps);
+    if (cfg.defense_weighted_mid_proxy_shift_bps > 0.0) {
+        out.microprice = sign * weighted_mid_proxy_shift_bps >= std::abs(cfg.defense_weighted_mid_proxy_shift_bps);
     }
 
     const bool needs_extreme = cfg.defense_dir_threshold > 0.0 ||
         cfg.defense_ret_bps_threshold > 0.0 ||
-        cfg.defense_microprice_shift_bps > 0.0;
+        cfg.defense_weighted_mid_proxy_shift_bps > 0.0;
     const bool extreme = needs_extreme ? (out.direction || out.ret || out.microprice) : true;
     out.active = out.reducing && !out.emergency && out.markout && extreme;
     out.pause = out.active && cfg.defense_pause;
@@ -397,7 +397,7 @@ void fill_side_context(
     ctx.adverse_markout = adverse.markout;
     ctx.adverse_direction = adverse.direction;
     ctx.adverse_ret = adverse.ret;
-    ctx.adverse_microprice = adverse.microprice;
+    ctx.adverse_weighted_mid_proxy = adverse.microprice;
     ctx.adverse_thin_depth = adverse.thin_depth;
     ctx.defense_guard = defense.active;
     ctx.defense_pause = defense.pause;
@@ -406,7 +406,7 @@ void fill_side_context(
     ctx.defense_markout = defense.markout;
     ctx.defense_direction = defense.direction;
     ctx.defense_ret = defense.ret;
-    ctx.defense_microprice = defense.microprice;
+    ctx.defense_weighted_mid_proxy = defense.microprice;
     ctx.defense_spread_mult = defense.spread_mult;
     ctx.mid_guard = mid_guard;
     ctx.post_only = post_only;
@@ -656,17 +656,9 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     }
     const double eta_inventory = cfg.eta_inventory;
     const double risk_per_order = cfg.risk_per_order;
-    const double execution_intensity_slope =
-        std::isfinite(cfg.execution_intensity_slope)
-        ? cfg.execution_intensity_slope
-        : cfg.kappa;
-    const double risk_horizon_s = std::isfinite(cfg.risk_horizon_s)
-        ? cfg.risk_horizon_s
-        : cfg.quote_horizon_s;
-    const double acceleration_spread_mult =
-        std::isfinite(cfg.trade_intensity_acceleration_spread_mult)
-        ? cfg.trade_intensity_acceleration_spread_mult
-        : cfg.ber_spread_mult;
+    const double execution_intensity_slope = cfg.execution_intensity_slope;
+    const double risk_horizon_s = cfg.risk_horizon_s;
+    const double acceleration_spread_mult = cfg.trade_intensity_acceleration_spread_mult;
     if (!std::isfinite(eta_inventory) || eta_inventory <= 0.0) {
         throw std::invalid_argument(
             "eta_inventory must be positive and finite"
@@ -694,7 +686,7 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
             "trade_intensity_acceleration_spread_mult must be positive and finite"
         );
     }
-    if (cfg.historical_p3_scalar_adapter_enabled &&
+    if (cfg.p3_pair_spread_projection_enabled &&
         cfg.p3_side_bbo_floor_enabled) {
         throw std::invalid_argument(
             "historical P3 scalar projection and side-BBO floor are mutually exclusive"
@@ -717,8 +709,8 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     }
 
     const double kappa_base =
-        cfg.historical_p3_scalar_adapter_enabled && cfg.p3_kappa_eff > 0.0
-        ? cfg.p3_kappa_eff
+        cfg.p3_pair_spread_projection_enabled && cfg.p3_touch_log_probability_distance_slope > 0.0
+        ? cfg.p3_touch_log_probability_distance_slope
         : execution_intensity_slope;
     return QuoteHotPlan{
         tick,
@@ -729,9 +721,9 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
         acceleration_spread_mult,
         kappa_base,
         clamp(cfg.spread_cap_mode, 0, 2),
-        cfg.regime_enabled && cfg.historical_p3_scalar_adapter_enabled &&
-            cfg.p3_delta_star > 0.0,
-        cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0,
+        cfg.regime_enabled && cfg.p3_pair_spread_projection_enabled &&
+            cfg.p3_distance_touch_product_argmax > 0.0,
+        cfg.p3_side_bbo_floor_enabled && cfg.p3_distance_touch_product_argmax > 0.0,
     };
 }
 
@@ -770,8 +762,8 @@ QuoteCoreResult compute_quote_core(
     const double kappa_before_depth = kappa_used;
     const bool depth_has_book = depth.has_book();
     double fair = mid;
-    if (depth_has_book && cfg.use_depth_microprice) {
-        fair = microprice(depth, cfg.microprice_levels, mid, depth_has_book);
+    if (depth_has_book && cfg.use_depth_weighted_mid_proxy) {
+        fair = microprice(depth, cfg.weighted_mid_proxy_levels, mid, depth_has_book);
     }
     if (depth_has_book && cfg.use_depth_kappa) {
         kappa_used = estimate_depth_kappa(
@@ -845,7 +837,7 @@ QuoteCoreResult compute_quote_core(
     );
     delta *= depth_tox;
     if (plan.historical_p3_pair_floor_active()) {
-        delta = std::max(delta, 2.0 * cfg.p3_delta_star);
+        delta = std::max(delta, 2.0 * cfg.p3_distance_touch_product_argmax);
     }
     const double min_spread = 2.0 * std::abs(cfg.maker_fee) * mid + tick;
     delta = std::max(delta, min_spread);
@@ -994,7 +986,7 @@ QuoteCoreResult compute_quote_core(
     }
     asym = clamp(asym, -0.9, 0.9);
     out.asym = asym;
-    out.microprice_shift_bps = micro_shift_bps;
+    out.weighted_mid_proxy_shift_bps = micro_shift_bps;
 
     const double raw_half = 0.5 * out.delta_pre_cap;
     const double raw_hd_bid = raw_half * (1.0 - asym);
@@ -1117,10 +1109,10 @@ QuoteCoreResult compute_quote_core(
             );
         }
         const double p3_buy_floor_price = floor_tick(
-            state.best_bid - cfg.p3_delta_star, tick
+            state.best_bid - cfg.p3_distance_touch_product_argmax, tick
         );
         const double p3_sell_floor_price = ceil_tick(
-            state.best_ask + cfg.p3_delta_star, tick
+            state.best_ask + cfg.p3_distance_touch_product_argmax, tick
         );
         bid_price = std::min(bid_price, p3_buy_floor_price);
         ask_price = std::max(ask_price, p3_sell_floor_price);

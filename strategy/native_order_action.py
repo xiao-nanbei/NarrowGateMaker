@@ -479,7 +479,7 @@ class CheckedNativeOrderActionPlanner:
         best_bid: float,
         best_ask: float,
         p3_side_bbo_floor_enabled: bool,
-        p3_delta_star: float,
+        p3_distance_touch_product_argmax: float,
     ) -> Any:
         """Run the pure native tail from Python-final prices to action PODs.
 
@@ -507,7 +507,7 @@ class CheckedNativeOrderActionPlanner:
         )
         frozen_best_bid = _finite(best_bid, name="best_bid")
         frozen_best_ask = _finite(best_ask, name="best_ask")
-        delta_star = _finite(p3_delta_star, name="p3_delta_star")
+        delta_star = _finite(p3_distance_touch_product_argmax, name="p3_distance_touch_product_argmax")
         if frozen_best_bid <= 0.0 or frozen_best_ask <= frozen_best_bid:
             raise NativeOrderActionBoundaryError("frozen BBO must be positive and ordered")
         p3_enabled = bool(p3_side_bbo_floor_enabled)

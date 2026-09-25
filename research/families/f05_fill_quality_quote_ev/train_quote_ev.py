@@ -854,7 +854,7 @@ def add_local_flow_quote_features(frame: pd.DataFrame) -> pd.DataFrame:
     if micro.isna().all():
         raw_micro = _first_existing_feature_series(
             out,
-            ("l2_microprice_offset_bps", "microprice_shift_bps"),
+            ("l2_microprice_offset_bps", "weighted_mid_proxy_shift_bps"),
             0.0,
         ).fillna(0.0)
         micro = -pos * raw_micro
@@ -1003,7 +1003,7 @@ def add_toxic_risk_quote_features(frame: pd.DataFrame) -> pd.DataFrame:
         | _first_existing_feature_series(out, ("defense_pause",), 0.0).fillna(0.0).gt(0.5)
         | _first_existing_feature_series(out, ("defense_markout",), 0.0).fillna(0.0).gt(0.5)
         | _first_existing_feature_series(out, ("defense_direction",), 0.0).fillna(0.0).gt(0.5)
-        | _first_existing_feature_series(out, ("defense_microprice",), 0.0).fillna(0.0).gt(0.5)
+        | _first_existing_feature_series(out, ("defense_weighted_mid_proxy",), 0.0).fillna(0.0).gt(0.5)
     )
     guard_adverse_defense = (adverse_guard & defense_guard).astype(float)
 

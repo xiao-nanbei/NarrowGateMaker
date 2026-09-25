@@ -399,9 +399,9 @@ def run_formal_dry_run(
             validate_model_bundle(model_dir, expected_symbol=cfg.symbol)
             if cfg.ml.enabled else {}
         )
-        p3_path = model_dir / "fill_prob_params.json"
+        p3_path = model_dir / "touch_probability.json"
         if not p3_path.is_file():
-            raise ValueError(f"model bundle is missing fill_prob_params.json: {p3_path}")
+            raise ValueError(f"model bundle is missing touch_probability.json: {p3_path}")
         summary.update(
             {
                 "status": "passed",
@@ -2654,7 +2654,7 @@ def initialize_prospective_lifecycle_collection(
         baseline_identity_path=settings.baseline_identity_path,
         expected_baseline_identity_sha256=settings.baseline_identity_sha256,
         model_dir=model_dir,
-        p3_path=model_dir / "fill_prob_params.json",
+        p3_path=model_dir / "touch_probability.json",
         feature_dag_sha256=TEN_SECOND_CAUSAL_GRAPH.sha256(),
         release_source={
             "commit": checkout["commit"],
@@ -3811,8 +3811,8 @@ def main():
     )
 
     model_dir = _configured_model_dir(cfg)
-    if not (model_dir / "fill_prob_params.json").is_file():
-        raise RuntimeError(f"PREFLIGHT: Missing fill_prob_params.json in {model_dir}")
+    if not (model_dir / "touch_probability.json").is_file():
+        raise RuntimeError(f"PREFLIGHT: Missing touch_probability.json in {model_dir}")
     model_metadata = (
         validate_model_bundle(
             model_dir,
@@ -3829,7 +3829,7 @@ def main():
         cfg,
         artifact_authority=safety_authority,
         model_authorization_path=model_authorization_path,
-        p3_path=model_dir / "fill_prob_params.json",
+        p3_path=model_dir / "touch_probability.json",
     )
     policy_admission = admit_runtime_policies(
         vars(cfg.strategy), deployment_authority=safety_authority
@@ -3855,7 +3855,7 @@ def main():
         logger.info("  Mode:      live")
         logger.info(f"  ML:        {cfg.ml.enabled}")
         logger.info(
-            f"  inventory_coefficient={cfg.strategy.eta_inventory} spread_coefficient={cfg.strategy.risk_per_order} fallback_κ={cfg.strategy.kappa} "
+            f"  inventory_coefficient={cfg.strategy.eta_inventory} spread_coefficient={cfg.strategy.risk_per_order} fallback_κ={cfg.strategy.execution_intensity_slope} "
             "(P3 κ_eff used when available)"
         )
         logger.info(f"  Order size: {cfg.strategy.order_size} BTC")

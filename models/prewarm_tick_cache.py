@@ -109,7 +109,7 @@ def _task(payload: dict[str, Any]) -> dict[str, Any]:
         symbol="BTCUSDC",
         configure_symbol=bt.configure_symbol,
         require_historical_bbo=True,
-        include_fill_probability=False,
+        include_touch_probability=False,
         include_queue_calibration=False,
     )
     if with_ml:

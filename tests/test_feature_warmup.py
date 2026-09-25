@@ -94,7 +94,7 @@ def test_sample_weights_use_explicit_lambda_and_reference_date() -> None:
 def _write_feature_config(tmp_path: Path, artifact: dict) -> tuple[Path, Path]:
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    artifact_path = model_dir / "fill_prob_params.json"
+    artifact_path = model_dir / "touch_probability.json"
     artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -102,7 +102,7 @@ def _write_feature_config(tmp_path: Path, artifact: dict) -> tuple[Path, Path]:
             [
                 "symbol: BTCUSDC",
                 "tick_size: 0.1",
-                "strategy: {}",
+                "strategy: {eta_inventory: 0.05, a_spread: 0.05, risk_per_order: 0.05, execution_intensity_slope: 0.073, risk_horizon_s: 1.0}",
                 "regime: {}",
                 "fees: {maker: 0.0}",
                 f"ml: {{model_dir: {model_dir}}}",
@@ -118,7 +118,7 @@ def test_label_quote_params_use_explicit_empirical_p3_artifact(tmp_path: Path) -
     config, artifact = _write_feature_config(
         tmp_path,
         {
-            "schema_version": "narrowgate_p3_touch_calibration.v3",
+            "schema_version": "narrowgate_p3_touch_calibration.v4",
             "model_type": "empirical_survival",
             "delta_grid": [0.1, 1.0, 2.0, 3.0],
             "probability_grid": [1.0, 0.8, 0.4, 0.1],
@@ -135,15 +135,16 @@ def test_label_quote_params_use_explicit_empirical_p3_artifact(tmp_path: Path) -
 
     params = _load_label_quote_params("BTCUSDC", config)
 
-    assert params["fill_probability_model_path"] == str(artifact.resolve())
+    assert params["touch_probability_model_path"] == str(artifact.resolve())
     assert params["fill_probability_sha256"] == hashlib.sha256(
         artifact.read_bytes()
     ).hexdigest()
-    assert params["fill_probability_schema_version"] == "narrowgate_p3_touch_calibration.v3"
-    assert params["fill_probability_model_type"] == "empirical_survival"
-    assert params["p3_delta_star"] > 0.0
-    assert params["p3_kappa_eff"] > 0.0
-    assert params["a_spread"] == params["gamma"]
+    assert params["touch_probability_schema_version"] == "narrowgate_p3_touch_calibration.v4"
+    assert params["touch_probability_model_type"] == "empirical_survival"
+    assert params["p3_distance_touch_product_argmax"] > 0.0
+    assert params["p3_touch_log_probability_distance_slope"] > 0.0
+    assert params["a_spread"] == 0.05
+    assert "gamma" not in params
 
 
 def test_label_quote_params_reject_legacy_su_artifact(tmp_path: Path) -> None:
@@ -160,9 +161,11 @@ def test_quote_labels_use_spread_coefficient_kappa_horizon_and_dynamic_cap() -> 
     sigma_sq = np.asarray([100.0, 400.0])
     close = np.asarray([10_000.0, 10_000.0])
     params = {
-        "gamma": 0.05,
-        "kappa": 999.0,
-        "p3_kappa_eff": 0.1,
+        "a_spread": 0.05,
+        "risk_per_order": 0.05,
+        "execution_intensity_slope": 999.0,
+        "risk_horizon_s": 2.0,
+        "p3_touch_log_probability_distance_slope": 0.1,
         "kappa_ratio": 1.0,
         "quote_horizon_s": 2.0,
         "liq_baseline": 0.0,
@@ -172,7 +175,7 @@ def test_quote_labels_use_spread_coefficient_kappa_horizon_and_dynamic_cap() -> 
         "volatility_spread_scale_max": 1.0,
         "liquidity_spread_scale_min": 1.0,
         "liquidity_spread_scale_max": 1.0,
-        "p3_delta_star": 0.0,
+        "p3_distance_touch_product_argmax": 0.0,
         "tick_size": 0.1,
         "maker_fee": 0.0,
         "max_spread_bps": 99.0,
@@ -190,7 +193,7 @@ def test_quote_labels_use_spread_coefficient_kappa_horizon_and_dynamic_cap() -> 
     pair_cap = np.asarray([10.0, 20.0])
     np.testing.assert_allclose(result, 0.5 * np.minimum(uncapped, pair_cap))
 
-    params.update(a_spread=0.08, dynamic_cap_enabled=False)
+    params.update(a_spread=0.08, risk_per_order=0.08, dynamic_cap_enabled=False)
     result = _quote_half_spread(pd.DataFrame(index=range(2)), close, sigma_sq, params)
     uncapped = 0.08 * sigma_sq * 2.0 + (2.0 / 0.08) * np.log1p(0.08 / 0.1)
     np.testing.assert_allclose(result, 0.5 * uncapped)

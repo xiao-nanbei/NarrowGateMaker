@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from data_paths import relocate_marketdata_path
 from research.families.f10_live_replay_attribution.audit import (
     first_opener_decision_to_terminal_runner as runner,
 )
@@ -120,6 +119,7 @@ def test_opener_checkpoint_run_modes_cannot_be_reused(tmp_path: Path) -> None:
 
 def test_opener_native_producer_preflights_every_target_and_d_minus_1(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     producer = _producer_spec()
     f10_spec = json.loads(
@@ -132,11 +132,8 @@ def test_opener_native_producer_preflights_every_target_and_d_minus_1(
             producer["baseline_contract_identity"]["path"]
         ).read_text(encoding="utf-8")
     )
-    base["source_identity"]["normalized_l2_root"] = str(
-        relocate_marketdata_path(
-            base["source_identity"]["normalized_l2_root"]
-        )
-    )
+    # This test exercises date admission, not historical location conversion.
+    base["source_identity"]["normalized_l2_root"] = str(tmp_path / "normalized")
     checked_contexts: list[tuple[str, ...]] = []
 
     def record_formal_days(

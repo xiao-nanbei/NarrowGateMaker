@@ -122,7 +122,7 @@ def test_calibration_records_explicit_split_input_roots_and_hashes(tmp_path):
         json.dumps({"feature_panel_split": split_days}),
         encoding="utf-8",
     )
-    output = tmp_path / "fill_prob_params.json"
+    output = tmp_path / "touch_probability.json"
     report_json = tmp_path / "report.json"
     report = calibrate(argparse.Namespace(
         symbol="BTCUSDC",

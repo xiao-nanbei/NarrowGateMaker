@@ -155,7 +155,7 @@ from strategy.quote_core import (
     compute_quote_core_live,
     compute_quote_core_live_deferred,
     make_native_quote_policy_stage,
-    microprice_from_book,
+    weighted_mid_proxy_from_book,
     quote_core_config_from_live_config,
     quote_depth_from_book,
     spread_cap_mode_code,
@@ -425,7 +425,7 @@ class SidePolicyDecision:
     toxicity: float = 0.5
     markout_ema: float = 0.0
     depth_age_s: float = 0.0
-    microprice_shift_bps: float = 0.0
+    weighted_mid_proxy_shift_bps: float = 0.0
     l2_quote_flip_rate: float = 0.0
     l2_book_refresh_ratio: float = 0.0
     l2_book_cancel_ratio: float = 0.0
@@ -455,7 +455,7 @@ class QuoteDecisionLogRow:
     toxicity: float
     markout_ema: float
     depth_age_s: float
-    microprice_shift_bps: float
+    weighted_mid_proxy_shift_bps: float
     l2_quote_flip_rate: float
     l2_book_refresh_ratio: float
     l2_book_cancel_ratio: float
@@ -816,7 +816,7 @@ class OrderOutcomeLogRow:
     toxicity: float
     markout_ema: float
     depth_age_s: float
-    microprice_shift_bps: float
+    weighted_mid_proxy_shift_bps: float
     l2_quote_flip_rate: float
     l2_book_refresh_ratio: float
     l2_book_cancel_ratio: float
@@ -983,7 +983,7 @@ def _resolve_model_dir(cfg) -> Optional[Path]:
 def _get_fill_model(model_dir: Optional[Path] = None):
     """Lazy-load TouchProbabilityModel from saved params."""
     global _fill_model, _fill_model_path, _fill_model_loaded
-    model_path = model_dir / "fill_prob_params.json" if model_dir else None
+    model_path = model_dir / "touch_probability.json" if model_dir else None
     if not _fill_model_loaded or model_path != _fill_model_path:
         try:
             from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
@@ -4451,7 +4451,7 @@ class MakerEngine:
             # Policy freshness is local visibility age. End-to-end source age
             # remains available on the immutable snapshot for diagnostics.
             "depth_age_s": snapshot.depth_visible_age_s,
-            "microprice_shift_bps": self._depth_micro_shift_bps(mid, depth, levels=3),
+            "weighted_mid_proxy_shift_bps": self._depth_micro_shift_bps(mid, depth, levels=3),
             "l2_quote_flip_rate": 0.0,
             "l2_book_refresh_ratio": 0.0,
             "l2_book_cancel_ratio": 0.0,
@@ -5186,7 +5186,7 @@ class MakerEngine:
         )
         features.setdefault("l2_book_refresh_ratio", decision.l2_book_refresh_ratio)
         features.setdefault("l2_book_cancel_ratio", decision.l2_book_cancel_ratio)
-        features.setdefault("microprice_shift_bps", decision.microprice_shift_bps)
+        features.setdefault("weighted_mid_proxy_shift_bps", decision.weighted_mid_proxy_shift_bps)
         return features
 
     def _apply_buy_fill_selection_live_arm(
@@ -5352,7 +5352,7 @@ class MakerEngine:
             "campaign_reducing_fills_so_far": int(campaign.reducing_fills),
             "toxicity": float(decision.toxicity),
             "markout_ema": float(decision.markout_ema),
-            "microprice_shift_bps": float(decision.microprice_shift_bps),
+            "weighted_mid_proxy_shift_bps": float(decision.weighted_mid_proxy_shift_bps),
             "l2_quote_flip_rate": float(decision.l2_quote_flip_rate),
             "l2_book_refresh_ratio": float(decision.l2_book_refresh_ratio),
             "l2_book_cancel_ratio": float(decision.l2_book_cancel_ratio),
@@ -5374,7 +5374,7 @@ class MakerEngine:
             mid=float(mid),
             best_bid=float(best_bid),
             best_ask=float(best_ask),
-            microprice_shift_bps=float(decision.microprice_shift_bps),
+            weighted_mid_proxy_shift_bps=float(decision.weighted_mid_proxy_shift_bps),
             tick=float(self.cfg.tick_size),
             max_pair_spread=float(max_pair_spread),
         )
@@ -5387,7 +5387,7 @@ class MakerEngine:
             mid=float(mid),
             best_bid=float(best_bid),
             best_ask=float(best_ask),
-            microprice_shift_bps=float(decision.microprice_shift_bps),
+            weighted_mid_proxy_shift_bps=float(decision.weighted_mid_proxy_shift_bps),
             tick=float(self.cfg.tick_size),
             max_pair_spread=float(max_pair_spread),
         )
@@ -5471,7 +5471,7 @@ class MakerEngine:
             toxicity=toxicity,
             markout_ema=markout_ema,
             depth_age_s=metrics["depth_age_s"],
-            microprice_shift_bps=metrics["microprice_shift_bps"],
+            weighted_mid_proxy_shift_bps=metrics["weighted_mid_proxy_shift_bps"],
             l2_quote_flip_rate=metrics["l2_quote_flip_rate"],
             l2_book_refresh_ratio=metrics["l2_book_refresh_ratio"],
             l2_book_cancel_ratio=metrics["l2_book_cancel_ratio"],
@@ -5511,7 +5511,7 @@ class MakerEngine:
                 markout_ema=markout_ema,
                 markout_spread_scale=float(getattr(cfg.strategy, "markout_spread_scale", 0.0) or 0.0),
                 markout_reference=self._mo_ref,
-                microprice_shift_bps=decision.microprice_shift_bps,
+                weighted_mid_proxy_shift_bps=decision.weighted_mid_proxy_shift_bps,
                 l2_quote_flip_rate=decision.l2_quote_flip_rate,
                 l2_book_cancel_ratio=decision.l2_book_cancel_ratio,
                 l2_near_depth_total=decision.l2_near_depth_total,
@@ -5613,7 +5613,7 @@ class MakerEngine:
                 getattr(self.cfg.strategy, "markout_spread_scale", 0.0) or 0.0
             ),
             markout_reference=self._mo_ref,
-            microprice_shift_bps=float(metrics["microprice_shift_bps"]),
+            weighted_mid_proxy_shift_bps=float(metrics["weighted_mid_proxy_shift_bps"]),
             l2_quote_flip_rate=float(metrics["l2_quote_flip_rate"]),
             l2_book_cancel_ratio=float(metrics["l2_book_cancel_ratio"]),
             l2_near_depth_total=float(metrics["l2_near_depth_total"]),
@@ -6955,7 +6955,7 @@ class MakerEngine:
         depth = quote_depth_from_book(snapshot)
         if not depth.has_book:
             return "normalized_depth_empty"
-        microprice = microprice_from_book(depth.bids, depth.asks, levels=3)
+        microprice = weighted_mid_proxy_from_book(depth.bids, depth.asks, levels=3)
         if not math.isfinite(microprice):
             return "nonfinite_microprice"
         if microprice < snapshot.best_bid - price_tol or microprice > snapshot.best_ask + price_tol:
@@ -7699,8 +7699,8 @@ class MakerEngine:
         """
         cfg = self.cfg
         fill_model = _get_fill_model(self._model_dir)
-        p3_delta_star = 0.0
-        p3_kappa_eff = 0.0
+        p3_distance_touch_product_argmax = 0.0
+        p3_touch_log_probability_distance_slope = 0.0
         p3_identity = None
         if fill_model is not None:
             cache_key = (self._model_dir, id(fill_model))
@@ -7714,19 +7714,19 @@ class MakerEngine:
                     fill_model.semantic_identity(require_artifact_hash=True),
                 )
                 self._fill_model_quote_cache = cache
-            p3_delta_star = float(cache[1])
-            p3_kappa_eff = float(cache[2])
+            p3_distance_touch_product_argmax = float(cache[1])
+            p3_touch_log_probability_distance_slope = float(cache[2])
             p3_identity = dict(cache[3])
         if self._p3_artifact_sha256 is not None and (
             p3_identity is None or p3_identity["artifact_sha256"] != self._p3_artifact_sha256
         ):
             raise RuntimeError("loaded P3 differs from the deployment-bound artifact")
-        p3_kappa_eff_override = float(
-            getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
+        p3_touch_log_probability_distance_slope_override = float(
+            getattr(cfg.strategy, "p3_touch_log_probability_distance_slope_override", 0.0) or 0.0
         )
-        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+        if not math.isfinite(p3_touch_log_probability_distance_slope_override) or p3_touch_log_probability_distance_slope_override != 0.0:
             raise RuntimeError(
-                "nonzero p3_kappa_eff_override has no independently bound "
+                "nonzero p3_touch_log_probability_distance_slope_override has no independently bound "
                 "touch-curve identity and is forbidden"
             )
         ret_metadata = getattr(self.signal, "_model_metadata", {}).get("touch_conditioned_price_change_fraction_10000ms", {})
@@ -7740,8 +7740,8 @@ class MakerEngine:
         f03_ret_action_compatible = bool(f03_action_contract["compatible"])
         quote_cfg_key = (
             id(cfg),
-            p3_delta_star,
-            p3_kappa_eff,
+            p3_distance_touch_product_argmax,
+            p3_touch_log_probability_distance_slope,
             str((p3_identity or {}).get("artifact_sha256", "")),
             f03_ret_action_horizon_s,
             f03_ret_action_compatible,
@@ -7752,8 +7752,8 @@ class MakerEngine:
                 quote_cfg_key,
                 quote_core_config_from_live_config(
                     cfg,
-                    p3_delta_star=p3_delta_star,
-                    p3_kappa_eff=p3_kappa_eff,
+                    p3_distance_touch_product_argmax=p3_distance_touch_product_argmax,
+                    p3_touch_log_probability_distance_slope=p3_touch_log_probability_distance_slope,
                     p3_identity=p3_identity,
                     f03_ret_action_horizon_s=f03_ret_action_horizon_s,
                     f03_ret_action_compatible=f03_ret_action_compatible,
@@ -8058,10 +8058,10 @@ class MakerEngine:
         self._log_depth_execution_shadow(
             mid=mid, depth=depth_raw, pred=pred,
             kappa_base=self._last_quote_diagnostic_value(
-                "kappa_before_depth", cfg.strategy.kappa
+                "kappa_before_depth", cfg.strategy.execution_intensity_slope
             ),
             kappa_used=self._last_quote_diagnostic_value(
-                "kappa_used", cfg.strategy.kappa
+                "kappa_used", cfg.strategy.execution_intensity_slope
             ),
             bid_price=bid_price, ask_price=ask_price,
             asym=self._last_quote_diagnostic_value("asym", 0.0),
@@ -8104,7 +8104,7 @@ class MakerEngine:
         imb, _, _ = self._depth_imbalance(depth, getattr(tox_cfg, 'levels', 20))
         micro_shift_bps = self._depth_micro_shift_bps(mid, depth, levels=3)
         imb_thr = abs(getattr(tox_cfg, 'imbalance_threshold', 0.65))
-        shift_thr = abs(getattr(tox_cfg, 'microprice_shift_bps', 1.0))
+        shift_thr = abs(getattr(tox_cfg, 'weighted_mid_proxy_shift_bps', 1.0))
         if abs(imb) >= imb_thr or abs(micro_shift_bps) >= shift_thr:
             return max(1.0, float(getattr(tox_cfg, 'spread_mult', 1.25)))
         return 1.0
@@ -8113,8 +8113,8 @@ class MakerEngine:
     def _depth_micro_shift_bps(mid: float, depth, levels: int) -> float:
         if mid <= 0 or not depth or not depth.bids or not depth.asks:
             return 0.0
-        from strategy.quote_core import microprice_from_book
-        fair = microprice_from_book(depth.bids, depth.asks, levels=max(1, int(levels)))
+        from strategy.quote_core import weighted_mid_proxy_from_book
+        fair = weighted_mid_proxy_from_book(depth.bids, depth.asks, levels=max(1, int(levels)))
         return (fair - mid) / mid * 10000.0
 
     def _log_depth_execution_shadow(self, mid: float, depth, pred: Prediction,
@@ -8131,10 +8131,10 @@ class MakerEngine:
             logger.info("DEPTH_SHADOW status=no_depth")
             return
 
-        mk_cfg = getattr(depth_cfg, 'microprice_kappa', None)
+        mk_cfg = getattr(depth_cfg, 'weighted_mid_distance_decay', None)
         imb_cfg = getattr(depth_cfg, 'imbalance_asym', None)
         tox_cfg = getattr(depth_cfg, 'depth_tox_spread', None)
-        mp_levels = getattr(mk_cfg, 'microprice_levels', 3) if mk_cfg else 3
+        mp_levels = getattr(mk_cfg, 'weighted_mid_proxy_levels', 3) if mk_cfg else 3
         kappa_levels = getattr(mk_cfg, 'kappa_levels', 5) if mk_cfg else 5
         imb_levels = getattr(imb_cfg, 'levels', 20) if imb_cfg else 20
         tox_levels = getattr(tox_cfg, 'levels', 20) if tox_cfg else 20
@@ -8158,7 +8158,7 @@ class MakerEngine:
         tox_bid, tox_ask = self._toxicity_probs(pred)
         dtox_mult = self._depth_tox_spread_mult(mid, depth, depth_cfg, force=True)
         tox_imb_thr = abs(getattr(tox_cfg, 'imbalance_threshold', 0.65)) if tox_cfg else 0.65
-        tox_shift_thr = abs(getattr(tox_cfg, 'microprice_shift_bps', 1.0)) if tox_cfg else 1.0
+        tox_shift_thr = abs(getattr(tox_cfg, 'weighted_mid_proxy_shift_bps', 1.0)) if tox_cfg else 1.0
         dtox_bid = tox_imb <= -tox_imb_thr or micro_shift_bps <= -tox_shift_thr
         dtox_ask = tox_imb >= tox_imb_thr or micro_shift_bps >= tox_shift_thr
         logger.info(
@@ -8829,17 +8829,17 @@ class MakerEngine:
                     False,
                 )
             )
-            p3_delta_star = float(
+            p3_distance_touch_product_argmax = float(
                 self._last_quote_diagnostic_value(
-                    "p3_touch_delta_star",
+                    "p3_distance_touch_product_argmax",
                     0.0,
                 )
                 or 0.0
             )
             p3_active = bool(
                 p3_enabled
-                and math.isfinite(p3_delta_star)
-                and p3_delta_star > 0.0
+                and math.isfinite(p3_distance_touch_product_argmax)
+                and p3_distance_touch_product_argmax > 0.0
             )
             native_final_plan = native_order_action_planner.compute_final(
                 inventory=float(q),
@@ -8874,7 +8874,7 @@ class MakerEngine:
                 best_bid=float(best_bid),
                 best_ask=float(best_ask),
                 p3_side_bbo_floor_enabled=p3_active,
-                p3_delta_star=(p3_delta_star if p3_active else 0.0),
+                p3_distance_touch_product_argmax=(p3_distance_touch_product_argmax if p3_active else 0.0),
             )
             bid_price = float(native_final_plan.bid_price)
             ask_price = float(native_final_plan.ask_price)
@@ -9751,7 +9751,7 @@ class MakerEngine:
                 toxicity=bid_policy.toxicity,
                 markout_ema=bid_policy.markout_ema,
                 depth_age_s=bid_policy.depth_age_s,
-                microprice_shift_bps=bid_policy.microprice_shift_bps,
+                weighted_mid_proxy_shift_bps=bid_policy.weighted_mid_proxy_shift_bps,
                 l2_quote_flip_rate=bid_policy.l2_quote_flip_rate,
                 l2_book_refresh_ratio=bid_policy.l2_book_refresh_ratio,
                 l2_book_cancel_ratio=bid_policy.l2_book_cancel_ratio,
@@ -9788,7 +9788,7 @@ class MakerEngine:
                 toxicity=ask_policy.toxicity,
                 markout_ema=ask_policy.markout_ema,
                 depth_age_s=ask_policy.depth_age_s,
-                microprice_shift_bps=ask_policy.microprice_shift_bps,
+                weighted_mid_proxy_shift_bps=ask_policy.weighted_mid_proxy_shift_bps,
                 l2_quote_flip_rate=ask_policy.l2_quote_flip_rate,
                 l2_book_refresh_ratio=ask_policy.l2_book_refresh_ratio,
                 l2_book_cancel_ratio=ask_policy.l2_book_cancel_ratio,
@@ -11051,7 +11051,7 @@ class MakerEngine:
             )
         )
         delta_star = float(
-            self._last_quote_diagnostic_value("p3_touch_delta_star", 0.0)
+            self._last_quote_diagnostic_value("p3_distance_touch_product_argmax", 0.0)
             or 0.0
         )
         active = bool(enabled and math.isfinite(delta_star) and delta_star > 0.0)
@@ -11114,7 +11114,7 @@ class MakerEngine:
                 toxicity=float(context.get("toxicity", 0.5)),
                 markout_ema=float(context.get("markout_ema", 0.0)),
                 depth_age_s=float(context.get("depth_age_s", 0.0)),
-                microprice_shift_bps=float(context.get("microprice_shift_bps", 0.0)),
+                weighted_mid_proxy_shift_bps=float(context.get("weighted_mid_proxy_shift_bps", 0.0)),
                 l2_quote_flip_rate=float(context.get("l2_quote_flip_rate", 0.0)),
                 l2_book_refresh_ratio=float(context.get("l2_book_refresh_ratio", 0.0)),
                 l2_book_cancel_ratio=float(context.get("l2_book_cancel_ratio", 0.0)),

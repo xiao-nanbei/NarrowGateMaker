@@ -67,8 +67,7 @@ class ApiConfig:
 
 @dataclass
 class StrategyConfig:
-    kappa: float = 0.05                   # legacy internal spread-adapter fallback, not identified arrival intensity
-    p3_kappa_eff_override: float = 0.0    # frozen replay/config ABI; live preflight/runtime rejects any nonzero value
+    p3_touch_log_probability_distance_slope_override: float = 0.0    # frozen replay/config ABI; live preflight/runtime rejects any nonzero value
     order_size: float = 0.0026
     max_inventory: float = 0.026
     requote_interval: float = 10.0
@@ -80,11 +79,11 @@ class StrategyConfig:
     eta_inventory: float = 0.010
     a_spread: float = 0.010
     risk_per_order: float = 0.010
-    execution_intensity_slope: Optional[float] = None
-    risk_horizon_s: Optional[float] = None
-    historical_p3_scalar_adapter_enabled: bool = True
+    execution_intensity_slope: float = 0.05
+    risk_horizon_s: float = 1.0
+    p3_pair_spread_projection_enabled: bool = True
     p3_side_bbo_floor_enabled: bool = False
-    trade_intensity_acceleration_spread_mult: Optional[float] = None
+    trade_intensity_acceleration_spread_mult: float = 2.0
     max_spread_bps: float = 8.0           # pair-spread threshold; action is spread_cap_mode
     replace_min_price_change_ticks: float = 0.0      # live order lifecycle: min price delta before cancel/new; 0=disabled
     replace_min_price_change_ticks_reducing: float = 0.0
@@ -117,7 +116,6 @@ class StrategyConfig:
     # ── v1.1 legacy BER ABI: trade-intensity-burst guard ──
     # No book-depletion state enters this proxy; it is not Zhao--Linetsky BER.
     ber_guard_thresh: float = 1.2         # ema_fast/ema_slow ratio threshold (0=disabled)
-    ber_spread_mult: float = 2.0          # spread multiplier when BER active
     ber_exposure_add_only: bool = False   # optional research path: preserve guard only on pure add quotes
 
     # ── v1.2: volatility scaling; AMM LVR is analogy, not a CLOB optimum ──
@@ -140,7 +138,7 @@ class StrategyConfig:
     adverse_markout_decay_tau_s: float = 900.0
     adverse_dir_threshold: float = 0.0
     adverse_ret_bps_threshold: float = 0.0
-    adverse_microprice_shift_bps: float = 0.0
+    adverse_weighted_mid_proxy_shift_bps: float = 0.0
     adverse_spread_mult: float = 1.10
     adverse_thin_depth_threshold: float = 0.0
     adverse_thin_depth_mult: float = 1.0
@@ -149,7 +147,7 @@ class StrategyConfig:
     defense_markout_threshold: float = 2.0
     defense_dir_threshold: float = 0.05
     defense_ret_bps_threshold: float = 0.0
-    defense_microprice_shift_bps: float = 0.0
+    defense_weighted_mid_proxy_shift_bps: float = 0.0
     defense_spread_mult: float = 1.35
     defense_pause: bool = True
     defense_emergency_inventory_ratio: float = 0.50
@@ -492,9 +490,9 @@ class ExternalVenuesConfig:
 
 
 @dataclass
-class DepthMicropriceKappaConfig:
+class DepthWeightedMidDistanceDecayConfig:
     enabled: bool = False
-    microprice_levels: int = 3
+    weighted_mid_proxy_levels: int = 3
     kappa_levels: int = 5
     kappa_depth_baseline: float = 50.0
 
@@ -511,7 +509,7 @@ class DepthToxSpreadConfig:
     enabled: bool = False
     levels: int = 20
     imbalance_threshold: float = 0.65
-    microprice_shift_bps: float = 1.0
+    weighted_mid_proxy_shift_bps: float = 1.0
     spread_mult: float = 1.25
 
 
@@ -519,7 +517,7 @@ class DepthToxSpreadConfig:
 class DepthExecutionConfig:
     shadow_enabled: bool = False
     log_interval_requotes: int = 6
-    microprice_kappa: DepthMicropriceKappaConfig = field(default_factory=DepthMicropriceKappaConfig)
+    weighted_mid_distance_decay: DepthWeightedMidDistanceDecayConfig = field(default_factory=DepthWeightedMidDistanceDecayConfig)
     imbalance_asym: DepthImbalanceAsymConfig = field(default_factory=DepthImbalanceAsymConfig)
     depth_tox_spread: DepthToxSpreadConfig = field(default_factory=DepthToxSpreadConfig)
 
@@ -555,8 +553,7 @@ BACKTEST_PARAM_SOURCES = (
     ("async_order_lanes_enabled", ("api", "async_order_lanes_enabled")),
     ("cross_side_order_lanes_enabled", ("api", "cross_side_order_lanes_enabled")),
     ("async_order_lane_capacity", ("api", "async_order_lane_capacity")),
-    ("kappa", ("strategy", "kappa")),
-    ("p3_kappa_eff_override", ("strategy", "p3_kappa_eff_override")),
+    ("p3_touch_log_probability_distance_slope_override", ("strategy", "p3_touch_log_probability_distance_slope_override")),
     ("order_size", ("strategy", "order_size")),
     ("max_inventory", ("strategy", "max_inventory")),
     ("inventory_reference_qty", ("strategy", "inventory_reference_qty")),
@@ -566,8 +563,8 @@ BACKTEST_PARAM_SOURCES = (
     ("execution_intensity_slope", ("strategy", "execution_intensity_slope")),
     ("risk_horizon_s", ("strategy", "risk_horizon_s")),
     (
-        "historical_p3_scalar_adapter_enabled",
-        ("strategy", "historical_p3_scalar_adapter_enabled"),
+        "p3_pair_spread_projection_enabled",
+        ("strategy", "p3_pair_spread_projection_enabled"),
     ),
     ("p3_side_bbo_floor_enabled", ("strategy", "p3_side_bbo_floor_enabled")),
     (
@@ -636,7 +633,6 @@ BACKTEST_PARAM_SOURCES = (
     ("max_exec_book_visible_age_s", ("risk", "max_exec_book_visible_age_s")),
     ("max_exec_book_source_lag_s", ("risk", "max_exec_book_source_lag_s")),
     ("ber_guard_thresh", ("strategy", "ber_guard_thresh")),
-    ("ber_spread_mult", ("strategy", "ber_spread_mult")),
     ("ber_exposure_add_only", ("strategy", "ber_exposure_add_only")),
     ("vol_power", ("strategy", "vol_power")),
     ("markout_ema_span_fills", ("strategy", "markout_ema_span_fills")),
@@ -655,7 +651,7 @@ BACKTEST_PARAM_SOURCES = (
     ("adverse_markout_decay_tau_s", ("strategy", "adverse_markout_decay_tau_s")),
     ("adverse_dir_threshold", ("strategy", "adverse_dir_threshold")),
     ("adverse_ret_bps_threshold", ("strategy", "adverse_ret_bps_threshold")),
-    ("adverse_microprice_shift_bps", ("strategy", "adverse_microprice_shift_bps")),
+    ("adverse_weighted_mid_proxy_shift_bps", ("strategy", "adverse_weighted_mid_proxy_shift_bps")),
     ("adverse_spread_mult", ("strategy", "adverse_spread_mult")),
     ("adverse_thin_depth_threshold", ("strategy", "adverse_thin_depth_threshold")),
     ("adverse_thin_depth_mult", ("strategy", "adverse_thin_depth_mult")),
@@ -664,7 +660,7 @@ BACKTEST_PARAM_SOURCES = (
     ("defense_markout_threshold", ("strategy", "defense_markout_threshold")),
     ("defense_dir_threshold", ("strategy", "defense_dir_threshold")),
     ("defense_ret_bps_threshold", ("strategy", "defense_ret_bps_threshold")),
-    ("defense_microprice_shift_bps", ("strategy", "defense_microprice_shift_bps")),
+    ("defense_weighted_mid_proxy_shift_bps", ("strategy", "defense_weighted_mid_proxy_shift_bps")),
     ("defense_spread_mult", ("strategy", "defense_spread_mult")),
     ("defense_pause", ("strategy", "defense_pause")),
     ("defense_emergency_inventory_ratio", ("strategy", "defense_emergency_inventory_ratio")),
@@ -775,7 +771,7 @@ BACKTEST_PARAM_SOURCES = (
     ("depth_tox_enabled", ("depth_execution", "depth_tox_spread", "enabled")),
     ("depth_tox_levels", ("depth_execution", "depth_tox_spread", "levels")),
     ("depth_tox_imbalance_threshold", ("depth_execution", "depth_tox_spread", "imbalance_threshold")),
-    ("depth_tox_microprice_shift_bps", ("depth_execution", "depth_tox_spread", "microprice_shift_bps")),
+    ("depth_tox_weighted_mid_proxy_shift_bps", ("depth_execution", "depth_tox_spread", "weighted_mid_proxy_shift_bps")),
     ("depth_tox_spread_mult", ("depth_execution", "depth_tox_spread", "spread_mult")),
     ("sync_adjust_degrade_enabled", ("risk", "sync_adjust_degrade_enabled")),
     ("sync_adjust_degrade_count", ("risk", "sync_adjust_degrade_count")),
@@ -1268,7 +1264,7 @@ def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None
     sign = float(getattr(cfg.strategy, "markout_side_asymmetry_sign", 1.0))
     if sign not in {-1.0, 1.0}:
         raise ValueError("strategy.markout_side_asymmetry_sign must be -1 or +1")
-    for field_name in ("eta_inventory", "a_spread", "risk_per_order", "kappa", "order_size", "max_inventory"):
+    for field_name in ("eta_inventory", "a_spread", "risk_per_order", "execution_intensity_slope", "order_size", "max_inventory"):
         value = float(getattr(cfg.strategy, field_name))
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"strategy.{field_name} must be positive and finite")
@@ -1289,11 +1285,11 @@ def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None
     ):
         raw_value = getattr(cfg.strategy, field_name, None)
         if raw_value is None:
-            continue
+            raise ValueError(f"strategy.{field_name} must be explicitly finite and positive")
         value = float(raw_value)
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"strategy.{field_name} must be positive and finite")
-    if bool(cfg.strategy.historical_p3_scalar_adapter_enabled) and bool(
+    if bool(cfg.strategy.p3_pair_spread_projection_enabled) and bool(
         cfg.strategy.p3_side_bbo_floor_enabled
     ):
         raise ValueError(
@@ -1304,10 +1300,10 @@ def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None
             "P3 side-BBO floor cannot be combined with spread_cap_mode=compress; "
             "later inward compression would violate the side-specific distance floor"
         )
-    p3_override = float(getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0)
+    p3_override = float(getattr(cfg.strategy, "p3_touch_log_probability_distance_slope_override", 0.0) or 0.0)
     if not math.isfinite(p3_override) or p3_override != 0.0:
         raise ValueError(
-            "strategy.p3_kappa_eff_override must remain zero; P3 identity comes "
+            "strategy.p3_touch_log_probability_distance_slope_override must remain zero; P3 identity comes "
             "from the hash-bound artifact"
         )
     quote_horizon_s = float(getattr(cfg.strategy, "quote_horizon_s", 0.0))
@@ -1634,7 +1630,7 @@ def reload_config(*_args):
         with _lock:
             _cfg = cfg
         logger.info(f"Reloaded {active_path}: inventory_coefficient={cfg.strategy.eta_inventory}, "
-                    f"fallback_κ={cfg.strategy.kappa}, vol_blend={cfg.ml.vol_blend}")
+                    f"fallback_κ={cfg.strategy.execution_intensity_slope}, vol_blend={cfg.ml.vol_blend}")
         if _engine_ref is not None:
             logger.info("Config propagated to running engine via on_config_reload")
     except Exception as e:

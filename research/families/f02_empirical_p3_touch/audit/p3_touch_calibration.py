@@ -20,7 +20,7 @@ import pandas as pd
 
 from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 
-SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v3"
+SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v4"
 
 
 def _sha256(path: Path) -> str:
@@ -353,8 +353,8 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
     )
     delta_star = model.distance_touch_product_argmax(delta_max=float(args.distance_max))
     kappa_eff = model.touch_log_probability_distance_slope(delta_star)
-    metadata["delta_star"] = delta_star
-    metadata["kappa_eff"] = kappa_eff
+    metadata["distance_touch_product_argmax"] = delta_star
+    metadata["touch_log_probability_distance_slope"] = kappa_eff
     metadata["probability_at_delta_star"] = float(model.prob(delta_star))
     metadata["validation_probability_at_delta_star"] = float(np.interp(
         delta_star, grid, summaries["validation"]["probability_grid"]
@@ -373,8 +373,8 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         "event_type": "touch",
         "horizon_s": 10.0,
         "distance_unit": "USDC_per_BTC",
-        "delta_star": delta_star,
-        "kappa_eff": kappa_eff,
+        "distance_touch_product_argmax": delta_star,
+        "touch_log_probability_distance_slope": kappa_eff,
         "metadata": metadata,
         "input_manifest": input_manifest,
         "inputs": input_rows,
@@ -413,8 +413,8 @@ def main() -> int:
     report = calibrate(args)
     print(json.dumps({
         "schema_version": report["schema_version"],
-        "delta_star": report["delta_star"],
-        "kappa_eff": report["kappa_eff"],
+        "distance_touch_product_argmax": report["distance_touch_product_argmax"],
+        "touch_log_probability_distance_slope": report["touch_log_probability_distance_slope"],
         "model_path": report["model_path"],
     }, sort_keys=True))
     return 0

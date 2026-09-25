@@ -572,7 +572,7 @@ LiveFinalOrderPlan compute_live_final_order_plan(
         boundary.bid_existing_price < 0.0 ||
         !std::isfinite(boundary.ask_existing_price) ||
         boundary.ask_existing_price < 0.0 ||
-        !std::isfinite(boundary.p3_delta_star)) {
+        !std::isfinite(boundary.p3_distance_touch_product_argmax)) {
         return out;
     }
 
@@ -583,15 +583,15 @@ LiveFinalOrderPlan compute_live_final_order_plan(
         LiveFinalOrderBoundaryP3SideBboFloor
     );
     if (p3_active) {
-        if (boundary.p3_delta_star <= 0.0) {
+        if (boundary.p3_distance_touch_product_argmax <= 0.0) {
             return out;
         }
         out.p3_buy_floor_price = floor_tick(
-            boundary.best_bid - boundary.p3_delta_star,
+            boundary.best_bid - boundary.p3_distance_touch_product_argmax,
             tick
         );
         out.p3_sell_floor_price = ceil_tick(
-            boundary.best_ask + boundary.p3_delta_star,
+            boundary.best_ask + boundary.p3_distance_touch_product_argmax,
             tick
         );
         const double tolerance = std::max(tick * 1e-9, 1e-12);

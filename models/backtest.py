@@ -57,14 +57,14 @@ TICK = 0.1  # legacy bar diagnostic tick; tick replay/live config is authoritati
 
 # ── Legacy bar-level sweep grids (v2.0 reachability-constrained) ────
 # These grids are archival diagnostics.  The current tick/live path uses
-# p3_kappa_eff when available, so strategy.kappa is not an active tuning axis.
+# p3_touch_log_probability_distance_slope when available, so strategy.execution_intensity_slope is not an active tuning axis.
 SWEEP_COARSE = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}, {"eta_inventory": 0.2, "a_spread": 0.2, "risk_per_order": 0.2}, {"eta_inventory": 0.5, "a_spread": 0.5, "risk_per_order": 0.5}, {"eta_inventory": 1.0, "a_spread": 1.0, "risk_per_order": 1.0}],
-    "kappa": [0.02, 0.05, 0.1, 0.5],
+    "execution_intensity_slope": [0.02, 0.05, 0.1, 0.5],
 }
 SWEEP_REFINE = {
     "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}, {"eta_inventory": 0.2, "a_spread": 0.2, "risk_per_order": 0.2}],
-    "kappa": [0.02, 0.05, 0.1, 0.2],
+    "execution_intensity_slope": [0.02, 0.05, 0.1, 0.2],
     "max_inventory": [0.01, 0.02, 0.026],
     "order_size": [0.001, 0.0026],
 }
@@ -127,7 +127,7 @@ def prepare_arrays(bars, sigma_window=60):
 
 @njit_opt
 def _simulate_core(ts, hi, lo, cl, ssq,
-                   inventory_price_risk, risk_per_order, kappa, order_size, max_inv,
+                   inventory_price_risk, risk_per_order, execution_intensity_slope, order_size, max_inv,
                    rq_ms, fee, taker_fee, tick, sample_rate):
     """Hot loop — compiled to ARM64 by Numba on M4, or runs as CPython."""
     n = len(ts)
@@ -145,7 +145,7 @@ def _simulate_core(ts, hi, lo, cl, ssq,
     tsprd = 0.0; mx = 0.0; si_sum = 0.0
     si = 0
 
-    spread_const = (2.0 / risk_per_order) * np.log(1.0 + risk_per_order / kappa)
+    spread_const = (2.0 / risk_per_order) * np.log(1.0 + risk_per_order / execution_intensity_slope)
 
     for i in range(n):
         mid = cl[i]
@@ -205,7 +205,7 @@ def simulate(ts, hi, lo, cl, ssq, params):
     """Run single backtest and return metrics dict."""
     inventory_price_risk = params["eta_inventory"] / params["inventory_reference_qty"]
     risk_per_order = params["risk_per_order"]
-    kappa   = params["kappa"]
+    execution_intensity_slope   = params["execution_intensity_slope"]
     osiz    = params["order_size"]
     maxinv  = params["max_inventory"]
     rq_ms   = int(params["requote_interval"] * 1000)
@@ -215,7 +215,7 @@ def simulate(ts, hi, lo, cl, ssq, params):
     sr      = max(1, rq_ms // 1000)
 
     raw = _simulate_core(ts, hi, lo, cl, ssq,
-                         inventory_price_risk, risk_per_order, kappa, osiz, maxinv,
+                         inventory_price_risk, risk_per_order, execution_intensity_slope, osiz, maxinv,
                          rq_ms, fee, taker_fee, tick, sr)
     return _unpack(raw, params)
 
@@ -251,7 +251,7 @@ def _unpack(raw, params):
 
     return {
         "eta_inventory": params["eta_inventory"], "risk_per_order": params["risk_per_order"],
-        "kappa": params["kappa"],
+        "execution_intensity_slope": params["execution_intensity_slope"],
         "pnl": fp,
         "pnl_per_day": fp / max(n_days, 0.01),
         "sharpe": sharpe,
@@ -363,7 +363,7 @@ _HDR = (f"{'Rank':>4s}  {'γ':>7s}  {'κ':>7s}  {'OrdSz':>6s}  {'MaxPos':>6s}  "
 
 
 def _row(i, r):
-    return (f"{i:4d}  {r['risk_per_order']:7.3f}  {r['kappa']:7.3f}  "
+    return (f"{i:4d}  {r['risk_per_order']:7.3f}  {r['execution_intensity_slope']:7.3f}  "
             f"{r.get('order_size',0.01):6.3f}  "
             f"{r.get('max_inventory',0.1):6.2f}  "
             f"{r['pnl']:10.2f}  {r['pnl_per_day']:9.2f}  "

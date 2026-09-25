@@ -642,7 +642,7 @@ def main(argv: list[str] | None = None) -> None:
         "--live-active-sobol",
         action="store_true",
         help=(
-            "Generate coupled live-active Sobol arms: p3_kappa_eff, quote/spread, "
+            "Generate coupled live-active Sobol arms: p3_touch_log_probability_distance_slope, quote/spread, "
             "guard, cooldown, and ML knobs with paired cap/base."
         ),
     )

@@ -26,11 +26,11 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 
 它**不是**打包好的交易机器人，也不附带已经晋级的 live 参数集。NarrowGate 的核心定位是**负向过滤器**：判断 maker 在什么状态下绝对不应增加风险敞口，而不是预测下一步涨跌。当毒性、波动、库存、数据质量或运行状态不安全或含糊时，默认行为必须暂停对应方向的增仓或 fail closed。任何向内压缩点差的行为都只能是显式研究 arm，不能作为安全默认值。
 
-当前维护的报价核心是 **AS-shaped empirical quote controller（AS 形状的经验报价控制器）**，不是 Avellaneda--Stoikov 或 GLFT 的精确复现，也不声称近似其最优解。AS 只提供 reservation-price 的形状；代码中的 pair spread、regime multiplier、depth adapter 和 P3 adapter 都是经验控制。P3 估计的是固定期限、相对同侧 BBO 的 **touch opportunity**，不包含 queue-ahead 或 touch-to-fill 转换；历史兼容的局部 `-d log(P_touch)/d distance` adapter 既不是 fill hazard，也不是 AS/GLFT 的订单到达强度 `kappa`。冻结的 `2 * delta_star` 机制只是对称 pair-spread floor，不保证每一侧相对同侧 BBO 的距离。
+当前维护的报价核心是 **AS-shaped empirical quote controller（AS 形状的经验报价控制器）**，不是 Avellaneda--Stoikov 或 GLFT 的精确复现，也不声称近似其最优解。AS 只提供 reservation-price 的形状；价差、状态倍率、深度调整和 P3 投影均为经验控制。P3 估计固定期限、相对同侧 BBO 的 **touch opportunity**，不包含前方排队或触达转成交概率。`touch_log_probability_distance_slope` 是 `-d log(P_touch)/d price_distance`，不是成交 hazard 或订单到达强度。两倍 `distance_touch_product_argmax` 构成对称总价差下限，不保证逐侧 BBO 距离，也不是完整净利润最优解。
 
-为保持 replay、模型、JSON 与 C++ ABI 稳定，公开字段仍保留历史名称。本文把 `microprice` 解释为 top-N 数量形成的 **weighted-mid proxy**，把墙钟窗口 `vpin_*` 解释为 **clock-volume imbalance**，把 `ber_*` 解释为 **trade-intensity-burst guard**；这些名称均不表示复现同名论文 estimator。`gamma` 也只是兼容输入：`q_ref`、订单量 `z`、`eta_inventory` 与 `a_spread` 用于暴露当前实现的单位；省略新系数时只复现冻结 B0 数值，不会自动得到可跨资金规模、交易对或订单量迁移的 CARA 风险厌恶参数。
+当前报价接口使用 **weighted-mid proxy** 正式名称，并要求显式提供 `eta_inventory`、`a_spread` 和 `risk_per_order`。不接受退役的报价 `gamma`、`kappa` 或价差倍率别名。`inventory_reference_qty` 定义库存归一化；这些系数不代表可跨账户迁移的 CARA 风险厌恶参数。墙钟窗口成交量不平衡与成交强度加速仍是经验防御指标，不表示复现名称相近的论文估计器。
 
-这次单位合同拆分是保持行为不变的 B0 迁移：使用 legacy mapping 时，最终 bid/ask、历史 P3 pair-spread floor、post-only correction 与 tick rounding 必须完全等价。它既不改变 live 报价，也不证明映射后的系数在经济上最优。引入含真实订单量的 quantity-aware spread、真正逐侧的 same-side-BBO floor、H5/H10 风险期限，或 variance-time cooldown，都会改变订单或 campaign 路径；它们是相互独立的研究候选，目前没有 economic、action 或 live authority。
+单位合同迁移必须保持最终 bid/ask、P3 pair-spread floor、post-only correction 与 tick rounding 不变。历史配置只在隔离的一次性迁移中转换，不由运行时回退解释。它不改变 live 报价，也不证明系数在经济上最优。含真实订单量的价差、真正逐侧的同侧 BBO 距离下限、不同风险期限或方差时间冷却，都会改变订单或持仓路径，需要独立研究与部署授权。
 
 运行时时钟也各有边界。UTC 日切只重置 daily PnL baseline、当日成交聚合等日度会计/统计状态；连续亏损状态与 session marked-equity high-water mark 会跨 UTC 日切保留，库存和未结束的 campaign 也继续存在。Execution-book visible-age/source-lag 门用于撤单或阻断报价；更长的 WebSocket silence timeout 只是 transport reconnect watchdog。公共 timeout 是部署示例，不是适用于所有 host 的延迟规律。
 

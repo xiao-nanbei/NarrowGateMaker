@@ -421,7 +421,7 @@ def _policy_distance_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     from models import backtest_tick as bt
     from models.backtest_config import (
-        add_fill_probability_params,
+        add_touch_probability_params,
         load_tick_base_params,
     )
     from models.data_windows import load_tick_window
@@ -491,13 +491,12 @@ def _policy_distance_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
             f"{day} policy support lacks native authority: "
             f"{window.book_source_authority}"
         )
-    add_fill_probability_params(
+    add_touch_probability_params(
         params,
         model_path=resolve_portable_path(
             str(payload["current_v2_p3_path"]), root=ROOT
         ).resolve(),
         label="P3 current v2 policy support",
-        strict=True,
     )
     result = bt._simulate_tick_with_engine(
         "cpp",

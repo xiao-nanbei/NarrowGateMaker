@@ -386,8 +386,8 @@ struct TickReplayInput {
     // static QuoteCoreConfig values until the first ready row, then holds the
     // latest row exactly like the 10-second ML prediction surface.
     ArrayView<std::int64_t> p3_ts_ms;
-    ArrayView<double> p3_delta_star;
-    ArrayView<double> p3_kappa_eff;
+    ArrayView<double> p3_distance_touch_product_argmax;
+    ArrayView<double> p3_touch_log_probability_distance_slope;
     // Per-ready-ML-row contribution from scorer features that are not
     // overwritten by the current quote context. Python compiles categorical
     // values and arbitrary Prediction.feature_dict fields once; C++ combines
@@ -754,7 +754,7 @@ struct TraceOrderRow {
     double tox_bid = 0.5;
     double tox_ask = 0.5;
     double book_imb = 0.0;
-    double microprice_shift_bps = 0.0;
+    double weighted_mid_proxy_shift_bps = 0.0;
     double near_depth_total = 0.0;
     double l2_near_depth_total = 0.0;
     double l2_quote_flip_rate = 0.0;
@@ -791,7 +791,7 @@ struct TraceOrderRow {
     bool adverse_markout = false;
     bool adverse_direction = false;
     bool adverse_ret = false;
-    bool adverse_microprice = false;
+    bool adverse_weighted_mid_proxy = false;
     bool adverse_thin_depth = false;
     bool local_extreme_guard = false;
     bool local_extreme_pause = false;
@@ -804,7 +804,7 @@ struct TraceOrderRow {
     bool defense_markout = false;
     bool defense_direction = false;
     bool defense_ret = false;
-    bool defense_microprice = false;
+    bool defense_weighted_mid_proxy = false;
     double defense_spread_mult = 1.0;
     bool final_compressed = false;
     bool bid_adverse = false;

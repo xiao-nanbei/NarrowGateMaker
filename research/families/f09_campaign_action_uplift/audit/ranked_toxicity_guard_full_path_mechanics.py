@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 from execution.chunked_parquet_journal import iter_chunked_parquet_journal
 from research.families.f09_campaign_action_uplift.audit.ranked_toxicity_guard_authoritative_replay_v1_5 import (
     RankedToxicityBaselineShadowCaptureV15,
@@ -107,7 +107,7 @@ def _repo_path(value: str | Path) -> Path:
 
 
 def _data_path(value: str | Path) -> Path:
-    return relocate_marketdata_path(Path(value).expanduser()).resolve()
+    return resolve_portable_path(Path(value).expanduser()).resolve()
 
 
 def _require_identity(identity: Mapping[str, Any], label: str) -> Path:

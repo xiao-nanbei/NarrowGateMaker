@@ -55,7 +55,7 @@ def _fixture(tmp_path: Path) -> dict:
     model = repo / "model"
     model.mkdir()
     (model / "bundle_meta.json").write_text('{"heads":13}\n', encoding="utf-8")
-    p3 = model / "fill_prob_params.json"
+    p3 = model / "touch_probability.json"
     p3.write_text('{"schema":"v2"}\n', encoding="utf-8")
     mount = tmp_path / "ORICO"
     mount.mkdir()

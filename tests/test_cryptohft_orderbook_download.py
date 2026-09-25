@@ -80,9 +80,10 @@ def test_daily_hour_resolution_respects_explicit_roots(tmp_path, monkeypatch, ro
     root = {"explicit": tmp_path / "selected", "same_name": tmp_path / "cryptohftdata",
             "legacy": legacy, "relocated_legacy": relocated, "current_ingestion": ingestion}[root_kind]
     hour = root / "binance_futures/2026-01-02/03/BTCUSDC_orderbook.parquet.zst"
-    permitted = root_kind in {"legacy", "relocated_legacy", "current_ingestion"}
-    assert cryptohft_orderbook.raw_hour_available(hour) is permitted
-    assert (cryptohft_orderbook.raw_hour_storage_path(hour) == canonical) is permitted
+    # A global file or historical root registration cannot satisfy an
+    # explicitly selected input root. Only its actual adjacent day may do so.
+    assert not cryptohft_orderbook.raw_hour_available(hour)
+    assert cryptohft_orderbook.raw_hour_storage_path(hour) != canonical
 
     # Every explicitly selected root may use its own daily container instead.
     adjacent = root / "binance_futures/BTCUSDC/2026-01-02/incremental_book_L2.parquet"

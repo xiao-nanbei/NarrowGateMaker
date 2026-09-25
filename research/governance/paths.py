@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from data_paths import relocate_marketdata_path
+from data_paths import resolve_portable_path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LAYOUT_V1_MANIFEST = REPOSITORY_ROOT / "research/governance/migrations/layout_v1.json"
@@ -251,14 +251,14 @@ def resolve_research_path(path: str | Path, *, require_exists: bool = True) -> P
             )
         return candidate.resolve(strict=False)
 
-    candidate = relocate_marketdata_path(path)
+    candidate = resolve_portable_path(path)
     if not candidate.is_absolute():
         candidate = REPOSITORY_ROOT / candidate
     if candidate.exists():
         return candidate.resolve()
 
     # A public placeholder has already been expanded by
-    # ``relocate_marketdata_path``.  Do not reinterpret its original literal
+    # ``resolve_portable_path``.  Do not reinterpret its original literal
     # (for example ``${NARROWGATE_DATA_ROOT}/...``) as a repository-relative
     # migration key when the target is intentionally not materialized yet.
     if "${" in str(path):

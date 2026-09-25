@@ -162,7 +162,7 @@ class F05RiskWidenPolicy:
                         raise
                     risks[side] = None
                     continue
-                risk = float(prediction.toxic_30s)
+                risk = float(prediction.fill_and_extreme_adverse_probability_30000ms)
                 if risk is not None and not math.isfinite(risk):
                     risk = None
                 if risk is not None and not 0 <= risk <= 1:

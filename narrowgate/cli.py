@@ -64,7 +64,6 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         "narrowgate_tick_window_cache_dir_env": _environment_state(
             "NARROWGATE_TICK_WINDOW_CACHE_DIR"
         ),
-        "legacy_mm_data_root": _environment_state("MM_DATA_ROOT"),
         "narrowgate_live_config": _environment_state("NARROWGATE_LIVE_CONFIG"),
         "path_details_command": "narrowgate paths",
         "numpy": _has_module("numpy"),
@@ -100,7 +99,9 @@ def cmd_quote_demo(_args: argparse.Namespace) -> int:
             eta_inventory=0.01,
             a_spread=0.01,
             risk_per_order=0.01,
-            kappa=1.0,
+            execution_intensity_slope=1.0,
+            risk_horizon_s=1.0,
+            trade_intensity_acceleration_spread_mult=2.0,
             tick_size=0.1,
             lot_size=0.001,
             maker_fee=0.0,

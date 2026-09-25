@@ -24,7 +24,7 @@ def _decision_rows() -> pd.DataFrame:
             "reason_text": "none",
             "inventory_ratio": 0.0,
             "markout_ema": 0.0,
-            "microprice_shift_bps": 0.0,
+            "weighted_mid_proxy_shift_bps": 0.0,
             "spread_mult": 1.0,
             "mid": 100.0,
             "action": "replace",

@@ -343,12 +343,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -945,7 +945,6 @@ void bind_quote_core(py::module_& m) {
     config.def(py::init<>());
 
 #define BIND_QUOTE_CONFIG_FIELD(field) config.def_readwrite(#field, &QuoteCoreConfig::field)
-    BIND_QUOTE_CONFIG_FIELD(kappa);
     BIND_QUOTE_CONFIG_FIELD(tick_size);
     BIND_QUOTE_CONFIG_FIELD(lot_size);
     BIND_QUOTE_CONFIG_FIELD(maker_fee);
@@ -971,16 +970,15 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(liquidity_spread_scale_max);
     BIND_QUOTE_CONFIG_FIELD(vol_power);
     BIND_QUOTE_CONFIG_FIELD(kappa_ratio);
-    BIND_QUOTE_CONFIG_FIELD(p3_delta_star);
-    BIND_QUOTE_CONFIG_FIELD(p3_kappa_eff);
+    BIND_QUOTE_CONFIG_FIELD(p3_distance_touch_product_argmax);
+    BIND_QUOTE_CONFIG_FIELD(p3_touch_log_probability_distance_slope);
     BIND_QUOTE_CONFIG_FIELD(use_bar_pricing);
-    BIND_QUOTE_CONFIG_FIELD(use_depth_microprice);
+    BIND_QUOTE_CONFIG_FIELD(use_depth_weighted_mid_proxy);
     BIND_QUOTE_CONFIG_FIELD(use_depth_kappa);
-    BIND_QUOTE_CONFIG_FIELD(microprice_levels);
+    BIND_QUOTE_CONFIG_FIELD(weighted_mid_proxy_levels);
     BIND_QUOTE_CONFIG_FIELD(kappa_levels);
     BIND_QUOTE_CONFIG_FIELD(kappa_depth_baseline);
     BIND_QUOTE_CONFIG_FIELD(depth_kappa_ratio);
-    BIND_QUOTE_CONFIG_FIELD(ber_spread_mult);
     BIND_QUOTE_CONFIG_FIELD(markout_spread_scale);
     BIND_QUOTE_CONFIG_FIELD(markout_side_asymmetry_sign);
     BIND_QUOTE_CONFIG_FIELD(inventory_skew_strength);
@@ -992,7 +990,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(depth_tox_enabled);
     BIND_QUOTE_CONFIG_FIELD(depth_tox_levels);
     BIND_QUOTE_CONFIG_FIELD(depth_tox_imbalance_threshold);
-    BIND_QUOTE_CONFIG_FIELD(depth_tox_microprice_shift_bps);
+    BIND_QUOTE_CONFIG_FIELD(depth_tox_weighted_mid_proxy_shift_bps);
     BIND_QUOTE_CONFIG_FIELD(depth_tox_spread_mult);
     BIND_QUOTE_CONFIG_FIELD(dynamic_cap_enabled);
     BIND_QUOTE_CONFIG_FIELD(max_spread_bps);
@@ -1015,7 +1013,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(adverse_markout_pause_hybrid);
     BIND_QUOTE_CONFIG_FIELD(adverse_dir_threshold);
     BIND_QUOTE_CONFIG_FIELD(adverse_ret_bps_threshold);
-    BIND_QUOTE_CONFIG_FIELD(adverse_microprice_shift_bps);
+    BIND_QUOTE_CONFIG_FIELD(adverse_weighted_mid_proxy_shift_bps);
     BIND_QUOTE_CONFIG_FIELD(adverse_spread_mult);
     BIND_QUOTE_CONFIG_FIELD(adverse_thin_depth_threshold);
     BIND_QUOTE_CONFIG_FIELD(adverse_thin_depth_mult);
@@ -1024,7 +1022,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(defense_markout_threshold);
     BIND_QUOTE_CONFIG_FIELD(defense_dir_threshold);
     BIND_QUOTE_CONFIG_FIELD(defense_ret_bps_threshold);
-    BIND_QUOTE_CONFIG_FIELD(defense_microprice_shift_bps);
+    BIND_QUOTE_CONFIG_FIELD(defense_weighted_mid_proxy_shift_bps);
     BIND_QUOTE_CONFIG_FIELD(defense_spread_mult);
     BIND_QUOTE_CONFIG_FIELD(defense_pause);
     BIND_QUOTE_CONFIG_FIELD(defense_emergency_inventory_ratio);
@@ -1037,7 +1035,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(risk_per_order);
     BIND_QUOTE_CONFIG_FIELD(execution_intensity_slope);
     BIND_QUOTE_CONFIG_FIELD(risk_horizon_s);
-    BIND_QUOTE_CONFIG_FIELD(historical_p3_scalar_adapter_enabled);
+    BIND_QUOTE_CONFIG_FIELD(p3_pair_spread_projection_enabled);
     BIND_QUOTE_CONFIG_FIELD(p3_side_bbo_floor_enabled);
     BIND_QUOTE_CONFIG_FIELD(p3_identity_required);
     BIND_QUOTE_CONFIG_FIELD(p3_event_type);
@@ -1071,7 +1069,7 @@ void bind_quote_core(py::module_& m) {
     BIND_SIDE_CONTEXT_FIELD(adverse_markout);
     BIND_SIDE_CONTEXT_FIELD(adverse_direction);
     BIND_SIDE_CONTEXT_FIELD(adverse_ret);
-    BIND_SIDE_CONTEXT_FIELD(adverse_microprice);
+    BIND_SIDE_CONTEXT_FIELD(adverse_weighted_mid_proxy);
     BIND_SIDE_CONTEXT_FIELD(adverse_thin_depth);
     BIND_SIDE_CONTEXT_FIELD(defense_guard);
     BIND_SIDE_CONTEXT_FIELD(defense_pause);
@@ -1080,7 +1078,7 @@ void bind_quote_core(py::module_& m) {
     BIND_SIDE_CONTEXT_FIELD(defense_markout);
     BIND_SIDE_CONTEXT_FIELD(defense_direction);
     BIND_SIDE_CONTEXT_FIELD(defense_ret);
-    BIND_SIDE_CONTEXT_FIELD(defense_microprice);
+    BIND_SIDE_CONTEXT_FIELD(defense_weighted_mid_proxy);
     BIND_SIDE_CONTEXT_FIELD(defense_spread_mult);
     BIND_SIDE_CONTEXT_FIELD(mid_guard);
     BIND_SIDE_CONTEXT_FIELD(post_only);
@@ -1148,7 +1146,7 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_RESULT_FIELD(raw_asym_shift);
     BIND_QUOTE_RESULT_FIELD(raw_quote_skew);
     BIND_QUOTE_RESULT_FIELD(book_imb);
-    BIND_QUOTE_RESULT_FIELD(microprice_shift_bps);
+    BIND_QUOTE_RESULT_FIELD(weighted_mid_proxy_shift_bps);
     BIND_QUOTE_RESULT_FIELD(near_depth_total);
     BIND_QUOTE_RESULT_FIELD(kappa_before_depth);
     BIND_QUOTE_RESULT_FIELD(kappa_used);
@@ -1467,7 +1465,7 @@ void bind_quote_core(py::module_& m) {
             py::array_t<double> raw_half_spread(n), capped_half_spread(n), raw_mid_shift(n);
             py::array_t<double> raw_reservation_shift(n), raw_asym_shift(n), asym(n);
             py::array_t<double> fair(n), raw_quote_skew(n), near_depth_total(n);
-            py::array_t<double> book_imb(n), microprice_shift_bps(n), kappa_before_depth(n);
+            py::array_t<double> book_imb(n), weighted_mid_proxy_shift_bps(n), kappa_before_depth(n);
             py::array_t<double> kappa_used(n), depth_tox_mult(n), cap_bps(n), max_spread(n);
             py::array_t<double> bid_raw_price(n), ask_raw_price(n), bid_pre_guard_price(n), ask_pre_guard_price(n);
             py::array_t<double> bid_final_price(n), ask_final_price(n);
@@ -1506,7 +1504,7 @@ void bind_quote_core(py::module_& m) {
             auto* raw_quote_skew_ptr = raw_quote_skew.mutable_data();
             auto* near_depth_total_ptr = near_depth_total.mutable_data();
             auto* book_imb_ptr = book_imb.mutable_data();
-            auto* microprice_shift_bps_ptr = microprice_shift_bps.mutable_data();
+            auto* microprice_shift_bps_ptr = weighted_mid_proxy_shift_bps.mutable_data();
             auto* kappa_before_depth_ptr = kappa_before_depth.mutable_data();
             auto* kappa_used_ptr = kappa_used.mutable_data();
             auto* depth_tox_mult_ptr = depth_tox_mult.mutable_data();
@@ -1609,7 +1607,7 @@ void bind_quote_core(py::module_& m) {
                     raw_quote_skew_ptr[i] = result.raw_quote_skew;
                     near_depth_total_ptr[i] = result.near_depth_total;
                     book_imb_ptr[i] = result.book_imb;
-                    microprice_shift_bps_ptr[i] = result.microprice_shift_bps;
+                    microprice_shift_bps_ptr[i] = result.weighted_mid_proxy_shift_bps;
                     kappa_before_depth_ptr[i] = result.kappa_before_depth;
                     kappa_used_ptr[i] = result.kappa_used;
                     depth_tox_mult_ptr[i] = result.depth_tox_mult;
@@ -1650,8 +1648,8 @@ void bind_quote_core(py::module_& m) {
                     ask_adverse_direction_ptr[i] = result.sell.adverse_direction ? 1 : 0;
                     bid_adverse_ret_ptr[i] = result.buy.adverse_ret ? 1 : 0;
                     ask_adverse_ret_ptr[i] = result.sell.adverse_ret ? 1 : 0;
-                    bid_adverse_microprice_ptr[i] = result.buy.adverse_microprice ? 1 : 0;
-                    ask_adverse_microprice_ptr[i] = result.sell.adverse_microprice ? 1 : 0;
+                    bid_adverse_microprice_ptr[i] = result.buy.adverse_weighted_mid_proxy ? 1 : 0;
+                    ask_adverse_microprice_ptr[i] = result.sell.adverse_weighted_mid_proxy ? 1 : 0;
                     bid_adverse_thin_depth_ptr[i] = result.buy.adverse_thin_depth ? 1 : 0;
                     ask_adverse_thin_depth_ptr[i] = result.sell.adverse_thin_depth ? 1 : 0;
                     bid_defense_guard_ptr[i] = result.buy.defense_guard ? 1 : 0;
@@ -1708,7 +1706,7 @@ void bind_quote_core(py::module_& m) {
             out["raw_quote_skew"] = raw_quote_skew;
             out["near_depth_total"] = near_depth_total;
             out["book_imb"] = book_imb;
-            out["microprice_shift_bps"] = microprice_shift_bps;
+            out["weighted_mid_proxy_shift_bps"] = weighted_mid_proxy_shift_bps;
             out["kappa_before_depth"] = kappa_before_depth;
             out["kappa_used"] = kappa_used;
             out["depth_tox_mult"] = depth_tox_mult;

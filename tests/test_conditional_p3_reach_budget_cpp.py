@@ -18,12 +18,16 @@ def _params(*, initial_inventory: float = 0.0):
     params.initial_entry_price = 100.0 if initial_inventory else 0.0
     params.initial_sigma_sq = 1.0
     params.trace_quotes_max = 1_000
-    params.quote.gamma = 0.01
-    params.quote.kappa = 1.0
+    params.quote.eta_inventory = 0.01
+    params.quote.a_spread = 0.01
+    params.quote.risk_per_order = 0.01
+    params.quote.risk_horizon_s = 1.0
+    params.quote.trade_intensity_acceleration_spread_mult = 2.0
+    params.quote.execution_intensity_slope = 1.0
     # Produces a five-tick executable BBO distance, exactly at grid_min_ticks.
-    params.quote.p3_delta_star = 0.6
-    params.quote.p3_kappa_eff = 10.0
-    params.quote.historical_p3_scalar_adapter_enabled = True
+    params.quote.p3_distance_touch_product_argmax = 0.6
+    params.quote.p3_touch_log_probability_distance_slope = 10.0
+    params.quote.p3_pair_spread_projection_enabled = True
     params.quote.p3_identity_required = True
     params.quote.p3_event_type = "touch"
     params.quote.p3_horizon_s = 10.0
@@ -361,9 +365,9 @@ def test_unsupported_matrix_is_baseline_and_invalid_payloads_fail_closed() -> No
     assert unsupported.summary.p3_reach_budget_activation_count == 0
 
     out_of_grid_control_params = _params()
-    out_of_grid_control_params.quote.p3_delta_star = 0.5
+    out_of_grid_control_params.quote.p3_distance_touch_product_argmax = 0.5
     out_of_grid_params = _params()
-    out_of_grid_params.quote.p3_delta_star = 0.5
+    out_of_grid_params.quote.p3_distance_touch_product_argmax = 0.5
     out_of_grid_control = cpp.simulate_tick_arrays_ext_policy_v3(
         *replay_args,
         out_of_grid_control_params,

@@ -358,12 +358,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -2099,7 +2099,7 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite("tox_bid", &TraceOrderRow::tox_bid)
         .def_readwrite("tox_ask", &TraceOrderRow::tox_ask)
         .def_readwrite("book_imb", &TraceOrderRow::book_imb)
-        .def_readwrite("microprice_shift_bps", &TraceOrderRow::microprice_shift_bps)
+        .def_readwrite("weighted_mid_proxy_shift_bps", &TraceOrderRow::weighted_mid_proxy_shift_bps)
         .def_readwrite("near_depth_total", &TraceOrderRow::near_depth_total)
         .def_readwrite("l2_near_depth_total", &TraceOrderRow::l2_near_depth_total)
         .def_readwrite("l2_quote_flip_rate", &TraceOrderRow::l2_quote_flip_rate)
@@ -2140,7 +2140,7 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite("adverse_markout", &TraceOrderRow::adverse_markout)
         .def_readwrite("adverse_direction", &TraceOrderRow::adverse_direction)
         .def_readwrite("adverse_ret", &TraceOrderRow::adverse_ret)
-        .def_readwrite("adverse_microprice", &TraceOrderRow::adverse_microprice)
+        .def_readwrite("adverse_weighted_mid_proxy", &TraceOrderRow::adverse_weighted_mid_proxy)
         .def_readwrite("adverse_thin_depth", &TraceOrderRow::adverse_thin_depth)
         .def_readwrite("local_extreme_guard", &TraceOrderRow::local_extreme_guard)
         .def_readwrite("local_extreme_pause", &TraceOrderRow::local_extreme_pause)
@@ -2153,7 +2153,7 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite("defense_markout", &TraceOrderRow::defense_markout)
         .def_readwrite("defense_direction", &TraceOrderRow::defense_direction)
         .def_readwrite("defense_ret", &TraceOrderRow::defense_ret)
-        .def_readwrite("defense_microprice", &TraceOrderRow::defense_microprice)
+        .def_readwrite("defense_weighted_mid_proxy", &TraceOrderRow::defense_weighted_mid_proxy)
         .def_readwrite("defense_spread_mult", &TraceOrderRow::defense_spread_mult)
         .def_readwrite("final_compressed", &TraceOrderRow::final_compressed)
         .def_readwrite("bid_adverse", &TraceOrderRow::bid_adverse)
@@ -2746,8 +2746,8 @@ void bind_tick_replay(py::module_& m) {
            CArray<double> buy_queue_deplete_mult_by_trade,
            CArray<double> sell_queue_deplete_mult_by_trade,
            CArray<std::int64_t> p3_ts_ms,
-           CArray<double> p3_delta_star,
-           CArray<double> p3_kappa_eff,
+           CArray<double> p3_distance_touch_product_argmax,
+           CArray<double> p3_touch_log_probability_distance_slope,
            const TickReplayParams& params) {
             TickReplayInput input;
             set_trade_arrays(input, trade_ts_ms, trade_price, trade_qty, is_buyer_maker);
@@ -2759,8 +2759,8 @@ void bind_tick_replay(py::module_& m) {
             set_conditional_p3_arrays(
                 input,
                 p3_ts_ms,
-                p3_delta_star,
-                p3_kappa_eff
+                p3_distance_touch_product_argmax,
+                p3_touch_log_probability_distance_slope
             );
             set_buy_fill_selection_static_arrays(
                 input,
@@ -2816,8 +2816,8 @@ void bind_tick_replay(py::module_& m) {
         py::arg("buy_queue_deplete_mult_by_trade"),
         py::arg("sell_queue_deplete_mult_by_trade"),
         py::arg("p3_ts_ms"),
-        py::arg("p3_delta_star"),
-        py::arg("p3_kappa_eff"),
+        py::arg("p3_distance_touch_product_argmax"),
+        py::arg("p3_touch_log_probability_distance_slope"),
         py::arg("params")
     );
 

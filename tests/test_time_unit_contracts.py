@@ -44,12 +44,12 @@ from strategy.signal import Bar1s, SignalEngine
 def test_quote_config_copy_requires_all_fields_before_mutating(missing_on) -> None:
     from strategy import quote_core as qc
 
-    source = SimpleNamespace(gamma=0.046, max_inventory=0.026)
-    destination = SimpleNamespace(gamma=0.010, max_inventory=0.010)
+    source = SimpleNamespace(eta_inventory=0.046, max_inventory=0.026)
+    destination = SimpleNamespace(eta_inventory=0.010, max_inventory=0.010)
     delattr(source if missing_on == "source" else destination, "max_inventory")
     before = vars(destination).copy()
     with pytest.raises(RuntimeError, match="max_inventory"):
-        qc._copy_attrs(source, destination, ("gamma", "max_inventory"))
+        qc._copy_attrs(source, destination, ("eta_inventory", "max_inventory"))
     assert vars(destination) == before
 
 
@@ -198,8 +198,8 @@ def test_shared_native_loader_uses_canonical_directory_containment(
 
 def _cfg(**overrides) -> QuoteCoreConfig:
     values = {
-        "gamma": 0.1,
-        "kappa": 1.0,
+        "eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1, "inventory_reference_qty": 1.0,
+        "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
         "tick_size": 0.001,
         "lot_size": 0.001,
         "maker_fee": 0.0,
@@ -270,7 +270,7 @@ def test_replay_quote_trade_intensity_publishes_complete_bucket_then_holds(
         trade_ts, np.full(2, 99.9), np.full(2, 100.1), np.ones(2), np.ones(2),
     )
     params = {
-        "gamma": 0.1, "kappa": 1.0, "maker_fee": 0.0,
+        "eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1, "inventory_reference_qty": 1.0, "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "maker_fee": 0.0,
         "order_size": 0.001, "max_inventory": 1.0,
         "requote_interval": 0.001, "rq_min": 0.001, "rq_max": 0.001,
         "use_bar_pricing": False, "regime_enabled": True,
@@ -333,10 +333,10 @@ def test_position_value_hard_fuse_caps_exposure_before_submit() -> None:
 def test_live_to_replay_mapping_preserves_time_and_risk_contract() -> None:
     params = build_backtest_base_params(
         {
-            "gamma": 0.05,
+            "risk_per_order": 0.05, "inventory_reference_qty": 1.0,
             "eta_inventory": 0.04,
             "a_spread": 0.03,
-            "kappa": 0.1,
+            "execution_intensity_slope": 0.1, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
             "maker_fee": 0.0,
@@ -348,7 +348,7 @@ def test_live_to_replay_mapping_preserves_time_and_risk_contract() -> None:
             "emergency_close_dd": 150.0,
         }
     )
-    assert params["gamma"] == pytest.approx(0.05)
+    assert params["risk_per_order"] == pytest.approx(0.05)
     assert params["eta_inventory"] == pytest.approx(0.04)
     assert params["a_spread"] == pytest.approx(0.03)
     assert params["quote_horizon_s"] == pytest.approx(5.0)
@@ -379,8 +379,8 @@ def test_python_tick_replay_applies_the_shared_circuit_breaker() -> None:
         np.array([0], dtype=np.int64),
         np.array([1.0], dtype=np.float64),
         {
-            "gamma": 0.01,
-            "kappa": 1.0,
+            "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0,
+            "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
             "requote_interval": 1.0,
@@ -420,8 +420,8 @@ def test_python_tick_replay_circuit_breaker_uses_maker_close_state() -> None:
         np.array([0], dtype=np.int64),
         np.array([1.0], dtype=np.float64),
         {
-            "gamma": 0.01,
-            "kappa": 1.0,
+            "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0,
+            "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
             "requote_interval": 1.0,
@@ -469,8 +469,8 @@ def test_python_tick_replay_ioc_expires_without_displayed_liquidity() -> None:
         np.array([0], dtype=np.int64),
         np.array([1.0], dtype=np.float64),
         {
-            "gamma": 0.01,
-            "kappa": 1.0,
+            "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0,
+            "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
             "requote_interval": 10.0,
@@ -506,8 +506,8 @@ def test_python_tick_replay_ioc_expires_without_displayed_liquidity() -> None:
 def test_quote_horizon_integrates_per_second_variance_explicitly() -> None:
     state = QuoteState(mid=100.0, inventory=0.01, sigma_sq=4.0)
     pred = QuotePrediction()
-    one = compute_quote_core(state, _cfg(quote_horizon_s=1.0), pred)
-    five = compute_quote_core(state, _cfg(quote_horizon_s=5.0), pred)
+    one = compute_quote_core(state, _cfg(quote_horizon_s=1.0, risk_horizon_s=1.0), pred)
+    five = compute_quote_core(state, _cfg(quote_horizon_s=5.0, risk_horizon_s=5.0), pred)
     assert one.diagnostics["sigma_sq_horizon"] == pytest.approx(4.0)
     assert five.diagnostics["sigma_sq_horizon"] == pytest.approx(20.0)
     assert five.diagnostics["reservation_price"] == pytest.approx(
@@ -515,24 +515,49 @@ def test_quote_horizon_integrates_per_second_variance_explicitly() -> None:
     )
 
 
-def test_quote_coefficient_split_preserves_legacy_and_separates_responsibilities() -> None:
-    legacy = _cfg(gamma=0.1)
-    explicit = _cfg(gamma=0.1, eta_inventory=0.1, a_spread=0.1)
-    assert legacy.eta_inventory == pytest.approx(0.1)
-    assert legacy.a_spread == pytest.approx(0.1)
-    assert _cfg(gamma=1e-15).eta_inventory == pytest.approx(1e-12)
-    assert _cfg(gamma=1e-15).a_spread == pytest.approx(1e-12)
+@pytest.mark.parametrize("field", [
+    "execution_intensity_slope", "risk_horizon_s",
+    "trade_intensity_acceleration_spread_mult",
+])
+def test_quote_coefficients_never_inherit_missing_values(field) -> None:
+    with pytest.raises(ValueError, match=field):
+        _cfg(**{field: None})
+
+
+@pytest.mark.parametrize("old_field", ["kappa", "ber_spread_mult"])
+def test_retired_quote_inputs_are_rejected(old_field) -> None:
+    with pytest.raises(TypeError, match=old_field):
+        _cfg(**{old_field: 1.0})
+
+
+def test_quote_action_horizon_does_not_override_risk_integral() -> None:
+    state = QuoteState(mid=100.0, inventory=0.01, sigma_sq=4.0)
+    one = compute_quote_core(state, _cfg(quote_horizon_s=1.0), QuotePrediction())
+    five = compute_quote_core(state, _cfg(quote_horizon_s=5.0), QuotePrediction())
+    assert one.diagnostics["sigma_sq_horizon"] == five.diagnostics["sigma_sq_horizon"] == 4.0
+    assert one.bid_price == five.bid_price
+    assert one.ask_price == five.ask_price
+
+
+def test_quote_coefficient_split_rejects_gamma_and_separates_responsibilities() -> None:
+    with pytest.raises(TypeError, match="gamma"):
+        _cfg(gamma=0.1)
+    explicit = _cfg(eta_inventory=0.1, a_spread=0.1, risk_per_order=0.1)
+    assert explicit.eta_inventory == pytest.approx(0.1)
+    assert explicit.a_spread == pytest.approx(0.1)
+    assert _cfg(eta_inventory=1e-15).eta_inventory == 1e-15
+    assert _cfg(a_spread=1e-15).a_spread == 1e-15
 
     state = QuoteState(mid=100.0, inventory=0.01, sigma_sq=4.0)
     pred = QuotePrediction()
-    baseline = compute_quote_core(state, legacy, pred)
+    baseline = compute_quote_core(state, _cfg(), pred)
     assert baseline == compute_quote_core(state, explicit, pred)
 
     inventory_only = compute_quote_core(
         state, _cfg(eta_inventory=0.2, a_spread=0.1), pred
     )
     spread_only = compute_quote_core(
-        state, _cfg(eta_inventory=0.1, a_spread=0.2), pred
+        state, _cfg(eta_inventory=0.1, a_spread=0.2, risk_per_order=0.2), pred
     )
     assert inventory_only.diagnostics["reservation_price"] != pytest.approx(
         baseline.diagnostics["reservation_price"]
@@ -551,8 +576,8 @@ def test_quote_coefficient_split_preserves_legacy_and_separates_responsibilities
 def test_q_ref_and_order_size_contract_preserves_legacy_quotes() -> None:
     state = QuoteState(mid=100.0, inventory=0.01, sigma_sq=4.0)
     pred = QuotePrediction()
-    canonical = compute_quote_core(state, _cfg(gamma=0.1), pred)
-    normalized_cfg = _cfg(gamma=0.1, inventory_reference_qty=0.001)
+    canonical = compute_quote_core(state, _cfg(), pred)
+    normalized_cfg = _cfg(eta_inventory=0.0001, inventory_reference_qty=0.001)
     normalized = compute_quote_core(
         state,
         normalized_cfg,
@@ -572,11 +597,9 @@ def test_q_ref_and_order_size_contract_preserves_legacy_quotes() -> None:
     assert normalized_cfg.eta_inventory == pytest.approx(0.0001)
 
 
-def test_quantity_aware_quote_is_invariant_to_btc_vs_mbtc_denomination() -> None:
+def test_explicit_quote_coefficients_are_invariant_to_btc_vs_mbtc_denomination() -> None:
     common = {
-        "quote_math_mode": "quantity_aware_v1",
-        "gamma": 0.05,
-        "cara_risk_aversion": 0.05,
+        "eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05, "inventory_reference_qty": 1.0,
         "maker_fee": 0.0,
         "quote_horizon_s": 5.0,
         "regime_enabled": False,
@@ -585,27 +608,33 @@ def test_quantity_aware_quote_is_invariant_to_btc_vs_mbtc_denomination() -> None
     btc_cfg = quote_core_config_from_params(
         {
             **common,
-            "kappa": 0.001,
+            "execution_intensity_slope": 0.001, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+            # Inverse-price spread risk = 0.05 / USDC * 0.001 BTC.
+            "a_spread": 0.00005,
+            "risk_per_order": 0.00005,
             "order_size": 0.001,
             "max_inventory": 0.01,
         },
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     mbtc_cfg = quote_core_config_from_params(
         {
             **common,
-            "kappa": 1.0,
+            "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+            # The same inverse-price coefficient is 1000x in mBTC/USDC.
+            "a_spread": 0.05,
+            "risk_per_order": 0.05,
             "order_size": 1.0,
             "max_inventory": 10.0,
         },
         tick_size=0.0001,
         lot_size=1.0,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     btc = compute_quote_core(
@@ -651,9 +680,9 @@ def test_p3_identity_bound_legacy_pair_projection_preserves_b0() -> None:
         state,
         _cfg(
             regime_enabled=True,
-            p3_delta_star=2.0,
-            p3_kappa_eff=0.1,
-            historical_p3_scalar_adapter_enabled=True,
+            p3_distance_touch_product_argmax=2.0,
+            p3_touch_log_probability_distance_slope=0.1,
+            p3_pair_spread_projection_enabled=True,
             p3_event_type=identity["event_type"],
             p3_horizon_s=identity["horizon_s"],
             p3_distance_origin=identity["distance_origin"],
@@ -668,9 +697,9 @@ def test_p3_identity_bound_legacy_pair_projection_preserves_b0() -> None:
         state,
         _cfg(
             regime_enabled=True,
-            p3_delta_star=2.0,
-            p3_kappa_eff=0.1,
-            historical_p3_scalar_adapter_enabled=True,
+            p3_distance_touch_product_argmax=2.0,
+            p3_touch_log_probability_distance_slope=0.1,
+            p3_pair_spread_projection_enabled=True,
             p3_identity_required=True,
             p3_event_type=identity["event_type"],
             p3_horizon_s=identity["horizon_s"],
@@ -695,7 +724,7 @@ def test_p3_identity_bound_legacy_pair_projection_preserves_b0() -> None:
         "SELL"
     ]["final_price"]
     assert bound.diagnostics["p3_floor_mode"] == (
-        "legacy_pair_projection_from_same_side_bbo"
+        "pair_projection_from_same_side_bbo"
     )
     assert bound.diagnostics["p3_pair_floor"] == pytest.approx(4.0)
     assert bound.quote_context["BUY"]["final_quote_delta_to_bbo"] == pytest.approx(
@@ -719,8 +748,10 @@ def test_pre_split_b0_final_quote_golden_vectors_remain_exact() -> None:
         "p3_artifact_sha256": "a" * 64,
     }
     cfg = _cfg(
-        gamma=0.046,
-        kappa=0.073,
+        eta_inventory=0.046,
+        a_spread=0.046,
+        risk_per_order=0.046,
+        execution_intensity_slope=0.073,
         tick_size=0.1,
         maker_fee=-0.00003,
         max_inventory=0.026,
@@ -729,11 +760,11 @@ def test_pre_split_b0_final_quote_golden_vectors_remain_exact() -> None:
         vol_baseline=3.0,
         liq_baseline=200.0,
         kappa_ratio=0.3,
-        p3_delta_star=14.0,
-        p3_kappa_eff=0.067,
+        p3_distance_touch_product_argmax=14.0,
+        p3_touch_log_probability_distance_slope=0.067,
         max_spread_bps=20.0,
         spread_cap_mode=1,
-        historical_p3_scalar_adapter_enabled=True,
+        p3_pair_spread_projection_enabled=True,
         **identity,
     )
     vectors = (
@@ -823,8 +854,8 @@ def test_p3_side_bbo_floor_is_side_specific_and_never_compressed_inward() -> Non
         state,
         _cfg(
             max_inventory=1.0,
-            p3_delta_star=0.5,
-            p3_kappa_eff=0.1,
+            p3_distance_touch_product_argmax=0.5,
+            p3_touch_log_probability_distance_slope=0.1,
             p3_side_bbo_floor_enabled=True,
             max_spread_bps=10.0,
             spread_cap_mode="compress",
@@ -916,8 +947,8 @@ def test_f03_ret_action_requires_matching_consumer_horizon_but_ml_off_is_noop() 
     with pytest.raises(ValueError, match="F03 ret action horizon"):
         quote_core_config_from_params(
             {
-                "gamma": 0.1,
-                "kappa": 1.0,
+                "eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1, "inventory_reference_qty": 1.0,
+                "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
                 "maker_fee": 0.0,
                 "order_size": 0.001,
                 "max_inventory": 0.01,
@@ -930,35 +961,34 @@ def test_f03_ret_action_requires_matching_consumer_horizon_but_ml_off_is_noop() 
             tick_size=0.1,
             lot_size=0.001,
             use_ml=True,
-            use_depth_microprice=False,
+            use_depth_weighted_mid_proxy=False,
             use_depth_kappa=False,
         )
 
 
-def test_legacy_replay_gamma_override_still_rebinds_both_coefficients() -> None:
+def test_replay_rejects_gamma_override_instead_of_rebinding_coefficients() -> None:
     params = build_backtest_base_params(
         {
-            "gamma": 0.05,
-            "kappa": 0.1,
+            "eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05, "inventory_reference_qty": 1.0,
+            "execution_intensity_slope": 0.1, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "order_size": 0.001,
             "max_inventory": 0.01,
             "maker_fee": 0.0,
         }
     )
-    assert "eta_inventory" not in params
-    assert "a_spread" not in params
+    assert params["eta_inventory"] == 0.05
+    assert params["a_spread"] == 0.05
     params["inventory_reference_qty"] = 1.0
     params["gamma"] = 0.07
-    cfg = quote_core_config_from_params(
-        params,
-        tick_size=0.1,
-        lot_size=0.001,
-        use_ml=False,
-        use_depth_microprice=False,
-        use_depth_kappa=False,
-    )
-    assert cfg.eta_inventory == pytest.approx(0.07)
-    assert cfg.a_spread == pytest.approx(0.07)
+    with pytest.raises(ValueError, match="gamma"):
+        quote_core_config_from_params(
+            params,
+            tick_size=0.1,
+            lot_size=0.001,
+            use_ml=False,
+            use_depth_weighted_mid_proxy=False,
+            use_depth_kappa=False,
+        )
 
 
 def test_legacy_replay_without_p3_adapter_field_preserves_pair_floor() -> None:
@@ -966,28 +996,28 @@ def test_legacy_replay_without_p3_adapter_field_preserves_pair_floor() -> None:
 
     cfg = quote_core_config_from_params(
         {
-            "gamma": 0.046,
-            "kappa": 0.073,
+            "eta_inventory": 0.046, "a_spread": 0.046, "risk_per_order": 0.046, "inventory_reference_qty": 1.0,
+            "execution_intensity_slope": 0.073, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
             "maker_fee": 0.0,
             "order_size": 0.001,
             "max_inventory": 0.026,
             "regime_enabled": True,
-            "p3_delta_star": 14.0,
-            "p3_kappa_eff": 0.067,
-            "fill_probability_event_type": "touch",
-            "fill_probability_horizon_s": 10.0,
-            "fill_probability_distance_origin": (
+            "p3_distance_touch_product_argmax": 14.0,
+            "p3_touch_log_probability_distance_slope": 0.067,
+            "touch_probability_event_type": "touch",
+            "touch_probability_horizon_s": 10.0,
+            "touch_probability_distance_origin": (
                 "same_side_best_bid_or_ask_at_window_start"
             ),
-            "fill_probability_distance_unit": "USDC_per_BTC",
-            "fill_probability_side": "pooled_buy_sell",
-            "fill_probability_queue_included": False,
-            "fill_probability_artifact_sha256": "a" * 64,
+            "touch_probability_distance_unit": "USDC_per_BTC",
+            "touch_probability_side": "pooled_buy_sell",
+            "touch_probability_queue_included": False,
+            "touch_probability_artifact_sha256": "a" * 64,
         },
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     result = compute_quote_core(
@@ -1002,7 +1032,7 @@ def test_legacy_replay_without_p3_adapter_field_preserves_pair_floor() -> None:
         QuotePrediction(),
     )
 
-    assert cfg.historical_p3_scalar_adapter_enabled is True
+    assert cfg.p3_pair_spread_projection_enabled is True
     assert result.diagnostics["p3_pair_floor"] == pytest.approx(28.0)
     assert result.spread >= 28.0
 
@@ -1185,7 +1215,7 @@ def test_explicit_replay_start_reaches_both_backend_first_quote(backend):
         backend, trades, np.empty(0, dtype=np.int64), np.empty(0),
         {"replay_event_clock": "merged", "replay_clock_interval_ms": 100,
          "replay_event_clock_start_ts_ms": 550, "trace_quotes_max": 100,
-         "gamma": 0.01, "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
+         "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "order_size": 0.001, "max_inventory": 0.01,
          "maker_fee": 0.0, "taker_fee": 0.0, "tick_size": 0.1, "lot_size": 0.001,
          "requote_interval": 100.0, "rq_min": 100.0, "rq_max": 100.0,
          "max_exec_book_age_s": 0.0, "use_bar_pricing": True},
@@ -1316,7 +1346,7 @@ def test_replay_variance_left_label_waits_for_complete_second(offset_ms, expecte
         timestamps, np.full(2, 99.9), np.full(2, 100.1), np.ones(2), np.ones(2),
     )
     params = {
-        "gamma": 0.1, "kappa": 1.0, "maker_fee": 0.0,
+        "eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1, "inventory_reference_qty": 1.0, "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "maker_fee": 0.0,
         "order_size": 0.001, "max_inventory": 1.0,
         "requote_interval": 0.001, "rq_min": 0.001, "rq_max": 0.001,
         "use_bar_pricing": False, "regime_enabled": False,
@@ -1577,7 +1607,7 @@ def test_explicit_replay_end_reaches_both_backend_terminal_trace(backend):
         backend, trades, np.empty(0, dtype=np.int64), np.empty(0),
         {"replay_event_clock": "merged", "replay_clock_interval_ms": 1_000,
          "replay_event_clock_end_ts_ms": 2_999, "trace_quotes_max": 100,
-         "gamma": 0.01, "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
+         "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "execution_intensity_slope": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0, "order_size": 0.001, "max_inventory": 0.01,
          "maker_fee": 0.0, "taker_fee": 0.0, "tick_size": 0.1, "lot_size": 0.001,
          "requote_interval": 100.0, "rq_min": 100.0, "rq_max": 100.0,
          "max_exec_book_age_s": 0.0, "use_bar_pricing": True},

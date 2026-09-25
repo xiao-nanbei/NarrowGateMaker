@@ -105,10 +105,10 @@ namespace {
         required,
         bounded_live_depth_levels(config.trace_book_imb_levels)
     );
-    if (config.use_depth_microprice) {
+    if (config.use_depth_weighted_mid_proxy) {
         required = std::max(
             required,
-            bounded_live_depth_levels(config.microprice_levels)
+            bounded_live_depth_levels(config.weighted_mid_proxy_levels)
         );
     }
     if (config.use_depth_kappa) {
@@ -257,7 +257,7 @@ CommonSidePolicyResultPod NativeQuotePolicyStage::finish_policy(
         : state.mo_ema_ask;
     policy.markout_spread_scale = config_.markout_spread_scale;
     policy.markout_reference = state.mo_ref;
-    policy.microprice_shift_bps = quote.microprice_shift_bps;
+    policy.weighted_mid_proxy_shift_bps = quote.weighted_mid_proxy_shift_bps;
     policy.kappa_depth_baseline = config_.kappa_depth_baseline;
     policy.side_adverse = side.side_adverse;
     policy.side_adverse_pause = side.side_adverse_pause;
@@ -408,7 +408,7 @@ bool NativeLiveRuntimeCore::valid_policy_input(
         std::isfinite(value.markout_ema) &&
         finite_non_negative(value.markout_spread_scale) &&
         finite_positive(value.markout_reference) &&
-        std::isfinite(value.microprice_shift_bps) &&
+        std::isfinite(value.weighted_mid_proxy_shift_bps) &&
         in_unit_interval(value.l2_quote_flip_rate) &&
         in_unit_interval(value.l2_book_cancel_ratio) &&
         finite_non_negative(value.l2_near_depth_total) &&
@@ -445,7 +445,7 @@ bool NativeLiveRuntimeCore::valid_quote_output(
             value.raw_asym_shift,
             value.raw_quote_skew,
             value.book_imb,
-            value.microprice_shift_bps,
+            value.weighted_mid_proxy_shift_bps,
             value.near_depth_total,
             value.kappa_before_depth,
             value.kappa_used,
@@ -538,7 +538,7 @@ CommonSidePolicyResultPod NativeLiveRuntimeCore::evaluate_policy(
         : input.quote_state.mo_ema_ask;
     policy.markout_spread_scale = config_.markout_spread_scale;
     policy.markout_reference = input.quote_state.mo_ref;
-    policy.microprice_shift_bps = quote.microprice_shift_bps;
+    policy.weighted_mid_proxy_shift_bps = quote.weighted_mid_proxy_shift_bps;
     policy.kappa_depth_baseline = config_.kappa_depth_baseline;
     policy.side_adverse = quote_side.side_adverse;
     policy.side_adverse_pause = quote_side.side_adverse_pause;

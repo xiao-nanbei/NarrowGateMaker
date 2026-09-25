@@ -349,12 +349,12 @@ void set_feature_arrays(
 void set_conditional_p3_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& p3_ts_ms,
-    const CArray<double>& p3_delta_star,
-    const CArray<double>& p3_kappa_eff
+    const CArray<double>& p3_distance_touch_product_argmax,
+    const CArray<double>& p3_touch_log_probability_distance_slope
 ) {
     input.p3_ts_ms = view_from_array(p3_ts_ms);
-    input.p3_delta_star = view_from_array(p3_delta_star);
-    input.p3_kappa_eff = view_from_array(p3_kappa_eff);
+    input.p3_distance_touch_product_argmax = view_from_array(p3_distance_touch_product_argmax);
+    input.p3_touch_log_probability_distance_slope = view_from_array(p3_touch_log_probability_distance_slope);
 }
 
 void set_conditional_p3_reach_gate_arrays(
@@ -828,7 +828,7 @@ void bind_live_runtime_core(py::module_& m) {
         BIND_COMMON_POLICY_INPUT(markout_ema)
         BIND_COMMON_POLICY_INPUT(markout_spread_scale)
         BIND_COMMON_POLICY_INPUT(markout_reference)
-        BIND_COMMON_POLICY_INPUT(microprice_shift_bps)
+        BIND_COMMON_POLICY_INPUT(weighted_mid_proxy_shift_bps)
         BIND_COMMON_POLICY_INPUT(l2_quote_flip_rate)
         BIND_COMMON_POLICY_INPUT(l2_book_cancel_ratio)
         BIND_COMMON_POLICY_INPUT(l2_near_depth_total)
@@ -916,7 +916,7 @@ void bind_live_runtime_core(py::module_& m) {
                     READ_STAGE_POLICY(12, markout_ema);
                     READ_STAGE_POLICY(13, markout_spread_scale);
                     READ_STAGE_POLICY(14, markout_reference);
-                    READ_STAGE_POLICY(15, microprice_shift_bps);
+                    READ_STAGE_POLICY(15, weighted_mid_proxy_shift_bps);
                     READ_STAGE_POLICY(16, l2_quote_flip_rate);
                     READ_STAGE_POLICY(17, l2_book_cancel_ratio);
                     READ_STAGE_POLICY(18, l2_near_depth_total);

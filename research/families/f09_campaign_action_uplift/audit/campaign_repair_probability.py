@@ -148,7 +148,7 @@ def _features_from_row(
         l2_book_cancel_ratio=_float(row, "l2_book_cancel_ratio", 0.0),
         l2_quote_flip_rate=_float(row, "l2_quote_flip_rate", 0.0),
         near_depth_total=_float(row, "near_depth_total", 0.0),
-        microprice_shift_bps=_float(row, "microprice_shift_bps", 0.0),
+        weighted_mid_proxy_shift_bps=_float(row, "weighted_mid_proxy_shift_bps", 0.0),
         toxicity=_float(row, "toxicity", 0.5),
         markout_ema=_float(row, "markout_ema", 0.0),
         side_quote_fill_probability=_float(row, "side_quote_fill_prob", 0.0),

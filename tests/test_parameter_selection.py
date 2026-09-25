@@ -213,7 +213,7 @@ def test_campaign_model_arms_use_their_own_inference_and_horizon(
     candidate_model = str(tmp_path / "candidate")
     base = {"model_dir": baseline_model, "resolved_model_dir": baseline_model,
             "ml_enabled": initial_ml_enabled, "toxicity_horizon_s": 10,
-            "p3_delta_star": 0.75, "p3_artifact_sha256": "frozen-touch-artifact"}
+            "p3_distance_touch_product_argmax": 0.75, "p3_artifact_sha256": "frozen-touch-artifact"}
     loads, captures = [], []
 
     def load(_day, params):
@@ -252,7 +252,7 @@ def test_campaign_model_arms_use_their_own_inference_and_horizon(
     assert len(loads) == len(set(loads)) == 4
     assert len(result["daily_rows"]) == 5
     for params, _identity in captures:
-        assert params["p3_delta_star"] == base["p3_delta_star"]
+        assert params["p3_distance_touch_product_argmax"] == base["p3_distance_touch_product_argmax"]
         assert params["p3_artifact_sha256"] == base["p3_artifact_sha256"]
     for params, _identity in captures[-2:]:
         assert {params[key] for key in ("model_dir", "resolved_model_dir", "model_dir_override")} == {

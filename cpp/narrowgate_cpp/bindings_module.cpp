@@ -38,7 +38,7 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(narrowgate_cpp, m) {
     m.doc() = "C++ acceleration hooks for NarrowGate.";
-    m.attr("APPLICATION_INTERFACE_VERSION") = py::int_(20260926);
+    m.attr("APPLICATION_INTERFACE_VERSION") = py::int_(20260928);
     m.attr("NATIVE_BUILD_CONFIGURATION") = py::str(NARROWGATE_BUILD_CONFIGURATION);
     m.attr("NATIVE_LIVE_BUILD_PROFILE") = py::str(NARROWGATE_LIVE_CPU_PROFILE_NAME);
     m.attr("NATIVE_LIVE_BUILD_COMPILE_OPTIONS") =

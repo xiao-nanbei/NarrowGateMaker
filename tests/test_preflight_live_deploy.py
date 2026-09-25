@@ -13,15 +13,9 @@ from scripts.preflight_live_deploy import validate_deploy_config
 from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
 from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
 from strategy.model_contract import (
-    ABSOLUTE_PRICE_VARIANCE_SEMANTICS,
-    REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
     REQUIRED_FEATURE_DAG_ID,
     REQUIRED_FEATURE_DAG_SHA256,
-    REQUIRED_FEATURE_SEMANTICS_VERSION,
-    REQUIRED_LABEL_SEMANTICS_VERSION,
-    REQUIRED_LABEL_WINDOW_SEMANTICS,
     REQUIRED_MODEL_HEADS,
-    absolute_price_variance_unit_contract,
     validate_model_bundle,
 )
 from strategy.state_conditioned_quote_policy import LOCAL_QUOTE_ACTIONS, SCHEMA_VERSION
@@ -32,35 +26,8 @@ PUBLIC_DRY_RUN_BUNDLE = Path("examples/public_dry_run_model_bundle")
 
 
 def _write_live_authorization(model_dir: Path) -> None:
-    tree_hashes = {
-        head: hashlib.sha256((model_dir / f"{head}.txt").read_bytes()).hexdigest()
-        for head in REQUIRED_MODEL_HEADS
-    }
-    metadata_hashes = {
-        head: hashlib.sha256(
-            (model_dir / f"{head}_meta.json").read_bytes()
-        ).hexdigest()
-        for head in REQUIRED_MODEL_HEADS
-    }
-    authorization = {
-        "schema_version": "narrowgate.private_deployment_authorization.v1",
-        "training_experiment_id": "deploy-fixture-v1",
-        "private_deployment_authorized": True,
-        "active_runtime_inference_authorized": True,
-        "baseline_promotion_authorized": False,
-        "authority": {"live": True},
-        "derived_bundle": {
-            "model_tree_sha256": tree_hashes,
-            "head_metadata_sha256": metadata_hashes,
-            "p3_sha256": hashlib.sha256(
-                (model_dir / "fill_prob_params.json").read_bytes()
-            ).hexdigest(),
-        },
-    }
-    (model_dir / "deployment_authorization.json").write_text(
-        json.dumps(authorization),
-        encoding="utf-8",
-    )
+    from semantic_bundle_fixtures import authorize_current_bundle
+    authorize_current_bundle(model_dir)
 
 
 def _write_fixture(
@@ -75,10 +42,10 @@ def _write_fixture(
 ) -> Path:
     model_dir = tmp_path / "models" / "bundle"
     model_dir.mkdir(parents=True)
-    (model_dir / "fill_prob_params.json").write_text(
+    (model_dir / "touch_probability.json").write_text(
         json.dumps(
             {
-                "schema_version": "narrowgate_p3_touch_calibration.v3",
+                "schema_version": "narrowgate_p3_touch_calibration.v4",
                 "model_type": "empirical_survival",
                 "delta_grid": [0.1, 14.0, 30.0],
                 "probability_grid": [0.8, 0.2, 0.01],
@@ -90,46 +57,25 @@ def _write_fixture(
                     "horizon_s": 10.0,
                     "distance_unit": "USDC_per_BTC",
                 },
-                "delta_star": 14.0,
-                "kappa_eff": 0.067,
+                "distance_touch_product_argmax": 14.0,
+                "touch_log_probability_distance_slope": 0.067,
             }
         ),
         encoding="utf-8",
     )
-    for head in REQUIRED_MODEL_HEADS:
-        (model_dir / f"{head}.txt").write_text("placeholder", encoding="utf-8")
-        metadata = {
-            "symbol": "BTCUSDC",
-            "feature_cols": ["close"],
-            "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
-            "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-            "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
-            "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
-            "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
-            "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
-            "feature_manifest_sha256": "fixture-manifest",
-            "training_experiment_id": "deploy-fixture-v1",
-            "promotion_authority": "private_deployment_authorized",
-            "volatility_unit_contract": absolute_price_variance_unit_contract(
-                "BTCUSDC"
-            ),
+    from semantic_bundle_fixtures import write_bundle, bind_changed_metadata
+    write_bundle(model_dir)
+    if direct_ret_action_horizon_s is not None:
+        head = "touch_conditioned_price_change_fraction_10000ms"
+        path = model_dir / f"{head}_meta.json"
+        metadata = json.loads(path.read_text())
+        metadata["direct_quote_action"] = {
+            "schema_version": "narrowgate.f03.direct_quote_action.v1", "compatible": True,
+            "event_type": "decision_to_fixed_horizon_return", "horizon_s": direct_ret_action_horizon_s,
+            "price_origin": "decision_mid", "return_unit": "fraction", "consumer": "quote_center_shift",
         }
-        if head.startswith("absolute_price_variance_rate_"):
-            metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
-        if head == "touch_conditioned_price_change_fraction_10000ms" and direct_ret_action_horizon_s is not None:
-            metadata["direct_quote_action"] = {
-                "schema_version": "narrowgate.f03.direct_quote_action.v1",
-                "compatible": True,
-                "event_type": "decision_to_fixed_horizon_return",
-                "horizon_s": direct_ret_action_horizon_s,
-                "price_origin": "decision_mid",
-                "return_unit": "fraction",
-                "consumer": "quote_center_shift",
-            }
-        (model_dir / f"{head}_meta.json").write_text(
-            json.dumps(metadata),
-            encoding="utf-8",
-        )
+        path.write_text(json.dumps(metadata))
+        bind_changed_metadata(model_dir, head)
     _write_live_authorization(model_dir)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -137,7 +83,7 @@ def _write_fixture(
             {
                 "symbol": "BTCUSDC",
                 "strategy": {
-                    "p3_kappa_eff_override": override,
+                    "p3_touch_log_probability_distance_slope_override": override,
                     "quote_horizon_s": quote_horizon_s,
                     "use_bar_pricing": False,
                     "dynamic_fill_hazard_action_enabled": q90_action_enabled,
@@ -193,7 +139,7 @@ def test_preflight_ml_off_requires_p3_not_unused_heads_or_authorization(tmp_path
     config_path = _write_fixture(tmp_path, ml_enabled=False)
     model_dir = tmp_path / "models" / "bundle"
     for path in model_dir.iterdir():
-        if path.name != "fill_prob_params.json":
+        if path.name != "touch_probability.json":
             path.unlink()
     identity = validate_deploy_config(config_path, tmp_path)
     assert identity["ml_enabled"] is False
@@ -203,8 +149,8 @@ def test_preflight_ml_off_requires_p3_not_unused_heads_or_authorization(tmp_path
     assert identity["model_live_authorized"] is None
     assert identity["feature_dag_id"] is None
     assert identity["p3_event_type"] == "touch"
-    (model_dir / "fill_prob_params.json").unlink()
-    with pytest.raises(ValueError, match="missing fill_prob_params"):
+    (model_dir / "touch_probability.json").unlink()
+    with pytest.raises(ValueError, match="missing touch_probability"):
         validate_deploy_config(config_path, tmp_path)
 
 
@@ -213,7 +159,7 @@ def test_preflight_ml_off_admission_binds_independent_p3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str,
 ) -> None:
     config_path = _write_fixture(tmp_path, ml_enabled=False)
-    p3 = tmp_path / "models" / "bundle" / "fill_prob_params.json"
+    p3 = tmp_path / "models" / "bundle" / "touch_probability.json"
     authority = {
         "config_file_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
         "policy_approvals": [],
@@ -261,7 +207,7 @@ def test_preflight_state_policy_uses_release_approval_and_bound_bytes(
     })
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     paths = {
-        "p3": tmp_path / "models" / "bundle" / "fill_prob_params.json",
+        "p3": tmp_path / "models" / "bundle" / "touch_probability.json",
         "state_conditioned_quote_policy": policy,
     }
     approvals = [] if case in {"unapproved", "shadow"} else ["state_conditioned_quote_policy"]
@@ -295,7 +241,7 @@ def test_preflight_rejects_side_bbo_floor_with_inward_compression(
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config["strategy"].update(
         {
-            "historical_p3_scalar_adapter_enabled": False,
+            "p3_pair_spread_projection_enabled": False,
             "p3_side_bbo_floor_enabled": True,
             "spread_cap_mode": "compress",
         }
@@ -311,7 +257,7 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
 
     assert identity["effective_source"] == "artifact"
     assert identity["touch_log_probability_distance_slope"] == pytest.approx(0.067)
-    assert identity["delta_star"] == pytest.approx(14.0)
+    assert identity["distance_touch_product_argmax"] == pytest.approx(14.0)
     assert identity["p3_event_type"] == "touch"
     assert identity["p3_horizon_s"] == pytest.approx(10.0)
     assert identity["p3_distance_unit"] == "USDC_per_BTC"
@@ -325,7 +271,7 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     assert identity["model_promotion_authority"] == "private_deployment_authorized"
     assert identity["model_live_authorized"] is True
     assert identity["model_authorization_path"].endswith(
-        "deployment_authorization.json"
+        "live_input_authorization.json"
     )
     assert identity["f05_buy_e3_artifacts"] == {"enabled": False}
     assert identity["startup_gates_not_validated"] == [
@@ -354,9 +300,9 @@ def test_preflight_accepts_private_config_and_bundle_outside_repository(
     assert identity["config_path"] == str(config_path.resolve())
     assert identity["model_dir"] == str(model_dir.resolve())
     assert identity["model_authorization_path"] == str(
-        (model_dir / "deployment_authorization.json").resolve()
+        (model_dir / "live_input_authorization.json").resolve()
     )
-    assert identity["p3_path"] == str((model_dir / "fill_prob_params.json").resolve())
+    assert identity["p3_path"] == str((model_dir / "touch_probability.json").resolve())
 
 
 def test_preflight_enabled_buy_e3_missing_artifacts_fails_closed(
@@ -528,7 +474,8 @@ def test_public_dry_run_bundle_is_hash_bound_but_not_deploy_authorized() -> None
         payload = path.read_bytes()
         assert len(payload) == entry["bytes"]
         assert hashlib.sha256(payload).hexdigest() == entry["sha256"]
-    assert sorted(validate_model_bundle(bundle)) == sorted(REQUIRED_MODEL_HEADS)
+    with pytest.raises(ValueError, match="synthetic model bundle cannot enter remote deployment"):
+        validate_model_bundle(bundle)
 
     with pytest.raises(ValueError, match="public_dry_run_only"):
         validate_deploy_config(
@@ -564,54 +511,48 @@ def test_tracked_public_template_marker_fails_before_deploy_validation() -> None
 
 
 @pytest.mark.parametrize(
-    ("promotion_authority", "message"),
+    "owner_authorized",
     [
-        (None, "lacks explicit live promotion_authority"),
-        ("public_dry_run_only", "public_dry_run_only"),
-        ("research_only", "research_only"),
+        None,
+        False,
+        "research_only",
     ],
 )
 def test_preflight_rejects_non_live_model_authority(
     tmp_path: Path,
-    promotion_authority: str | None,
-    message: str,
+    owner_authorized,
 ) -> None:
     config_path = _write_fixture(tmp_path)
     model_dir = tmp_path / "models" / "bundle"
-    for head in REQUIRED_MODEL_HEADS:
-        metadata_path = model_dir / f"{head}_meta.json"
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if promotion_authority is None:
-            metadata.pop("promotion_authority")
-        else:
-            metadata["promotion_authority"] = promotion_authority
-        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-
-    with pytest.raises(ValueError, match=message):
+    path = model_dir / "live_input_authorization.json"
+    authorization = json.loads(path.read_text())
+    authorization["owner_authorized"] = owner_authorized
+    path.write_text(json.dumps(authorization))
+    with pytest.raises(ValueError, match="explicit hash-bound live input authorization"):
         validate_deploy_config(config_path, tmp_path)
 
 
 def test_preflight_rejects_missing_live_authorization(tmp_path: Path) -> None:
     config_path = _write_fixture(tmp_path)
     authorization_path = (
-        tmp_path / "models" / "bundle" / "deployment_authorization.json"
+        tmp_path / "models" / "bundle" / "live_input_authorization.json"
     )
     authorization_path.unlink()
 
-    with pytest.raises(ValueError, match="requires deployment_authorization.json"):
+    with pytest.raises(ValueError, match="regular model artifact"):
         validate_deploy_config(config_path, tmp_path)
 
 
 def test_preflight_rejects_explicit_authority_live_false(tmp_path: Path) -> None:
     config_path = _write_fixture(tmp_path)
     authorization_path = (
-        tmp_path / "models" / "bundle" / "deployment_authorization.json"
+        tmp_path / "models" / "bundle" / "live_input_authorization.json"
     )
     authorization = json.loads(authorization_path.read_text(encoding="utf-8"))
-    authorization["authority"]["live"] = False
+    authorization["owner_authorized"] = False
     authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=r"authority\.live=true"):
+    with pytest.raises(ValueError, match="explicit hash-bound live input authorization"):
         validate_deploy_config(config_path, tmp_path)
 
 
@@ -630,9 +571,9 @@ def test_preflight_rejects_bundle_manifest_live_false(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("relative_path", "message"),
     [
-        ("touch_conditioned_up_probability_10000ms.txt", "model hash mismatch"),
-        ("touch_conditioned_up_probability_10000ms_meta.json", "metadata hash mismatch"),
-        ("fill_prob_params.json", "P3 hash mismatch"),
+        ("touch_conditioned_up_probability_10000ms.txt", "artifact identity mismatch"),
+        ("touch_conditioned_up_probability_10000ms_meta.json", "artifact identity mismatch"),
+        ("touch_probability.json", "P3 hash mismatch"),
     ],
 )
 def test_preflight_rejects_hash_bound_bundle_tamper(
@@ -729,25 +670,29 @@ def test_preflight_requires_explicit_quote_snapshot_clock_limits(
         validate_deploy_config(config_path, tmp_path)
 
 
-def test_preflight_rejects_invalid_bundle_while_ml_is_disabled(tmp_path: Path) -> None:
+def test_preflight_rejects_incompatible_feature_contract(tmp_path: Path) -> None:
+    from semantic_bundle_fixtures import bind_changed_metadata, authorize_current_bundle
     config_path = _write_fixture(tmp_path)
     meta_path = tmp_path / "models" / "bundle" / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-    metadata["feature_semantics_version"] = 4
+    metadata["feature_contract_id"] = "retired_feature_semantics_v4"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="feature_semantics_version=4"):
+    bind_changed_metadata(meta_path.parent, "touch_conditioned_up_probability_10000ms")
+    authorize_current_bundle(meta_path.parent)
+    with pytest.raises(ValueError, match="mixed head contract"):
         validate_deploy_config(config_path, tmp_path)
 
 
 def test_preflight_rejects_pre_cutoff_feature_dag_identity(tmp_path: Path) -> None:
+    from semantic_bundle_fixtures import bind_changed_metadata, authorize_current_bundle
     config_path = _write_fixture(tmp_path)
     meta_path = tmp_path / "models" / "bundle" / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-    metadata["feature_dag_sha256"] = "legacy-pre-cutoff-dag"
+    metadata["train_only_selection"]["feature_dag_sha256"] = "legacy-pre-cutoff-dag"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="incompatible feature DAG identity"):
+    bind_changed_metadata(meta_path.parent, "touch_conditioned_up_probability_10000ms")
+    authorize_current_bundle(meta_path.parent)
+    with pytest.raises(ValueError, match="mixed training identity"):
         validate_deploy_config(config_path, tmp_path)
 
 
@@ -799,7 +744,7 @@ def test_preflight_cannot_grant_policy_approval_from_environment(
 
 def _verified_fixture_authority(config_path: Path, approvals: list[str]) -> dict:
     authorization_path = (
-        config_path.parent / "models/bundle/deployment_authorization.json"
+        config_path.parent / "models/bundle/live_input_authorization.json"
     ).resolve()
     return {
         "config_file_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),

@@ -90,8 +90,8 @@ def _replay_params(
     target_side: str = "BOTH",
 ) -> dict[str, object]:
     return {
-        "gamma": 0.01,
-        "kappa": 1.0,
+        "eta_inventory": (0.01) * (1.0), "a_spread": 0.01, "risk_per_order": 0.01, "inventory_reference_qty": 1.0, "risk_horizon_s": 1.0, "trade_intensity_acceleration_spread_mult": 2.0,
+        "execution_intensity_slope": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,
         "requote_interval": 1.0,

@@ -76,7 +76,7 @@ def _panel() -> pd.DataFrame:
                     "campaign_pnl_so_far": pressure,
                     "campaign_mae_so_far": -abs(pressure),
                     "campaign_add_count_so_far": local_index % 4,
-                    "microprice_shift_bps": 0.2 * pressure,
+                    "weighted_mid_proxy_shift_bps": 0.2 * pressure,
                     "l2_book_cancel_ratio": (local_index % 5) / 5.0,
                     "l2_book_refresh_ratio": (local_index % 7) / 7.0,
                     "l2_quote_flip_rate": (local_index % 3) / 3.0,

@@ -159,8 +159,10 @@ def test_formal_dry_run_rejects_invalid_model_contract_without_leaking_secrets(
     shutil.copytree(PUBLIC_BUNDLE, bundle)
     metadata_path = bundle / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata["feature_semantics_version"] = -1
+    metadata["feature_timestamp_semantics"] = "left_label_bucket_end"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    from tests.semantic_bundle_fixtures import bind_changed_metadata
+    bind_changed_metadata(bundle, "touch_conditioned_up_probability_10000ms")
 
     config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
     config["api"]["key"] = "never-print-this-key"
@@ -177,7 +179,7 @@ def test_formal_dry_run_rejects_invalid_model_contract_without_leaking_secrets(
     result = _summary(serialized)
     assert exit_code == 1
     assert result["status"] == "failed"
-    assert "feature_semantics_version=-1" in result["error"]["message"]
+    assert "unambiguous feature_ready_index metadata" in result["error"]["message"]
     assert "never-print-this-key" not in serialized
     assert "never-print-this-secret" not in serialized
 
@@ -201,7 +203,7 @@ def test_formal_dry_run_rejects_synthetic_model_byte_tampering(
     result = _summary(output.getvalue())
     assert exit_code == 1
     assert result["status"] == "failed"
-    assert "public synthetic bundle byte count mismatch for touch_conditioned_up_probability_10000ms.txt" in result[
+    assert "public model artifact identity mismatch" in result[
         "error"
     ]["message"]
 
@@ -217,7 +219,7 @@ def test_formal_dry_run_ml_off_does_not_read_unused_model_heads(
     monkeypatch.setattr(model_contract, "validate_model_bundle", forbidden)
     bundle = tmp_path / "p3-only"
     bundle.mkdir()
-    shutil.copyfile(PUBLIC_BUNDLE / "fill_prob_params.json", bundle / "fill_prob_params.json")
+    shutil.copyfile(PUBLIC_BUNDLE / "touch_probability.json", bundle / "touch_probability.json")
     config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
     config["ml"]["model_dir"] = str(bundle)
     path = tmp_path / "ml-off.yaml"

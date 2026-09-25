@@ -11,7 +11,6 @@ namespace narrowgate_cpp {
 // 的字段列表和 parity tests。
 struct QuoteCoreConfig {
     // Legacy compatibility input. NaN split fields inherit this value exactly.
-    double kappa = 1.0;
     double tick_size = 0.1;
     double lot_size = 0.001;
     double maker_fee = 0.0;
@@ -40,18 +39,17 @@ struct QuoteCoreConfig {
     double vol_power = 1.0;
 
     double kappa_ratio = 0.3;
-    double p3_delta_star = 0.0;
-    double p3_kappa_eff = 0.0;
+    double p3_distance_touch_product_argmax = 0.0;
+    double p3_touch_log_probability_distance_slope = 0.0;
 
     bool use_bar_pricing = true;
-    bool use_depth_microprice = false;
+    bool use_depth_weighted_mid_proxy = false;
     bool use_depth_kappa = false;
-    int microprice_levels = 3;
+    int weighted_mid_proxy_levels = 3;
     int kappa_levels = 5;
     double kappa_depth_baseline = 50.0;
     double depth_kappa_ratio = 0.3;
 
-    double ber_spread_mult = 2.0;
     double markout_spread_scale = 0.0;
     double markout_side_asymmetry_sign = 1.0;
     double inventory_skew_strength = 0.0;
@@ -65,7 +63,7 @@ struct QuoteCoreConfig {
     bool depth_tox_enabled = false;
     int depth_tox_levels = 20;
     double depth_tox_imbalance_threshold = 0.65;
-    double depth_tox_microprice_shift_bps = 1.0;
+    double depth_tox_weighted_mid_proxy_shift_bps = 1.0;
     double depth_tox_spread_mult = 1.25;
 
     bool dynamic_cap_enabled = false;
@@ -91,7 +89,7 @@ struct QuoteCoreConfig {
     bool adverse_markout_pause_hybrid = false;
     double adverse_dir_threshold = 0.0;
     double adverse_ret_bps_threshold = 0.0;
-    double adverse_microprice_shift_bps = 0.0;
+    double adverse_weighted_mid_proxy_shift_bps = 0.0;
     double adverse_spread_mult = 1.10;
     double adverse_thin_depth_threshold = 0.0;
     double adverse_thin_depth_mult = 1.0;
@@ -101,7 +99,7 @@ struct QuoteCoreConfig {
     double defense_markout_threshold = 2.0;
     double defense_dir_threshold = 0.05;
     double defense_ret_bps_threshold = 0.0;
-    double defense_microprice_shift_bps = 0.0;
+    double defense_weighted_mid_proxy_shift_bps = 0.0;
     double defense_spread_mult = 1.35;
     bool defense_pause = true;
     double defense_emergency_inventory_ratio = 0.50;
@@ -118,7 +116,7 @@ struct QuoteCoreConfig {
     double risk_per_order = std::numeric_limits<double>::quiet_NaN();
     double execution_intensity_slope = std::numeric_limits<double>::quiet_NaN();
     double risk_horizon_s = std::numeric_limits<double>::quiet_NaN();
-    bool historical_p3_scalar_adapter_enabled = false;
+    bool p3_pair_spread_projection_enabled = false;
     bool p3_side_bbo_floor_enabled = false;
     bool p3_identity_required = false;
     std::string p3_event_type;
@@ -151,7 +149,7 @@ struct SideQuoteContext {
     bool adverse_markout = false;
     bool adverse_direction = false;
     bool adverse_ret = false;
-    bool adverse_microprice = false;
+    bool adverse_weighted_mid_proxy = false;
     bool adverse_thin_depth = false;
     bool defense_guard = false;
     bool defense_pause = false;
@@ -160,7 +158,7 @@ struct SideQuoteContext {
     bool defense_markout = false;
     bool defense_direction = false;
     bool defense_ret = false;
-    bool defense_microprice = false;
+    bool defense_weighted_mid_proxy = false;
     double defense_spread_mult = 1.0;
     bool mid_guard = false;
     bool post_only = false;
@@ -224,7 +222,7 @@ struct QuoteCoreResult {
     double raw_asym_shift = 0.0;
     double raw_quote_skew = 0.0;
     double book_imb = 0.0;
-    double microprice_shift_bps = 0.0;
+    double weighted_mid_proxy_shift_bps = 0.0;
     double near_depth_total = 0.0;
     double kappa_before_depth = 0.0;
     double kappa_used = 0.0;
