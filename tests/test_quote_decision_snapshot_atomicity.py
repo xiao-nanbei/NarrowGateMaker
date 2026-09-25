@@ -917,11 +917,11 @@ def test_quote_runtime_warmup_only_prepares_caches_and_preserves_reload_keys(
         def __init__(self, artifact):
             self.artifact = artifact
 
-        def optimal_delta(self):
+        def distance_touch_product_argmax(self):
             calls["delta"] += 1
             return 2.0
 
-        def effective_kappa(self, delta):
+        def touch_log_probability_distance_slope(self, delta):
             assert delta == 2.0
             calls["kappa"] += 1
             return 0.1

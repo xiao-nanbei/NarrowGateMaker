@@ -78,12 +78,15 @@ def _write_fixture(
     (model_dir / "fill_prob_params.json").write_text(
         json.dumps(
             {
-                "schema_version": "narrowgate_p3_touch_calibration.v2",
+                "schema_version": "narrowgate_p3_touch_calibration.v3",
                 "model_type": "empirical_survival",
                 "delta_grid": [0.1, 14.0, 30.0],
                 "probability_grid": [0.8, 0.2, 0.01],
                 "metadata": {
                     "event_type": "touch",
+                    "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+                    "side": "pooled_buy_sell",
+                    "queue_included": False,
                     "horizon_s": 10.0,
                     "distance_unit": "USDC_per_BTC",
                 },
@@ -307,7 +310,7 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     identity = validate_deploy_config(_write_fixture(tmp_path), tmp_path)
 
     assert identity["effective_source"] == "artifact"
-    assert identity["effective_kappa"] == pytest.approx(0.067)
+    assert identity["touch_log_probability_distance_slope"] == pytest.approx(0.067)
     assert identity["delta_star"] == pytest.approx(14.0)
     assert identity["p3_event_type"] == "touch"
     assert identity["p3_horizon_s"] == pytest.approx(10.0)

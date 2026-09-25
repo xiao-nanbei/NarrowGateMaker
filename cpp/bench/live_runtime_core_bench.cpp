@@ -41,7 +41,8 @@ Depth20SideUpdate side_update(
 
 QuoteCoreConfig config() {
     QuoteCoreConfig value;
-    value.gamma = 0.046;
+    value.eta_inventory = 0.046;
+    value.risk_per_order = 0.046;
     value.eta_inventory = 0.046;
     value.a_spread = 0.046;
     value.kappa = 0.05;

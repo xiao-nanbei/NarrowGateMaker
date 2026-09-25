@@ -10,6 +10,9 @@
     "authority": "public_dry_run_only",
     "distance_unit": "USDC_per_BTC",
     "event_type": "touch",
+    "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+    "side": "pooled_buy_sell",
+    "queue_included": false,
     "horizon_s": 10.0
   },
   "model_type": "empirical_survival",
@@ -18,5 +21,5 @@
     0.2,
     0.01
   ],
-  "schema_version": "narrowgate_p3_touch_calibration.v2"
+  "schema_version": "narrowgate_p3_touch_calibration.v3"
 }

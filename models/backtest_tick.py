@@ -8136,7 +8136,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.skew_strength = params.get("skew_strength", 0.0)
     _tick_state.asym_strength = params.get("asym_strength", 0.0)
     _tick_state.ret_skew = params.get("ret_skew", 0.0)
-    _tick_state.gamma_dir_bonus = params.get("gamma_dir_bonus", 0.0)
+    _tick_state.inventory_direction_alignment_strength = params.get("inventory_direction_alignment_strength", 0.0)
     _tick_state.ret_demean_halflife = params.get("ret_demean_halflife", 0)
 
     # Regime params
@@ -8686,7 +8686,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         params,
         ml_data is not None,
         _tick_state.vol_blend > 0 or _tick_state.skew_strength > 0 or _tick_state.asym_strength > 0 or
-        _tick_state.ret_skew > 0 or _tick_state.gamma_dir_bonus > 0 or
+        _tick_state.ret_skew > 0 or _tick_state.inventory_direction_alignment_strength > 0 or
         _tick_state.adverse_guard_enabled or _tick_state.defense_guard_enabled or
         _tick_state.buy_fill_selection_live_enabled or _tick_state.conditional_p3_reach_gate_enabled,
     )
@@ -34613,7 +34613,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "vol_blend": _tick_state.vol_blend,
         "skew": _tick_state.skew_strength,
         "asym": _tick_state.asym_strength,
-        "gdir": _tick_state.gamma_dir_bonus,
+        "gdir": _tick_state.inventory_direction_alignment_strength,
         "ret_skew": _tick_state.ret_skew,
         "inventory_asym_strength": _tick_state.inventory_asym_strength,
         "inventory_signal_fade_strength": _tick_state.inventory_signal_fade_strength,
@@ -37110,7 +37110,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         or float(params.get("skew_strength", 0.0)) > 0.0
         or float(params.get("asym_strength", 0.0)) > 0.0
         or float(params.get("ret_skew", 0.0)) > 0.0
-        or float(params.get("gamma_dir_bonus", 0.0)) > 0.0
+        or float(params.get("inventory_direction_alignment_strength", 0.0)) > 0.0
         or bool(params.get("adverse_guard_enabled", False))
         or bool(params.get("defense_guard_enabled", False))
         or bool(params.get("buy_fill_selection_live_enabled", False)),
@@ -39247,7 +39247,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "vol_blend": float(params.get("vol_blend", 0.0)),
         "skew": float(params.get("skew_strength", 0.0)),
         "asym": float(params.get("asym_strength", 0.0)),
-        "gdir": float(params.get("gamma_dir_bonus", 0.0)),
+        "gdir": float(params.get("inventory_direction_alignment_strength", 0.0)),
         "ret_skew": float(params.get("ret_skew", 0.0)),
         "inventory_asym_strength": float(params.get("inventory_asym_strength", 0.0)),
         "inventory_signal_fade_strength": float(params.get("inventory_signal_fade_strength", 0.0)),
@@ -39836,7 +39836,7 @@ SWEEP_GRID_ML = {
     "vol_blend": [0.0, 0.3, 0.7],
     "skew_strength": [0.0, 0.1, 0.3],
     "asym_strength": [0.0, 0.1, 0.2],
-    "gamma_dir_bonus": [0.0, 0.3],
+    "inventory_direction_alignment_strength": [0.0, 0.3],
     "ret_skew": [0.0, 100.0, 200.0],
 }
 
@@ -41803,7 +41803,7 @@ def main():
         "dynamic_cap_max_mult": "dynamic_cap_max_mult",
         "dynamic_cap_var_baseline": "dynamic_cap_var_baseline",
         "depth_kappa_ratio": "depth_kappa_ratio",
-        "gamma_dir_bonus": "gamma_dir_bonus",
+        "inventory_direction_alignment_strength": "inventory_direction_alignment_strength",
         "adverse_guard": "adverse_guard_enabled",
         "adverse_pause": "adverse_pause",
         "adverse_toxicity_threshold": "adverse_toxicity_threshold",

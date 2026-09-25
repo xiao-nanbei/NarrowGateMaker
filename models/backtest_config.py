@@ -78,7 +78,7 @@ TICK_DEFAULTS: Mapping[str, Any] = {
     "circuit_breaker_exit_mode": "maker_close",
 }
 
-ML_PARAM_KEYS = ("vol_blend", "skew_strength", "asym_strength", "ret_skew", "gamma_dir_bonus")
+ML_PARAM_KEYS = ("vol_blend", "skew_strength", "asym_strength", "ret_skew", "inventory_direction_alignment_strength")
 COOLDOWN_POLICY_PARAM_KEYS = (
     "boolean_cooldown_policy_enabled",
     "boolean_cooldown_policy_path",
@@ -1218,11 +1218,11 @@ def build_backtest_base_params(
         "vol_blend": live_params.get("vol_blend", 0.0),
         "dir_threshold": live_params.get("dir_threshold", 0.05),
         "asym_strength": live_params.get("asym_strength", 0.0),
-        "gamma_dir_bonus": live_params.get("gamma_dir_bonus", 0.0),
+        "inventory_direction_alignment_strength": live_params.get("inventory_direction_alignment_strength", 0.0),
         "regime_enabled": live_params.get("regime_enabled", False),
         "vol_baseline": live_params.get("vol_baseline", 3.0),
-        "gamma_scale_min": live_params.get("gamma_scale_min", 0.5),
-        "gamma_scale_max": live_params.get("gamma_scale_max", 2.0),
+        "volatility_spread_scale_min": live_params.get("volatility_spread_scale_min", 0.5),
+        "volatility_spread_scale_max": live_params.get("volatility_spread_scale_max", 2.0),
         "ret_skew": live_params.get("ret_skew", 0.0),
         "f03_ret_action_horizon_s": live_params.get(
             "f03_ret_action_horizon_s", 0.0
@@ -1266,8 +1266,8 @@ def build_backtest_base_params(
         "rq_min": live_params.get("rq_min", live_params.get("requote_interval", 10.0)),
         "rq_max": live_params.get("rq_max", live_params.get("requote_interval", 10.0)),
         "liq_baseline": live_params.get("liq_baseline", 200.0),
-        "gamma_liq_scale_min": live_params.get("gamma_liq_scale_min", 0.5),
-        "gamma_liq_scale_max": live_params.get("gamma_liq_scale_max", 3.0),
+        "liquidity_spread_scale_min": live_params.get("liquidity_spread_scale_min", 0.5),
+        "liquidity_spread_scale_max": live_params.get("liquidity_spread_scale_max", 3.0),
         "p3_delta_star": p3_delta_star,
         "p3_kappa_eff": p3_kappa_eff,
         "kappa_depth_baseline": live_params.get("kappa_depth_baseline", 50.0),
@@ -1594,14 +1594,11 @@ def add_fill_probability_params(
     params["fill_probability_artifact_sha256"] = ""
     params["p3_identity_required"] = bool(strict)
     try:
-        try:
-            from research.families.f02_empirical_p3_touch.fill_probability import (
-                FillProbabilityModel,
-            )
-        except ImportError:
-            from fill_probability import FillProbabilityModel
+        from research.families.f02_empirical_p3_touch.touch_probability import (
+            TouchProbabilityModel,
+        )
 
-        fill_model = FillProbabilityModel.load(model_path)
+        fill_model = TouchProbabilityModel.load(model_path)
         p3_identity = (
             fill_model.semantic_identity(require_artifact_hash=True)
             if fill_model.model_type == "empirical_survival"
@@ -1615,8 +1612,8 @@ def add_fill_probability_params(
                 "artifact_sha256": "",
             }
         )
-        params["p3_delta_star"] = fill_model.optimal_delta()
-        p3_kappa_eff = fill_model.effective_kappa()
+        params["p3_delta_star"] = fill_model.distance_touch_product_argmax()
+        p3_kappa_eff = fill_model.touch_log_probability_distance_slope()
         if p3_kappa_eff > 0:
             params["p3_kappa_eff"] = p3_kappa_eff
         if params["p3_delta_star"] <= 0.0 or params["p3_kappa_eff"] <= 0.0:
@@ -1724,7 +1721,7 @@ def validate_formal_replay_calibration(
 
     if not bool(params.get("fill_probability_calibrated", False)):
         errors.append("fill-probability/effective-kappa calibration is missing")
-    if params.get("fill_probability_schema_version") != "narrowgate_p3_touch_calibration.v2":
+    if params.get("fill_probability_schema_version") != "narrowgate_p3_touch_calibration.v3":
         errors.append("formal replay requires causal exact-tick P3 calibration v2")
     if params.get("fill_probability_model_type") != "empirical_survival":
         errors.append("formal replay requires empirical P3 survival calibration")

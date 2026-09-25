@@ -18,9 +18,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
+from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 
-SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v2"
+SCHEMA_VERSION = "narrowgate_p3_touch_calibration.v3"
 
 
 def _sha256(path: Path) -> str:
@@ -344,15 +344,15 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         "input_manifest": input_manifest,
         "split_summaries": summaries,
     }
-    model = FillProbabilityModel(
+    model = TouchProbabilityModel(
         model_type="empirical_survival",
         delta_grid=grid.tolist(),
         probability_grid=train_curve.tolist(),
         schema_version=SCHEMA_VERSION,
         metadata=metadata,
     )
-    delta_star = model.optimal_delta(delta_max=float(args.distance_max))
-    kappa_eff = model.effective_kappa(delta_star)
+    delta_star = model.distance_touch_product_argmax(delta_max=float(args.distance_max))
+    kappa_eff = model.touch_log_probability_distance_slope(delta_star)
     metadata["delta_star"] = delta_star
     metadata["kappa_eff"] = kappa_eff
     metadata["probability_at_delta_star"] = float(model.prob(delta_star))

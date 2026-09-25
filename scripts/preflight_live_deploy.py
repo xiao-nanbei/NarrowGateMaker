@@ -73,8 +73,8 @@ def validate_deploy_config(
         BOUNDED_REMOTE_SPOOL,
         validate_lifecycle_journal_storage,
     )
-    from research.families.f02_empirical_p3_touch.fill_probability import (
-        FillProbabilityModel,
+    from research.families.f02_empirical_p3_touch.touch_probability import (
+        TouchProbabilityModel,
     )
     from strategy.model_contract import (
         PRIVATE_DEPLOYMENT_AUTHORITY,
@@ -274,7 +274,7 @@ def validate_deploy_config(
         raise ValueError(f"deploy bundle is missing fill_prob_params.json: {p3_path}")
     p3_raw = p3_path.read_bytes()
     p3 = _as_mapping(json.loads(p3_raw), "P3 artifact")
-    p3_model = FillProbabilityModel.from_bytes(
+    p3_model = TouchProbabilityModel.from_bytes(
         p3_raw, artifact_path=p3_path, require_live_compatible=True,
     )
     p3_identity = p3_model.semantic_identity(require_artifact_hash=True)
@@ -505,7 +505,7 @@ def validate_deploy_config(
         "delta_star": delta_star,
         "artifact_kappa_eff": artifact_kappa,
         "override": override,
-        "effective_kappa": override if override > 0.0 else artifact_kappa,
+        "touch_log_probability_distance_slope": override if override > 0.0 else artifact_kappa,
         "effective_source": "config_override" if override > 0.0 else "artifact",
         "ml_enabled": ml_enabled,
         "state_conditioned_policy": state_policy_identity,

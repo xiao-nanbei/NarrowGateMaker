@@ -34,7 +34,7 @@ def _strict_params(config_path: Path) -> dict:
         "_config_explicit": True,
         "_config_path": str(config_path),
         "fill_probability_calibrated": True,
-        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v2",
+        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v3",
         "fill_probability_model_type": "empirical_survival",
         "fill_probability_event_type": "touch",
         "fill_probability_horizon_s": 10.0,

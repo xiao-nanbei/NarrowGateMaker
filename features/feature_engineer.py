@@ -426,16 +426,16 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         model_dir = ROOT / model_dir
     fill_prob_path = (model_dir / "fill_prob_params.json").resolve()
 
-    from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
+    from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 
     try:
-        fill_model = FillProbabilityModel.load(fill_prob_path)
+        fill_model = TouchProbabilityModel.load(fill_prob_path)
     except Exception as exc:
         raise RuntimeError(
             f"label P3 artifact unavailable: {fill_prob_path}: {exc}"
         ) from exc
     if (
-        fill_model.schema_version != "narrowgate_p3_touch_calibration.v2"
+        fill_model.schema_version != "narrowgate_p3_touch_calibration.v3"
         or fill_model.model_type != "empirical_survival"
     ):
         raise ValueError(
@@ -443,8 +443,8 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
             f"schema={fill_model.schema_version!r} type={fill_model.model_type!r} "
             f"from {fill_prob_path}"
         )
-    p3_delta_star = float(fill_model.optimal_delta())
-    p3_kappa_eff = float(fill_model.effective_kappa(p3_delta_star))
+    p3_delta_star = float(fill_model.distance_touch_product_argmax())
+    p3_kappa_eff = float(fill_model.touch_log_probability_distance_slope(p3_delta_star))
     if p3_delta_star <= 0.0 or p3_kappa_eff <= 0.0:
         raise ValueError(f"invalid P3 calibration values in {fill_prob_path}")
 
@@ -513,11 +513,11 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         "dynamic_cap_var_baseline": float(strat.get("dynamic_cap_var_baseline", 0.0)),
         "vol_power": float(strat.get("vol_power", 1.0)),
         "vol_baseline": float(regime.get("vol_baseline", 3.0)),
-        "gamma_scale_min": float(regime.get("gamma_scale_min", 0.5)),
-        "gamma_scale_max": float(regime.get("gamma_scale_max", 2.0)),
+        "volatility_spread_scale_min": float(regime.get("volatility_spread_scale_min", 0.5)),
+        "volatility_spread_scale_max": float(regime.get("volatility_spread_scale_max", 2.0)),
         "liq_baseline": float(regime.get("liq_baseline", 200.0)),
-        "gamma_liq_scale_min": float(regime.get("gamma_liq_scale_min", 0.5)),
-        "gamma_liq_scale_max": float(regime.get("gamma_liq_scale_max", 3.0)),
+        "liquidity_spread_scale_min": float(regime.get("liquidity_spread_scale_min", 0.5)),
+        "liquidity_spread_scale_max": float(regime.get("liquidity_spread_scale_max", 3.0)),
         "maker_fee": maker_fee,
         "tick_size": tick_size,
         "p3_delta_star": p3_delta_star,
@@ -643,8 +643,8 @@ def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
         liq_scale = 1.0 / np.maximum(np.sqrt(liq_ratio), 0.2)
         liq_scale = np.clip(
             liq_scale,
-            float(quote_params["gamma_liq_scale_min"]),
-            float(quote_params["gamma_liq_scale_max"]),
+            float(quote_params["liquidity_spread_scale_min"]),
+            float(quote_params["liquidity_spread_scale_max"]),
         )
         delta *= liq_scale
 
@@ -654,8 +654,8 @@ def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
         vol_scale = vol_sq_ratio ** (float(quote_params["vol_power"]) * 0.5)
         vol_scale = np.clip(
             vol_scale,
-            float(quote_params["gamma_scale_min"]),
-            float(quote_params["gamma_scale_max"]),
+            float(quote_params["volatility_spread_scale_min"]),
+            float(quote_params["volatility_spread_scale_max"]),
         )
         delta *= vol_scale
 

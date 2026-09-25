@@ -32,7 +32,7 @@ Status: current-code audit; no strategy, Validation, sealed holdout, or live per
 
 ### P0：F02 的 10 秒 touch 曲线不应直接充当 1 秒报价经济最优解
 
-[`fill_probability.py`](families/f02_empirical_p3_touch/fill_probability.py) 当前已经正确声明它估计的是：
+[`fill_probability.py`](families/f02_empirical_p3_touch/touch_probability.py) 当前已经正确声明它估计的是：
 
 \[
 P(\text{touch within calibrated horizon}\mid \delta),
@@ -56,7 +56,7 @@ P(\text{touch within calibrated horizon}\mid \delta),
 
 建议：
 
-1. 将 artifact/runtime ABI 明确为 `touch_curve(horizon_s)`，禁止再使用泛化的 `FillProbabilityModel` 名称授予 fill 语义；
+1. 将 artifact/runtime ABI 明确为 `touch_curve(horizon_s)`，禁止再使用泛化的 `TouchProbabilityModel` 名称授予 fill 语义；
 2. formal/live config 强制 `p3_horizon_s` 与用途一起绑定，禁止只传 `delta_star/kappa_eff`；
 3. 将 `2 * p3_delta_star` 从“经济最优 spread floor”降为单独可审计的历史 baseline mechanism；新的 placement/value 研究使用完整曲线，不继承该最优性解释；
 4. 如需 1s 报价输入，单独校准 1s/剩余订单生命周期的 touch 曲线，不能把 10s `delta_star` 机械缩放。

@@ -23,14 +23,13 @@ Important:
   tick replay queue calibration and exact L2 where available.
 
 Usage:
-    python research/families/f02_empirical_p3_touch/fill_probability.py                # fit from all training data
-    python research/families/f02_empirical_p3_touch/fill_probability.py --plot          # fit + plot diagnostics
+    python research/families/f02_empirical_p3_touch/touch_probability.py                # fit from all training data
+    python research/families/f02_empirical_p3_touch/touch_probability.py --plot          # fit + plot diagnostics
 """
 
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -38,22 +37,14 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import norm
 
-try:
-    from models.symbol_paths import (
-        DEFAULT_SYMBOL,
-        ROOT,
-        data_root,
-        paths_for,
-        update_symbol_globals,
-    )
-except ImportError:
-    from symbol_paths import DEFAULT_SYMBOL, ROOT, data_root, paths_for, update_symbol_globals
-
-try:
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
+from models.symbol_paths import (
+    DEFAULT_SYMBOL,
+    ROOT,
+    data_root,
+    paths_for,
+    update_symbol_globals,
+)
+from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
 
 BARS_DIR = data_root(ROOT) / "bars_1s"
 
@@ -73,14 +64,14 @@ P3_HORIZON_S = 10.0
 P3_DISTANCE_UNIT = "USDC_per_BTC"
 P3_DISTANCE_ORIGIN = "same_side_best_bid_or_ask_at_window_start"
 P3_SIDE_IDENTITY = "pooled_buy_sell"
-P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v2"
+P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v3"
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  SU Johnson fill probability model
 # ═══════════════════════════════════════════════════════════════════
 
-class FillProbabilityModel:
+class TouchProbabilityModel:
     """Fill-opportunity probability model.
 
     Legacy artifacts use the SU Johnson bar-excursion curve. Formal causal-v2
@@ -99,7 +90,7 @@ class FillProbabilityModel:
                  gamma: float = 0.0, delta0: float = 1.0, *,
                  model_type: str = "su_johnson",
                  delta_grid=None, probability_grid=None,
-                 schema_version: str = "legacy_su_johnson.v1",
+                 schema_version: str = P3_EMPIRICAL_SCHEMA,
                  metadata=None):
         self.xi = xi
         self.lam = lam
@@ -109,6 +100,8 @@ class FillProbabilityModel:
         self.delta_grid = np.asarray(delta_grid or [], dtype=np.float64)
         self.probability_grid = np.asarray(probability_grid or [], dtype=np.float64)
         self.schema_version = str(schema_version)
+        if self.schema_version != P3_EMPIRICAL_SCHEMA:
+            raise ValueError("unsupported P3 schema; explicit offline migration required")
         self.metadata = dict(metadata or {})
         self.artifact_path: Path | None = None
         self.artifact_sha256 = ""
@@ -129,27 +122,11 @@ class FillProbabilityModel:
         if self.model_type != "empirical_survival":
             raise ValueError("only empirical P3 artifacts have a formal touch identity")
         event_type = str(self.metadata.get("event_type") or "").strip().lower()
-        if not event_type and (
-            self.schema_version == P3_EMPIRICAL_SCHEMA
-            and bool(str(self.metadata.get("touch_source") or "").strip())
-            and not bool(self.metadata.get("queue_included", False))
-        ):
-            # Frozen v2 artifacts predate the explicit event_type field. Their
-            # schema and metadata make the inference exact without changing SHA.
-            event_type = P3_EVENT_TYPE
         horizon_s = float(self.metadata.get("horizon_s", 0.0) or 0.0)
         distance_unit = str(self.metadata.get("distance_unit") or "").strip()
         distance_origin = str(self.metadata.get("distance_origin") or "").strip()
-        if not distance_origin and self.schema_version == P3_EMPIRICAL_SCHEMA:
-            # The frozen v2 and public dry-run artifacts predate this explicit
-            # field.  Their calibration implementation has one fixed origin.
-            distance_origin = P3_DISTANCE_ORIGIN
         side = str(self.metadata.get("side") or "").strip().lower()
-        if not side and self.schema_version == P3_EMPIRICAL_SCHEMA:
-            side = P3_SIDE_IDENTITY
         queue_included = self.metadata.get("queue_included")
-        if queue_included is None and self.schema_version == P3_EMPIRICAL_SCHEMA:
-            queue_included = False
         if event_type != P3_EVENT_TYPE:
             raise ValueError(f"empirical P3 event_type must be {P3_EVENT_TYPE!r}")
         if not np.isclose(horizon_s, P3_HORIZON_S, rtol=0.0, atol=1e-12):
@@ -201,7 +178,7 @@ class FillProbabilityModel:
         z = self.xi + self.lam * np.arcsinh((delta - self.gamma) / self.delta0)
         return 1.0 - norm.cdf(z)
 
-    def optimal_delta(self, delta_min=0.1, delta_max=200.0, n=50_000):
+    def distance_touch_product_argmax(self, delta_min=0.1, delta_max=200.0, n=50_000):
         """δ* = argmax δ · f(δ), a touch-distance diagnostic objective.
 
         This is not expected execution revenue: the touch curve excludes queue
@@ -214,7 +191,7 @@ class FillProbabilityModel:
         obj = grid * self.prob(grid)
         return float(grid[np.argmax(obj)])
 
-    def effective_kappa(self, delta_star=None):
+    def touch_log_probability_distance_slope(self, delta_star=None):
         """Return local ``-d log(P_touch) / d delta`` near ``delta_star``.
 
         Its unit is inverse price distance, e.g. ``(USDC/BTC)^-1``.  It is a
@@ -222,7 +199,7 @@ class FillProbabilityModel:
         order-arrival intensity.
         """
         if delta_star is None:
-            delta_star = self.optimal_delta()
+            delta_star = self.distance_touch_product_argmax()
         eps = (
             max(0.05, float(np.median(np.diff(self.delta_grid))))
             if self.model_type == "empirical_survival"
@@ -250,8 +227,7 @@ class FillProbabilityModel:
             "delta0": self.delta0,
         }
         if self.model_type == "empirical_survival":
-            # Every newly written empirical artifact carries its estimand. Old
-            # v2 artifacts remain byte-for-byte frozen and normalize at load.
+            # Calibration producers write a complete estimand; readers never infer it.
             self.metadata.setdefault("event_type", P3_EVENT_TYPE)
             self.metadata.setdefault("distance_origin", P3_DISTANCE_ORIGIN)
             self.metadata.setdefault("side", P3_SIDE_IDENTITY)
@@ -261,8 +237,8 @@ class FillProbabilityModel:
                 "delta_grid": self.delta_grid.tolist(),
                 "probability_grid": self.probability_grid.tolist(),
                 "metadata": self.metadata,
-                "delta_star": self.optimal_delta(),
-                "kappa_eff": self.effective_kappa(),
+                "delta_star": self.distance_touch_product_argmax(),
+                "kappa_eff": self.touch_log_probability_distance_slope(),
             })
         with open(path, "w") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
@@ -287,6 +263,10 @@ class FillProbabilityModel:
         d = json.loads(raw)
         if not isinstance(d, dict):
             raise ValueError("P3 artifact must be a JSON object")
+        if d.get("schema_version") != P3_EMPIRICAL_SCHEMA:
+            raise ValueError("unsupported P3 schema; explicit offline migration required")
+        if d.get("model_type") not in {"empirical_survival", "su_johnson"}:
+            raise ValueError("unsupported P3 model_type")
         if require_live_compatible:
             metadata = d.get("metadata") or {}
             if not isinstance(metadata, dict):
@@ -320,7 +300,7 @@ class FillProbabilityModel:
                 lam=float(d["lam"]),
                 gamma=float(d["gamma"]),
                 delta0=float(d["delta0"]),
-                schema_version=str(d.get("schema_version", "legacy_su_johnson.v1")),
+                schema_version=str(d["schema_version"]),
             )
         model.artifact_path = Path(artifact_path).resolve() if artifact_path is not None else None
         model.artifact_sha256 = hashlib.sha256(raw).hexdigest()
@@ -385,7 +365,7 @@ def _compute_excursions(bars_path: Path, window_sec: int = REQUOTE_SEC) -> np.nd
     return all_exc[all_exc > 0]
 
 
-def fit_from_data(excursions: np.ndarray) -> FillProbabilityModel:
+def fit_from_data(excursions: np.ndarray) -> TouchProbabilityModel:
     """Fit SU Johnson parameters from raw excursion samples via MLE.
 
     Trims extreme outliers (>p99) and enforces δ₀ > 1.0 to avoid
@@ -425,7 +405,7 @@ def fit_from_data(excursions: np.ndarray) -> FillProbabilityModel:
     xi, lam, gam, d0 = result.x
     lam = abs(lam)
     d0 = max(abs(d0), 1.0)
-    return FillProbabilityModel(xi=xi, lam=lam, gamma=gam, delta0=d0)
+    return TouchProbabilityModel(xi=xi, lam=lam, gamma=gam, delta0=d0)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -453,7 +433,7 @@ def main():
     bar_files = filter_paths_for_orderbook_quality(bar_files, SYMBOL, label="fill-probability bar")
     if not bar_files:
         print("No bar files found in", BARS_DIR)
-        sys.exit(1)
+        raise SystemExit(1)
 
     print(f"Computing excursions from {len(bar_files)} files …")
     all_exc = []
@@ -465,7 +445,7 @@ def main():
                   f"median={np.median(exc):.2f}  p95={np.percentile(exc, 95):.2f}")
     if not all_exc:
         print("No valid excursions found")
-        sys.exit(1)
+        raise SystemExit(1)
 
     excursions = np.concatenate(all_exc)
     print(f"\nTotal excursions: {len(excursions):,}")
@@ -479,8 +459,8 @@ def main():
     model = fit_from_data(excursions)
     print(f"  {model}")
 
-    delta_star = model.optimal_delta()
-    kappa_eff = model.effective_kappa(delta_star)
+    delta_star = model.distance_touch_product_argmax()
+    kappa_eff = model.touch_log_probability_distance_slope(delta_star)
     print(f"  Optimal δ* = {delta_star:.2f} USDT")
     print(f"  f(δ*) = {model.prob(delta_star):.4f}")
     print(f"  δ* · f(δ*) = {delta_star * model.prob(delta_star):.4f} USDT (expected revenue)")

@@ -532,7 +532,7 @@ def _feature_panel_identity() -> dict:
         )
     calibration = payload.get("label_quote_calibration") or {}
     if (
-        calibration.get("schema_version") != "narrowgate_p3_touch_calibration.v2"
+        calibration.get("schema_version") != "narrowgate_p3_touch_calibration.v3"
         or calibration.get("model_type") != "empirical_survival"
         or not str(calibration.get("sha256", "") or "")
         or float(calibration.get("p3_delta_star", 0.0) or 0.0) <= 0.0
@@ -1754,15 +1754,12 @@ def evaluate_bundle_backtest(pred_df, config_path=None,
     p3_delta_star = 0.0
     p3_kappa_eff = 0.0
     try:
-        try:
-            from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
-        except ImportError:
-            from fill_probability import FillProbabilityModel
+        from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
         fp_path = MODEL_DIR / "fill_prob_params.json"
         if fp_path.exists():
-            fp_model = FillProbabilityModel.load(fp_path)
-            p3_delta_star = fp_model.optimal_delta()
-            p3_kappa_eff = fp_model.effective_kappa()
+            fp_model = TouchProbabilityModel.load(fp_path)
+            p3_delta_star = fp_model.distance_touch_product_argmax()
+            p3_kappa_eff = fp_model.touch_log_probability_distance_slope()
     except Exception as exc:
         print(f"  P3 model not loaded for bundle backtest: {exc}")
 

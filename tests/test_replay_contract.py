@@ -109,7 +109,7 @@ def _contract_params(tmp_path):
         json.dumps({"feature_cols": ["return_1"]}), encoding="utf-8"
     )
     p3 = tmp_path / "fill_prob_params.json"
-    p3.write_text('{"schema_version":"narrowgate_p3_touch_calibration.v2"}\n')
+    p3.write_text('{"schema_version":"narrowgate_p3_touch_calibration.v3"}\n')
     p3_sha256 = hashlib.sha256(p3.read_bytes()).hexdigest()
     queue = tmp_path / "queue.json"
     queue.write_text('{"schema_version":"narrowgate_queue_calibration.v3"}\n')
@@ -119,7 +119,7 @@ def _contract_params(tmp_path):
         "resolved_model_dir": str(model_dir),
         "fill_probability_model_path": str(p3),
         "queue_calibration_path": str(queue),
-        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v2",
+        "fill_probability_schema_version": "narrowgate_p3_touch_calibration.v3",
         "fill_probability_model_type": "empirical_survival",
         "fill_probability_event_type": "touch",
         "fill_probability_horizon_s": 10.0,

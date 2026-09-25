@@ -186,6 +186,7 @@ def test_shared_native_loader_uses_canonical_directory_containment(
     elif layout == "relative":
         root = "runtime"
     module = SimpleNamespace() if layout == "no_file" else SimpleNamespace(__file__=str(source))
+    module.APPLICATION_INTERFACE_VERSION = native_runtime.APPLICATION_INTERFACE_VERSION
     monkeypatch.setattr(native_runtime.importlib, "import_module", lambda name: module)
     monkeypatch.setenv("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", str(root))
     if layout == "inside":

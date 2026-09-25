@@ -923,12 +923,11 @@ def test_cpp_p3_side_floor_constraint_flags_are_side_specific(monkeypatch):
     assert cpp.quote_context["SELL"]["any_constraint_changed"] is False
 
 
-def test_cpp_direct_legacy_gamma_fallback_preserves_old_callers():
+def test_cpp_direct_missing_inventory_coefficient_is_rejected():
     cfg = _cfg(gamma=0.02)
     state = _state(1)
     pred = _pred(1)
     depth = qc.DepthSnapshot()
-    expected = qc.compute_quote_core(state, cfg, pred, depth)
 
     cpp_cfg = narrowgate_cpp.QuoteCoreConfig()
     assert np.isnan(cpp_cfg.eta_inventory)
@@ -938,15 +937,11 @@ def test_cpp_direct_legacy_gamma_fallback_preserves_old_callers():
             setattr(cpp_cfg, name, getattr(cfg, name))
     cpp_state = qc._copy_attrs(state, narrowgate_cpp.QuoteState(), qc._CPP_STATE_FIELDS)
     cpp_pred = qc._copy_attrs(pred, narrowgate_cpp.QuotePrediction(), qc._CPP_PRED_FIELDS)
-    actual = narrowgate_cpp.compute_quote_core(
-        cpp_state,
-        cpp_cfg,
-        cpp_pred,
-        qc._to_cpp_depth(narrowgate_cpp, depth),
-    )
-
-    assert actual.bid_price == pytest.approx(expected.bid_price, abs=cfg.tick_size * 0.51)
-    assert actual.ask_price == pytest.approx(expected.ask_price, abs=cfg.tick_size * 0.51)
+    with pytest.raises(ValueError, match="eta_inventory must be positive and finite"):
+        narrowgate_cpp.compute_quote_core(
+            cpp_state, cpp_cfg, cpp_pred, qc._to_cpp_depth(narrowgate_cpp, depth),
+        )
+    cpp_cfg.eta_inventory = cfg.eta_inventory
     cpp_cfg.a_spread = 0.0
     with pytest.raises(ValueError, match="a_spread"):
         narrowgate_cpp.compute_quote_core(
@@ -1504,11 +1499,13 @@ def test_cpp_quote_config_cache_is_bound_to_module_and_config(monkeypatch):
     second_config = qc._cached_cpp_config(second_module, cfg)
     assert second_config is not first_config
     assert qc._cached_cpp_config(second_module, cfg) is second_config
-    assert second_config.gamma == first_config.gamma
+    assert second_config.eta_inventory == first_config.eta_inventory
 
 
 def test_direct_cpp_p3_projection_requires_complete_touch_identity() -> None:
     cpp_cfg = narrowgate_cpp.QuoteCoreConfig()
+    cpp_cfg.eta_inventory = 0.01
+    cpp_cfg.risk_per_order = 0.01
     cpp_cfg.p3_delta_star = 0.5
     cpp_cfg.p3_side_bbo_floor_enabled = True
     cpp_state = qc._copy_attrs(
@@ -2511,7 +2508,7 @@ def test_fused_native_tick_lot_prefix_never_consumes_invalid_level():
 @pytest.mark.parametrize(
     ("updates", "message"),
     (
-        ({"gamma": 0.0}, "gamma must be positive and finite"),
+        ({"eta_inventory": 0.0}, "eta_inventory must be positive and finite"),
         ({"risk_horizon_s": -1.0}, "risk_horizon_s must be positive and finite"),
         (
             {

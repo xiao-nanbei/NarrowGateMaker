@@ -75,7 +75,7 @@ def test_model_identity_keeps_reference_observation_limits_without_fitting(tmp_p
         "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
         "feature_dag_id": REQUIRED_FEATURE_DAG_ID, "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
         "volatility_unit_contract": units, "label_volatility_units": units["variance_units"],
-        "label_quote_calibration": {"schema_version": "narrowgate_p3_touch_calibration.v2",
+        "label_quote_calibration": {"schema_version": "narrowgate_p3_touch_calibration.v3",
             "model_type": "empirical_survival", "sha256": "synthetic", "p3_delta_star": 1, "p3_kappa_eff": 1},
         "reference_bar_source": {"symbol": "BTCUSDT", "daily_files": [
             {"symbol": "BTCUSDT", "trade_count_unit": "individual_execution"}]},

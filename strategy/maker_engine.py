@@ -981,13 +981,13 @@ def _resolve_model_dir(cfg) -> Optional[Path]:
 
 
 def _get_fill_model(model_dir: Optional[Path] = None):
-    """Lazy-load FillProbabilityModel from saved params."""
+    """Lazy-load TouchProbabilityModel from saved params."""
     global _fill_model, _fill_model_path, _fill_model_loaded
     model_path = model_dir / "fill_prob_params.json" if model_dir else None
     if not _fill_model_loaded or model_path != _fill_model_path:
         try:
-            from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
-            _fill_model = FillProbabilityModel.load(model_path)
+            from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
+            _fill_model = TouchProbabilityModel.load(model_path)
             _fill_model_path = model_path
             _fill_model_loaded = True
             logger.info(f"Loaded fill probability model: {_fill_model} ({model_path})")
@@ -1350,15 +1350,15 @@ def validate_live_artifact_authority(
         if members[role][0] != expected_path:
             raise ValueError(f"policy_artifact_authority_config_path_drifted:{role}")
         if role == "p3":
-            from research.families.f02_empirical_p3_touch.fill_probability import (
-                FillProbabilityModel,
+            from research.families.f02_empirical_p3_touch.touch_probability import (
+                TouchProbabilityModel,
             )
 
             # Check compatibility on the same bytes bound by the release,
             # before constructing a trading runtime. Optional preflight is not
             # required to make this startup boundary effective.
             raw = expected_path.read_bytes()
-            model = FillProbabilityModel.from_bytes(
+            model = TouchProbabilityModel.from_bytes(
                 raw, artifact_path=expected_path, require_live_compatible=True,
             )
             if model.artifact_sha256 != members[role][1]:
@@ -7706,11 +7706,11 @@ class MakerEngine:
             cache_key = (self._model_dir, id(fill_model))
             cache = getattr(self, "_fill_model_quote_cache", None)
             if cache is None or cache[0] != cache_key:
-                delta_star = fill_model.optimal_delta()
+                delta_star = fill_model.distance_touch_product_argmax()
                 cache = (
                     cache_key,
                     delta_star,
-                    fill_model.effective_kappa(delta_star),
+                    fill_model.touch_log_probability_distance_slope(delta_star),
                     fill_model.semantic_identity(require_artifact_hash=True),
                 )
                 self._fill_model_quote_cache = cache

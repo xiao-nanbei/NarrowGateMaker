@@ -29,7 +29,7 @@ def calibration_fixture(tmp_path):
         rows.append({"day": day, "consumer_manifest_path": str(path),
                      "consumer_manifest_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         sources.append({"day": day, "source_bundles": [{"day": day, "manifest_sha256": "source"+day}]})
-    p3 = {"schema_version": "narrowgate_p3_touch_calibration.v2", "model_type": "empirical_survival",
+    p3 = {"schema_version": "narrowgate_p3_touch_calibration.v3", "model_type": "empirical_survival",
         "metadata": {"fit_days": list(TRAIN_DAYS), "event_type": "touch", "horizon_s": 10.,
             "distance_unit": "USDC_per_BTC", "queue_included": False, "quote_tick_size": 0.1, "daily_inputs": sources,
             "plan": {"market_id": "BTCUSDC", "fit_days": list(TRAIN_DAYS), "observation_profile": profile}}}

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
+from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 
 PUBLIC_P3 = (
     Path(__file__).resolve().parents[1]
@@ -14,11 +14,11 @@ PUBLIC_P3 = (
 
 
 def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
-    model = FillProbabilityModel(
+    model = TouchProbabilityModel(
         model_type="empirical_survival",
         delta_grid=[0.1, 1.0, 2.0, 4.0],
         probability_grid=[0.8, 0.5, 0.25, 0.05],
-        schema_version="narrowgate_p3_touch_calibration.v2",
+        schema_version="narrowgate_p3_touch_calibration.v3",
         metadata={
             "event_type": "touch",
             "horizon_s": 10.0,
@@ -40,17 +40,17 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
         return observed
 
     monkeypatch.setattr(Path, "read_bytes", read_and_replace)
-    loaded = FillProbabilityModel.load(path)
+    loaded = TouchProbabilityModel.load(path)
     assert reads == 1
     assert loaded.artifact_sha256 == hashlib.sha256(raw).hexdigest()
     assert loaded.artifact_path == path.resolve()
-    detached = FillProbabilityModel.from_bytes(raw, require_live_compatible=True)
+    detached = TouchProbabilityModel.from_bytes(raw, require_live_compatible=True)
     assert detached.artifact_path is None
     assert detached.semantic_identity() == loaded.semantic_identity()
     assert reads == 1
     monkeypatch.setattr(Path, "read_bytes", original_read)
     path.write_bytes(raw)
-    assert loaded.schema_version == "narrowgate_p3_touch_calibration.v2"
+    assert loaded.schema_version == "narrowgate_p3_touch_calibration.v3"
     assert loaded.model_type == "empirical_survival"
     assert loaded.metadata["horizon_s"] == 10.0
     assert loaded.semantic_identity() == {
@@ -63,8 +63,8 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
         "artifact_sha256": loaded.artifact_sha256,
     }
     assert np.allclose(loaded.prob([0.1, 1.0, 4.0]), [0.8, 0.5, 0.05])
-    assert loaded.optimal_delta() > 0.0
-    assert loaded.effective_kappa() > 0.0
+    assert loaded.distance_touch_product_argmax() > 0.0
+    assert loaded.touch_log_probability_distance_slope() > 0.0
     payload = json.loads(path.read_text())
     assert payload["delta_star"] > 0.0
     assert payload["kappa_eff"] > 0.0
@@ -76,12 +76,12 @@ def test_empirical_fill_probability_round_trip(tmp_path, monkeypatch):
     assert payload["metadata"]["queue_included"] is False
 
 
-def test_frozen_v2_touch_identity_is_inferred_without_rewriting(tmp_path):
+def test_missing_touch_identity_is_rejected_without_rewriting(tmp_path):
     path = tmp_path / "fill_prob_params.json"
     path.write_text(
         json.dumps(
             {
-                "schema_version": "narrowgate_p3_touch_calibration.v2",
+                "schema_version": "narrowgate_p3_touch_calibration.v3",
                 "model_type": "empirical_survival",
                 "delta_grid": [0.1, 1.0, 2.0],
                 "probability_grid": [0.8, 0.4, 0.1],
@@ -96,32 +96,32 @@ def test_frozen_v2_touch_identity_is_inferred_without_rewriting(tmp_path):
         encoding="utf-8",
     )
     before = path.read_bytes()
-    model = FillProbabilityModel.load(path)
-
-    assert model.semantic_identity()["event_type"] == "touch"
-    assert model.semantic_identity()["distance_origin"] == (
-        "same_side_best_bid_or_ask_at_window_start"
-    )
-    assert model.semantic_identity()["side"] == "pooled_buy_sell"
-    assert model.semantic_identity()["queue_included"] is False
+    with pytest.raises(ValueError, match="event_type"):
+        TouchProbabilityModel.load(path)
     assert path.read_bytes() == before
 
 
-def test_legacy_su_artifact_still_loads(tmp_path):
+def test_unversioned_su_artifact_is_rejected(tmp_path):
     path = tmp_path / "fill_prob_params.json"
     path.write_text(json.dumps({"xi": 0.0, "lam": 1.0, "gamma": 0.0, "delta0": 1.0}))
-    model = FillProbabilityModel.load(path)
-    assert model.model_type == "su_johnson"
-    assert model.schema_version == "legacy_su_johnson.v1"
+    with pytest.raises(ValueError, match="unsupported P3 schema"):
+        TouchProbabilityModel.load(path)
     payload = json.loads(path.read_bytes()) | {"kappa_eff": 1.0, "delta_star": 1.0}
-    with pytest.raises(ValueError, match="only empirical P3"):
-        FillProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
+    with pytest.raises(ValueError, match="unsupported P3 schema"):
+        TouchProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
 
 
 def test_public_p3_fixture_remains_offline_only():
-    assert FillProbabilityModel.load(PUBLIC_P3).metadata["authority"] == "public_dry_run_only"
+    assert TouchProbabilityModel.load(PUBLIC_P3).metadata["authority"] == "public_dry_run_only"
     with pytest.raises(ValueError, match="public_dry_run_only"):
-        FillProbabilityModel.load(PUBLIC_P3, require_live_compatible=True)
+        TouchProbabilityModel.load(PUBLIC_P3, require_live_compatible=True)
+
+
+def test_explicit_old_schema_is_rejected_even_with_complete_identity():
+    payload = json.loads(PUBLIC_P3.read_bytes())
+    payload["schema_version"] = "narrowgate_p3_touch_calibration.v2"
+    with pytest.raises(ValueError, match="unsupported P3 schema"):
+        TouchProbabilityModel.from_bytes(json.dumps(payload).encode())
 
 
 @pytest.mark.parametrize("field", ("kappa_eff", "delta_star"))
@@ -131,9 +131,9 @@ def test_live_p3_rejects_invalid_stored_scalars(field, value):
     payload["metadata"].pop("authority")
     payload[field] = value
     raw = json.dumps(payload).encode()
-    assert FillProbabilityModel.from_bytes(raw).model_type == "empirical_survival"
+    assert TouchProbabilityModel.from_bytes(raw).model_type == "empirical_survival"
     with pytest.raises(ValueError, match=f"{field} must be positive and finite"):
-        FillProbabilityModel.from_bytes(raw, require_live_compatible=True)
+        TouchProbabilityModel.from_bytes(raw, require_live_compatible=True)
 
 
 def test_live_p3_retains_empirical_semantic_checks():
@@ -141,7 +141,7 @@ def test_live_p3_retains_empirical_semantic_checks():
     payload["metadata"].pop("authority")
     payload["metadata"]["horizon_s"] = 9.0
     with pytest.raises(ValueError, match="horizon_s must equal 10"):
-        FillProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
+        TouchProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
 
 
 @pytest.mark.parametrize("field", ("delta_grid", "probability_grid"))
@@ -150,4 +150,4 @@ def test_live_p3_rejects_nonfinite_empirical_grid(field):
     payload["metadata"].pop("authority")
     payload[field][1] = float("nan")
     with pytest.raises(ValueError, match="empirical grids must be finite"):
-        FillProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)
+        TouchProbabilityModel.from_bytes(json.dumps(payload).encode(), require_live_compatible=True)

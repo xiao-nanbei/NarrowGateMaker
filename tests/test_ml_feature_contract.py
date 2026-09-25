@@ -92,7 +92,7 @@ def test_training_identity_propagates_feature_manifest_semantics(
                 "label_volatility_units": _BTCUSDC_VARIANCE_UNITS["variance_units"],
                 "volatility_unit_contract": _BTCUSDC_VARIANCE_UNITS,
                 "label_quote_calibration": {
-                    "schema_version": "narrowgate_p3_touch_calibration.v2",
+                    "schema_version": "narrowgate_p3_touch_calibration.v3",
                     "model_type": "empirical_survival",
                     "sha256": "p3-sha",
                     "p3_delta_star": 14.0,

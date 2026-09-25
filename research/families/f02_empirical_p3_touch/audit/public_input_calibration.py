@@ -14,7 +14,7 @@ from data.tardis_input import CONTRACT
 from research.families.f02_empirical_p3_touch.audit.p3_touch_calibration import (
     public_window_reaches, survival_curve,
 )
-from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
+from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
 from research.families.f03_causal_13_head.time_weighted_evaluation import TRAIN_DAYS
 
 
@@ -111,11 +111,11 @@ def fit(plan, daily_root, output):
                 "fit_days": list(TRAIN_DAYS), "validation_days": [], "test_days": [],
                 "plan": plan, "daily_inputs": inputs,
                 "native_observation_parity": "not_proven"}
-    model = FillProbabilityModel(model_type="empirical_survival", delta_grid=grid.tolist(),
-        probability_grid=curve.tolist(), schema_version="narrowgate_p3_touch_calibration.v2",
+    model = TouchProbabilityModel(model_type="empirical_survival", delta_grid=grid.tolist(),
+        probability_grid=curve.tolist(), schema_version="narrowgate_p3_touch_calibration.v3",
         metadata=metadata)
-    metadata["delta_star"] = model.optimal_delta(delta_max=120.0)
-    metadata["kappa_eff"] = model.effective_kappa(metadata["delta_star"])
+    metadata["delta_star"] = model.distance_touch_product_argmax(delta_max=120.0)
+    metadata["kappa_eff"] = model.touch_log_probability_distance_slope(metadata["delta_star"])
     output.parent.mkdir(parents=True, exist_ok=True)
     model.save(output)
     return metadata

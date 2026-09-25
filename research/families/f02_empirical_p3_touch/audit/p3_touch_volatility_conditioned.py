@@ -39,8 +39,8 @@ from research.families.f02_empirical_p3_touch.audit.p3_touch_window_context impo
     window_context_cache_key,
     write_window_context_cache,
 )
-from research.families.f02_empirical_p3_touch.fill_probability import (
-    FillProbabilityModel,
+from research.families.f02_empirical_p3_touch.touch_probability import (
+    TouchProbabilityModel,
 )
 from research.governance.paths import resolve_research_path
 
@@ -814,7 +814,7 @@ def _predict_grid(
 
 
 def _static_grid(
-    model: FillProbabilityModel,
+    model: TouchProbabilityModel,
     grid: np.ndarray,
     n_windows: int,
 ) -> np.ndarray:
@@ -874,7 +874,7 @@ def _score_day(
     panel: str,
     fold_id: str,
     model: ConditionalTouchModel,
-    current_v2: FillProbabilityModel,
+    current_v2: TouchProbabilityModel,
     context: Mapping[str, np.ndarray],
     grid: np.ndarray,
     policy_weights: Mapping[str, np.ndarray],
@@ -1573,7 +1573,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
     }
     del fast_values, slow_values
 
-    current_v2 = FillProbabilityModel.load(
+    current_v2 = TouchProbabilityModel.load(
         resolve_portable_path(
             str(spec["identities"]["current_v2_artifact"]["path"]),
             root=ROOT,

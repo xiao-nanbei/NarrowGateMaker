@@ -11,15 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from models.symbol_paths import DEFAULT_SYMBOL, paths_for  # noqa: E402
 from research.families.f05_fill_quality_quote_ev.quote_ev import (  # noqa: E402
@@ -34,10 +29,7 @@ PREDICTED_VALUE_COLUMN = (
 
 
 def _predicted_value(frame: pd.DataFrame) -> pd.Series:
-    if PREDICTED_VALUE_COLUMN in frame:
-        return pd.to_numeric(frame[PREDICTED_VALUE_COLUMN], errors="coerce").fillna(0.0)
-    # Historical reports remain readable, but new output never writes this alias.
-    return pd.to_numeric(frame["pred_ev_30s"], errors="coerce").fillna(0.0)
+    return pd.to_numeric(frame[PREDICTED_VALUE_COLUMN], errors="coerce")
 
 
 def _calibration_bins(actual: pd.Series, pred: pd.Series, n_bins: int = 10) -> list[dict[str, float | int]]:

@@ -640,12 +640,7 @@ LiveRoutingResult compute_live_routing_decision(
 
 QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     const double tick = std::max(std::abs(cfg.tick_size), 1e-12);
-    const double legacy_gamma = cfg.gamma;
     const double q_ref = cfg.inventory_reference_qty;
-    if (!std::isfinite(legacy_gamma) || legacy_gamma <= 0.0) {
-        throw std::invalid_argument("gamma must be positive and finite");
-    }
-    const double legacy_effective = std::max(legacy_gamma, 1e-12);
     if (!std::isfinite(q_ref) || q_ref <= 0.0) {
         throw std::invalid_argument(
             "inventory_reference_qty must be positive and finite"
@@ -659,15 +654,8 @@ QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     if (std::isfinite(cfg.a_spread) && cfg.a_spread <= 0.0) {
         throw std::invalid_argument("a_spread must be positive and finite");
     }
-    const double eta_inventory = std::isfinite(cfg.eta_inventory)
-        ? cfg.eta_inventory
-        : legacy_effective * q_ref;
-    const double legacy_spread_coefficient = std::isfinite(cfg.a_spread)
-        ? cfg.a_spread
-        : legacy_effective;
-    const double risk_per_order = std::isfinite(cfg.risk_per_order)
-        ? cfg.risk_per_order
-        : legacy_spread_coefficient;
+    const double eta_inventory = cfg.eta_inventory;
+    const double risk_per_order = cfg.risk_per_order;
     const double execution_intensity_slope =
         std::isfinite(cfg.execution_intensity_slope)
         ? cfg.execution_intensity_slope
@@ -804,13 +792,13 @@ QuoteCoreResult compute_quote_core(
         if (cfg.liq_baseline > 0.0 && state.trade_intensity > 0.0) {
             const double liq_ratio = state.trade_intensity / cfg.liq_baseline;
             const double liq_scale = 1.0 / std::max(std::sqrt(liq_ratio), 0.2);
-            regime_spread_scale *= clamp(liq_scale, cfg.gamma_liq_scale_min, cfg.gamma_liq_scale_max);
+            regime_spread_scale *= clamp(liq_scale, cfg.liquidity_spread_scale_min, cfg.liquidity_spread_scale_max);
         }
         if (cfg.vol_baseline > 0.0) {
             double vol_sq_ratio = sigma_sq / (cfg.vol_baseline * cfg.vol_baseline);
             vol_sq_ratio = std::max(vol_sq_ratio, 0.09);
             const double vol_scale = std::pow(vol_sq_ratio, cfg.vol_power * 0.5);
-            regime_spread_scale *= clamp(vol_scale, cfg.gamma_scale_min, cfg.gamma_scale_max);
+            regime_spread_scale *= clamp(vol_scale, cfg.volatility_spread_scale_min, cfg.volatility_spread_scale_max);
         }
     }
 
@@ -822,14 +810,14 @@ QuoteCoreResult compute_quote_core(
     const double dir_signal = cfg.ml_enabled ? pred.dir_10s - 0.5 : 0.0;
     const bool active_dir = std::abs(dir_signal) > cfg.dir_threshold;
     double g_eff = g_base;
-    if (active_dir && cfg.gamma_dir_bonus > 0.0) {
+    if (active_dir && cfg.inventory_direction_alignment_strength > 0.0) {
         double align = 0.0;
         if (q > 0.0) {
             align = dir_signal;
         } else if (q < 0.0) {
             align = -dir_signal;
         }
-        g_eff = g_base * (1.0 - cfg.gamma_dir_bonus * align * 2.0);
+        g_eff = g_base * (1.0 - cfg.inventory_direction_alignment_strength * align * 2.0);
         g_eff = clamp(g_eff, g_base * 0.2, g_base * 3.0);
     }
 

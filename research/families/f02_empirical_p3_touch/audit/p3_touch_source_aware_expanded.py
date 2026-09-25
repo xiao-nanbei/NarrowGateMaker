@@ -27,8 +27,8 @@ from data_paths import resolve_portable_path
 from research.families.f02_empirical_p3_touch.audit.p3_touch_calibration import (
     window_reaches,
 )
-from research.families.f02_empirical_p3_touch.fill_probability import (
-    FillProbabilityModel,
+from research.families.f02_empirical_p3_touch.touch_probability import (
+    TouchProbabilityModel,
 )
 from research.governance.paths import resolve_research_path
 
@@ -393,19 +393,19 @@ def _curve_identity(
     metadata: Mapping[str, Any],
 ) -> tuple[np.ndarray, dict[str, Any]]:
     curve = empirical_curve(values, grid)
-    model = FillProbabilityModel(
+    model = TouchProbabilityModel(
         model_type="empirical_survival",
         delta_grid=grid.tolist(),
         probability_grid=curve.tolist(),
         schema_version=MODEL_SCHEMA_VERSION,
         metadata=dict(metadata),
     )
-    delta_star = model.optimal_delta(delta_max=float(grid[-1]))
+    delta_star = model.distance_touch_product_argmax(delta_max=float(grid[-1]))
     return curve, {
         "windows": int(values.size),
         "touch_at_best_rate": float(np.mean(values >= 0.0)),
         "delta_star": float(delta_star),
-        "kappa_eff": float(model.effective_kappa(delta_star)),
+        "kappa_eff": float(model.touch_log_probability_distance_slope(delta_star)),
         "probability_at_delta_star": float(model.prob(delta_star)),
     }
 
@@ -451,7 +451,7 @@ def _write_model(
     grid: np.ndarray,
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
-    model = FillProbabilityModel(
+    model = TouchProbabilityModel(
         model_type="empirical_survival",
         delta_grid=grid.tolist(),
         probability_grid=curve.tolist(),
@@ -459,12 +459,12 @@ def _write_model(
         metadata=dict(metadata),
     )
     model.save(path)
-    delta_star = model.optimal_delta(delta_max=float(grid[-1]))
+    delta_star = model.distance_touch_product_argmax(delta_max=float(grid[-1]))
     return {
         "path": str(path.resolve()),
         "sha256": sha256_file(path),
         "delta_star": float(delta_star),
-        "kappa_eff": float(model.effective_kappa(delta_star)),
+        "kappa_eff": float(model.touch_log_probability_distance_slope(delta_star)),
         "probability_at_delta_star": float(model.prob(delta_star)),
     }
 
@@ -618,7 +618,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
             "by_side": side_summary,
         }
 
-    current_model = FillProbabilityModel.load(
+    current_model = TouchProbabilityModel.load(
         resolve_portable_path(spec["identities"]["current_v2_artifact"]["path"])
     )
     current_grid = np.asarray(current_model.delta_grid, dtype=np.float64)

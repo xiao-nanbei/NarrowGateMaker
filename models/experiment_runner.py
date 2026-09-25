@@ -83,7 +83,7 @@ MODULE_COMMANDS = {
         "Run the authoritative tick replay with FIFO/depth simulation",
     ),
     "quote-decompose": ("models.quote_decomposition_tick", "Generate quote/fill decomposition traces"),
-    "fill-model": ("research.families.f02_empirical_p3_touch.fill_probability", "Fit the fill probability model"),
+    "fill-model": ("research.families.f02_empirical_p3_touch.touch_probability", "Fit the fill probability model"),
 }
 
 

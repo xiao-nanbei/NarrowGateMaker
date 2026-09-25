@@ -547,9 +547,9 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                       gamma, kappa, order_size, max_inv,
                       rq_ms, fee, taker_fee, tick, sample_rate,
                       skew_strength, vol_blend, dir_threshold,
-                      asym_strength, gamma_dir_bonus,
+                      asym_strength, inventory_direction_alignment_strength,
                       regime_enabled, vol_baseline,
-                      gamma_scale_min, gamma_scale_max,
+                      volatility_spread_scale_min, volatility_spread_scale_max,
                       ret_skew, max_spread_bps,
                       dynamic_cap_enabled, dynamic_cap_base_bps,
                       dynamic_cap_alpha, dynamic_cap_max_mult,
@@ -1015,10 +1015,10 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                 if vol_sq_ratio < 0.09:   # floor at 0.3²
                     vol_sq_ratio = 0.09
                 vol_spread_scale = np.power(vol_sq_ratio, vol_power * 0.5)
-                if vol_spread_scale < gamma_scale_min:
-                    vol_spread_scale = gamma_scale_min
-                if vol_spread_scale > gamma_scale_max:
-                    vol_spread_scale = gamma_scale_max
+                if vol_spread_scale < volatility_spread_scale_min:
+                    vol_spread_scale = volatility_spread_scale_min
+                if vol_spread_scale > volatility_spread_scale_max:
+                    vol_spread_scale = volatility_spread_scale_max
                 regime_spread_scale = regime_spread_scale * vol_spread_scale
 
             # Layer 3: Inventory escalation on γ for reservation price
@@ -1035,7 +1035,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
 
             # ── gamma adjustment: align inventory with direction ──
             g_eff = g_base
-            if active_dir_quote and gamma_dir_bonus > 0.0:
+            if active_dir_quote and inventory_direction_alignment_strength > 0.0:
                 # sign(q) * dir_signal > 0 → inventory aligns with prediction
                 align = 0.0
                 if q > 0.0:
@@ -1043,7 +1043,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                 elif q < 0.0:
                     align = -dir_signal
                 # align > 0 → reduce gamma (hold winner), < 0 → increase (cut loser)
-                g_eff = g_base * (1.0 - gamma_dir_bonus * align * 2.0)
+                g_eff = g_base * (1.0 - inventory_direction_alignment_strength * align * 2.0)
                 if g_eff < g_base * 0.2:
                     g_eff = g_base * 0.2
                 if g_eff > g_base * 3.0:
@@ -1419,11 +1419,11 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     vblend  = params["vol_blend"]
     dthr    = params["dir_threshold"]
     asym    = params.get("asym_strength", 0.0)
-    gdir    = params.get("gamma_dir_bonus", 0.0)
+    gdir    = params.get("inventory_direction_alignment_strength", 0.0)
     regime_en = 1.0 if params.get("regime_enabled", False) else 0.0
     vol_base = params.get("vol_baseline", 0.3)
-    gs_min   = params.get("gamma_scale_min", 0.5)
-    gs_max   = params.get("gamma_scale_max", 2.0)
+    gs_min   = params.get("volatility_spread_scale_min", 0.5)
+    gs_max   = params.get("volatility_spread_scale_max", 2.0)
     rskew   = params.get("ret_skew", 0.0)
     taker_fee = params.get("taker_fee", 0.0004)
     (dyn_cap_enabled,
@@ -1451,8 +1451,8 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
 
     # Layer 0/2/3 params
     liq_baseline = params.get("liq_baseline", DEFAULT_LIQ_BASELINE)
-    gamma_liq_min = params.get("gamma_liq_scale_min", 0.5)
-    gamma_liq_max = params.get("gamma_liq_scale_max", 3.0)
+    gamma_liq_min = params.get("liquidity_spread_scale_min", 0.5)
+    gamma_liq_max = params.get("liquidity_spread_scale_max", 3.0)
     p3_delta_star = params.get("p3_delta_star", 0.0)
     inv_gamma_en = 1.0 if params.get("inv_gamma_enabled", True) else 0.0
 
@@ -1607,7 +1607,7 @@ def _unpack(raw, params):
         "vol_blend": params["vol_blend"],
         "dir_thr": params["dir_threshold"],
         "asym": params.get("asym_strength", 0.0),
-        "gdir": params.get("gamma_dir_bonus", 0.0),
+        "gdir": params.get("inventory_direction_alignment_strength", 0.0),
         "regime": params.get("regime_enabled", False),
         "ret_skew": params.get("ret_skew", 0.0),
         "rq_sec": params.get("requote_interval", 10.0),
@@ -1696,7 +1696,7 @@ SWEEP_GRID = {
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0, 200.0],
     "requote_interval": [10.0],
@@ -1724,7 +1724,7 @@ SWEEP_GRID_REGIME = {
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0, 100.0, 200.0],
     "requote_interval": [10.0],
@@ -1746,7 +1746,7 @@ SWEEP_GRID_REGIME = {
 
 # Live-structure-aligned sweep grid (v1.4 reachability-constrained)
 # Includes a true no-ML control arm via vol_blend=0.0, asym_strength=0.0,
-# ret_skew=0.0, skew_strength=0.0, gamma_dir_bonus=0.0.
+# ret_skew=0.0, skew_strength=0.0, inventory_direction_alignment_strength=0.0.
 SWEEP_GRID_LIVE = {
     "gamma": [0.01, 0.02, 0.05, 0.1],
     "kappa": [0.02, 0.05, 0.1],
@@ -1754,7 +1754,7 @@ SWEEP_GRID_LIVE = {
     "vol_blend": [0.0, 0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.0, 0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0, 200.0],
     "requote_interval": [10.0],
@@ -1782,7 +1782,7 @@ SWEEP_GRID_V1_1 = {
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0, 200.0],
     "requote_interval": [10.0],
@@ -1832,7 +1832,7 @@ SWEEP_GRID_V1_2 = {
     "vol_blend": [0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0, 200.0],
     "requote_interval": [10.0],
@@ -1868,7 +1868,7 @@ SWEEP_GRID_COOLDOWN = {
     "vol_blend": [0.0, 0.5],
     "dir_threshold": [0.05],
     "asym_strength": [0.1],
-    "gamma_dir_bonus": [0.0],
+    "inventory_direction_alignment_strength": [0.0],
     "regime_enabled": [True],
     "ret_skew": [0.0],
     "requote_interval": [10.0],
@@ -2157,7 +2157,7 @@ def _run_paired_experiment(ts, hi, lo, cl, ssq,
         "skew_strength": 0.0,
         "vol_blend": 0.0,
         "asym_strength": 0.0,
-        "gamma_dir_bonus": 0.0,
+        "inventory_direction_alignment_strength": 0.0,
         "ret_skew": 0.0,
     })
     ml_on = dict(base)
@@ -2327,17 +2327,17 @@ def main():
             "maker_fee": 0.0, "taker_fee": 0.00036,
             "skew_strength": 0.0, "vol_blend": 0.5,
             "dir_threshold": 0.05, "asym_strength": 0.1,
-            "gamma_dir_bonus": 0.0, "regime_enabled": True,
-            "vol_baseline": 3.0, "gamma_scale_min": 0.5,
-            "gamma_scale_max": 2.0, "ret_skew": 200.0,
+            "inventory_direction_alignment_strength": 0.0, "regime_enabled": True,
+            "vol_baseline": 3.0, "volatility_spread_scale_min": 0.5,
+            "volatility_spread_scale_max": 2.0, "ret_skew": 200.0,
             "max_spread_bps": 8.0, "position_timeout": 0.0,
             "kappa_ratio": 1.0, "queue_depth": 0.0,
             "eta": 0.5, "exit_urgency_strength": 0.5,
             "inventory_skew_strength": 0.1, "lot_size": 0.001,
             "book_imb_strength": 0.0, "fill_dist_decay": 0.0,
             "ret_shift_max_pct": 0.3, "ret_demean_halflife": 0,
-            "liq_baseline": 200.0, "gamma_liq_scale_min": 0.5,
-            "gamma_liq_scale_max": 3.0,
+            "liq_baseline": 200.0, "liquidity_spread_scale_min": 0.5,
+            "liquidity_spread_scale_max": 3.0,
             "rq_min": 5.0, "rq_max": 10.0,
             "ber_guard_thresh": 1.2, "ber_spread_mult": 2.0,
             "vol_power": 1.5, "markout_ema_span_fills": 50,
@@ -2357,8 +2357,8 @@ def main():
         "maker_fee": "maker_fee", "taker_fee": "taker_fee",
         "skew_strength": "skew_strength", "vol_blend": "vol_blend",
         "dir_threshold": "dir_threshold", "asym_strength": "asym_strength",
-        "gamma_dir_bonus": "gamma_dir_bonus", "vol_baseline": "vol_baseline",
-        "gamma_scale_min": "gamma_scale_min", "gamma_scale_max": "gamma_scale_max",
+        "inventory_direction_alignment_strength": "inventory_direction_alignment_strength", "vol_baseline": "vol_baseline",
+        "volatility_spread_scale_min": "volatility_spread_scale_min", "volatility_spread_scale_max": "volatility_spread_scale_max",
         "ret_skew": "ret_skew", "max_spread_bps": "max_spread_bps",
         "position_timeout": "position_timeout", "kappa_ratio": "kappa_ratio",
         "queue_depth": "queue_depth", "eta": "eta",
@@ -2422,12 +2422,12 @@ def main():
     p3_delta_star = 0.0
     p3_kappa_eff = 0.0
     try:
-        from research.families.f02_empirical_p3_touch.fill_probability import FillProbabilityModel
+        from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
         fp_path = MODEL_DIR / "fill_prob_params.json"
         if fp_path.exists():
-            fp_model = FillProbabilityModel.load(fp_path)
-            p3_delta_star = fp_model.optimal_delta()
-            p3_kappa_eff = fp_model.effective_kappa()
+            fp_model = TouchProbabilityModel.load(fp_path)
+            p3_delta_star = fp_model.distance_touch_product_argmax()
+            p3_kappa_eff = fp_model.touch_log_probability_distance_slope()
             print(f"  P3 δ* = {p3_delta_star:.2f} USDT, κ_eff = {p3_kappa_eff:.6f}")
     except Exception as e:
         print(f"  P3 model not loaded: {e}")
@@ -2487,7 +2487,7 @@ def main():
         best_p["vol_blend"] = best_r["vol_blend"]
         best_p["dir_threshold"] = best_r["dir_thr"]
         best_p["asym_strength"] = best_r.get("asym", 0.0)
-        best_p["gamma_dir_bonus"] = best_r.get("gdir", 0.0)
+        best_p["inventory_direction_alignment_strength"] = best_r.get("gdir", 0.0)
         best_p["regime_enabled"] = best_r.get("regime", False)
         best_p["ret_skew"] = best_r.get("ret_skew", 0.0)
         best_p["kappa_ratio"] = best_r.get("kappa_ratio", 1.0)
@@ -2517,7 +2517,7 @@ def main():
         bl_p["skew_strength"] = 0.0
         bl_p["vol_blend"] = 0.0
         bl_p["asym_strength"] = 0.0
-        bl_p["gamma_dir_bonus"] = 0.0
+        bl_p["inventory_direction_alignment_strength"] = 0.0
         bl_result = simulate_ml(ts, hi, lo, cl, ssq,
                                 pred_dir, pred_vol, pred_ret, bl_p,
                                 book_imb=book_imb, trade_intensity=trade_intensity,

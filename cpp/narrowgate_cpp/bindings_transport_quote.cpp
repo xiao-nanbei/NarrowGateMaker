@@ -945,7 +945,6 @@ void bind_quote_core(py::module_& m) {
     config.def(py::init<>());
 
 #define BIND_QUOTE_CONFIG_FIELD(field) config.def_readwrite(#field, &QuoteCoreConfig::field)
-    BIND_QUOTE_CONFIG_FIELD(gamma);
     BIND_QUOTE_CONFIG_FIELD(kappa);
     BIND_QUOTE_CONFIG_FIELD(tick_size);
     BIND_QUOTE_CONFIG_FIELD(lot_size);
@@ -958,18 +957,18 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(ml_enabled);
     BIND_QUOTE_CONFIG_FIELD(vol_blend);
     BIND_QUOTE_CONFIG_FIELD(dir_threshold);
-    BIND_QUOTE_CONFIG_FIELD(gamma_dir_bonus);
+    BIND_QUOTE_CONFIG_FIELD(inventory_direction_alignment_strength);
     BIND_QUOTE_CONFIG_FIELD(skew_strength);
     BIND_QUOTE_CONFIG_FIELD(asym_strength);
     BIND_QUOTE_CONFIG_FIELD(ret_skew);
     BIND_QUOTE_CONFIG_FIELD(ret_shift_max_pct);
     BIND_QUOTE_CONFIG_FIELD(regime_enabled);
     BIND_QUOTE_CONFIG_FIELD(vol_baseline);
-    BIND_QUOTE_CONFIG_FIELD(gamma_scale_min);
-    BIND_QUOTE_CONFIG_FIELD(gamma_scale_max);
+    BIND_QUOTE_CONFIG_FIELD(volatility_spread_scale_min);
+    BIND_QUOTE_CONFIG_FIELD(volatility_spread_scale_max);
     BIND_QUOTE_CONFIG_FIELD(liq_baseline);
-    BIND_QUOTE_CONFIG_FIELD(gamma_liq_scale_min);
-    BIND_QUOTE_CONFIG_FIELD(gamma_liq_scale_max);
+    BIND_QUOTE_CONFIG_FIELD(liquidity_spread_scale_min);
+    BIND_QUOTE_CONFIG_FIELD(liquidity_spread_scale_max);
     BIND_QUOTE_CONFIG_FIELD(vol_power);
     BIND_QUOTE_CONFIG_FIELD(kappa_ratio);
     BIND_QUOTE_CONFIG_FIELD(p3_delta_star);

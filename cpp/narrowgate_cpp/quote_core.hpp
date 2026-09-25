@@ -11,7 +11,6 @@ namespace narrowgate_cpp {
 // 的字段列表和 parity tests。
 struct QuoteCoreConfig {
     // Legacy compatibility input. NaN split fields inherit this value exactly.
-    double gamma = 0.01;
     double kappa = 1.0;
     double tick_size = 0.1;
     double lot_size = 0.001;
@@ -25,7 +24,7 @@ struct QuoteCoreConfig {
     bool ml_enabled = true;
     double vol_blend = 0.0;
     double dir_threshold = 0.05;
-    double gamma_dir_bonus = 0.0;
+    double inventory_direction_alignment_strength = 0.0;
     double skew_strength = 0.0;
     double asym_strength = 0.0;
     double ret_skew = 0.0;
@@ -33,11 +32,11 @@ struct QuoteCoreConfig {
 
     bool regime_enabled = false;
     double vol_baseline = 3.0;
-    double gamma_scale_min = 0.5;
-    double gamma_scale_max = 2.0;
+    double volatility_spread_scale_min = 0.5;
+    double volatility_spread_scale_max = 2.0;
     double liq_baseline = 200.0;
-    double gamma_liq_scale_min = 0.5;
-    double gamma_liq_scale_max = 3.0;
+    double liquidity_spread_scale_min = 0.5;
+    double liquidity_spread_scale_max = 3.0;
     double vol_power = 1.0;
 
     double kappa_ratio = 0.3;

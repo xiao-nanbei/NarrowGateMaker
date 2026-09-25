@@ -232,7 +232,7 @@ def test_v9_arms_only_change_model_switch(monkeypatch: pytest.MonkeyPatch, tmp_p
         "skew_strength": 1.0,
         "asym_strength": 2.0,
         "ret_skew": 3.0,
-        "gamma_dir_bonus": 4.0,
+        "inventory_direction_alignment_strength": 4.0,
         "dynamic_fill_hazard_action_enabled": False,
         "dynamic_fill_hazard_shadow_enabled": True,
         "buy_fill_selection_live_enabled": False,

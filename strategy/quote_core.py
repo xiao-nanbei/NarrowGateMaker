@@ -251,7 +251,7 @@ class QuoteCoreConfig:
     ml_enabled: bool = True
     vol_blend: float = 0.0
     dir_threshold: float = 0.05
-    gamma_dir_bonus: float = 0.0
+    inventory_direction_alignment_strength: float = 0.0
     skew_strength: float = 0.0
     asym_strength: float = 0.0
     ret_skew: float = 0.0
@@ -259,11 +259,11 @@ class QuoteCoreConfig:
 
     regime_enabled: bool = False
     vol_baseline: float = 3.0
-    gamma_scale_min: float = 0.5
-    gamma_scale_max: float = 2.0
+    volatility_spread_scale_min: float = 0.5
+    volatility_spread_scale_max: float = 2.0
     liq_baseline: float = 200.0
-    gamma_liq_scale_min: float = 0.5
-    gamma_liq_scale_max: float = 3.0
+    liquidity_spread_scale_min: float = 0.5
+    liquidity_spread_scale_max: float = 3.0
     vol_power: float = 1.0
 
     kappa_ratio: float = 0.3
@@ -1440,18 +1440,18 @@ def quote_core_config_from_live_config(
         ml_enabled=bool(getattr(ml, "enabled", False)),
         vol_blend=float(getattr(ml, "vol_blend", 0.0)),
         dir_threshold=float(getattr(ml, "dir_threshold", 0.05)),
-        gamma_dir_bonus=float(getattr(ml, "gamma_dir_bonus", 0.0)),
+        inventory_direction_alignment_strength=float(getattr(ml, "inventory_direction_alignment_strength", 0.0)),
         skew_strength=float(getattr(ml, "skew_strength", 0.0)),
         asym_strength=float(getattr(ml, "asym_strength", 0.0)),
         ret_skew=float(getattr(ml, "ret_skew", 0.0)),
         ret_shift_max_pct=float(getattr(ml, "ret_shift_max_pct", 0.3)),
         regime_enabled=bool(regime and getattr(regime, "enabled", False)),
         vol_baseline=float(getattr(regime, "vol_baseline", 3.0)) if regime else 3.0,
-        gamma_scale_min=float(getattr(regime, "gamma_scale_min", 0.5)) if regime else 0.5,
-        gamma_scale_max=float(getattr(regime, "gamma_scale_max", 2.0)) if regime else 2.0,
+        volatility_spread_scale_min=float(getattr(regime, "volatility_spread_scale_min", 0.5)) if regime else 0.5,
+        volatility_spread_scale_max=float(getattr(regime, "volatility_spread_scale_max", 2.0)) if regime else 2.0,
         liq_baseline=float(getattr(regime, "liq_baseline", 200.0)) if regime else 200.0,
-        gamma_liq_scale_min=float(getattr(regime, "gamma_liq_scale_min", 0.5)) if regime else 0.5,
-        gamma_liq_scale_max=float(getattr(regime, "gamma_liq_scale_max", 3.0)) if regime else 3.0,
+        liquidity_spread_scale_min=float(getattr(regime, "liquidity_spread_scale_min", 0.5)) if regime else 0.5,
+        liquidity_spread_scale_max=float(getattr(regime, "liquidity_spread_scale_max", 3.0)) if regime else 3.0,
         vol_power=float(getattr(strategy, "vol_power", 1.0)),
         kappa_ratio=float(getattr(strategy, "kappa_ratio", 0.3)),
         p3_delta_star=float(p3_delta_star),
@@ -1642,18 +1642,18 @@ def quote_core_config_from_params(
         ml_enabled=bool(use_ml),
         vol_blend=float(params.get("vol_blend", 0.0)),
         dir_threshold=float(params.get("dir_threshold", 0.05)),
-        gamma_dir_bonus=float(params.get("gamma_dir_bonus", 0.0)),
+        inventory_direction_alignment_strength=float(params.get("inventory_direction_alignment_strength", 0.0)),
         skew_strength=float(params.get("skew_strength", 0.0)),
         asym_strength=float(params.get("asym_strength", 0.0)),
         ret_skew=float(params.get("ret_skew", 0.0)),
         ret_shift_max_pct=float(params.get("ret_shift_max_pct", 0.3)),
         regime_enabled=bool(params.get("regime_enabled", False)),
         vol_baseline=float(params.get("vol_baseline", 3.0)),
-        gamma_scale_min=float(params.get("gamma_scale_min", 0.5)),
-        gamma_scale_max=float(params.get("gamma_scale_max", 2.0)),
+        volatility_spread_scale_min=float(params.get("volatility_spread_scale_min", 0.5)),
+        volatility_spread_scale_max=float(params.get("volatility_spread_scale_max", 2.0)),
         liq_baseline=float(params.get("liq_baseline", 200.0)),
-        gamma_liq_scale_min=float(params.get("gamma_liq_scale_min", 0.5)),
-        gamma_liq_scale_max=float(params.get("gamma_liq_scale_max", 3.0)),
+        liquidity_spread_scale_min=float(params.get("liquidity_spread_scale_min", 0.5)),
+        liquidity_spread_scale_max=float(params.get("liquidity_spread_scale_max", 3.0)),
         vol_power=float(params.get("vol_power", 1.5)),
         kappa_ratio=float(params.get("kappa_ratio", 0.3)),
         p3_delta_star=float(params.get("p3_delta_star", 0.0)),
@@ -1791,12 +1791,12 @@ def _compute_quote_core_py(
         if cfg.liq_baseline > 0.0 and state.trade_intensity > 0.0:
             liq_ratio = state.trade_intensity / cfg.liq_baseline
             liq_scale = 1.0 / max(math.sqrt(liq_ratio), 0.2)
-            regime_spread_scale *= max(cfg.gamma_liq_scale_min, min(cfg.gamma_liq_scale_max, liq_scale))
+            regime_spread_scale *= max(cfg.liquidity_spread_scale_min, min(cfg.liquidity_spread_scale_max, liq_scale))
         if cfg.vol_baseline > 0.0:
             vol_sq_ratio = sigma_sq / (cfg.vol_baseline * cfg.vol_baseline)
             vol_sq_ratio = max(vol_sq_ratio, 0.09)
             vol_scale = vol_sq_ratio ** (cfg.vol_power * 0.5)
-            regime_spread_scale *= max(cfg.gamma_scale_min, min(cfg.gamma_scale_max, vol_scale))
+            regime_spread_scale *= max(cfg.volatility_spread_scale_min, min(cfg.volatility_spread_scale_max, vol_scale))
 
     if cfg.max_inventory > 0.0 and abs(q) > 0.0:
         inv_ratio_g = abs(q) / cfg.max_inventory
@@ -1805,13 +1805,13 @@ def _compute_quote_core_py(
     dir_signal = pred_dir - 0.5 if cfg.ml_enabled else 0.0
     active_dir = abs(dir_signal) > cfg.dir_threshold
     g_eff = g_base
-    if active_dir and cfg.gamma_dir_bonus > 0.0:
+    if active_dir and cfg.inventory_direction_alignment_strength > 0.0:
         align = 0.0
         if q > 0.0:
             align = dir_signal
         elif q < 0.0:
             align = -dir_signal
-        g_eff = g_base * (1.0 - cfg.gamma_dir_bonus * align * 2.0)
+        g_eff = g_base * (1.0 - cfg.inventory_direction_alignment_strength * align * 2.0)
         g_eff = max(g_base * 0.2, min(g_base * 3.0, g_eff))
 
     r = fair - inventory_units * g_eff * sigma_sq_horizon
@@ -2577,14 +2577,14 @@ def _cached_cpp_config(cpp: Any, cfg: QuoteCoreConfig) -> Any:
 
 
 _CPP_CFG_FIELDS = (
-    "gamma", "kappa", "tick_size", "lot_size",
+    "kappa", "tick_size", "lot_size",
     "maker_fee", "order_size",
     "max_inventory", "position_timeout_s", "quote_horizon_s",
     "pnl_volatility_horizon_s", "ml_enabled", "vol_blend",
-    "dir_threshold", "gamma_dir_bonus", "skew_strength", "asym_strength",
+    "dir_threshold", "inventory_direction_alignment_strength", "skew_strength", "asym_strength",
     "ret_skew", "ret_shift_max_pct", "regime_enabled", "vol_baseline",
-    "gamma_scale_min", "gamma_scale_max", "liq_baseline",
-    "gamma_liq_scale_min", "gamma_liq_scale_max", "vol_power",
+    "volatility_spread_scale_min", "volatility_spread_scale_max", "liq_baseline",
+    "liquidity_spread_scale_min", "liquidity_spread_scale_max", "vol_power",
     "kappa_ratio", "p3_delta_star", "p3_kappa_eff", "use_bar_pricing",
     "use_depth_microprice", "use_depth_kappa", "microprice_levels",
     "kappa_levels", "kappa_depth_baseline", "depth_kappa_ratio",

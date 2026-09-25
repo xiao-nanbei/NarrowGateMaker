@@ -99,12 +99,6 @@ class QuoteEVPrediction:
     extreme_adverse_given_fill: float = 0.0
     markout_bucket_probs: dict[int, list[float]] = field(default_factory=dict)
 
-    @property
-    def ev_30s(self) -> float:
-        """Read-only compatibility alias for historical consumers."""
-        return self.expected_maker_markout_bps_per_opportunity_30s
-
-
 from features.quote_ev import (  # noqa: E402,F401
     clean_feature_value,
     feature_array,

@@ -46,8 +46,8 @@ from research.families.f02_empirical_p3_touch.audit.p3_touch_exact_distance_surf
 from research.families.f02_empirical_p3_touch.audit.p3_touch_volatility_conditioned import (
     ConditionalTouchModel,
 )
-from research.families.f02_empirical_p3_touch.fill_probability import (
-    FillProbabilityModel,
+from research.families.f02_empirical_p3_touch.touch_probability import (
+    TouchProbabilityModel,
 )
 from research.governance.paths import resolve_research_path
 
@@ -149,7 +149,7 @@ class DecisionCadenceOOFModels:
         )
 
         self._v2_artifact = _verify_artifact(v2_artifact, label="current P3 v2 artifact")
-        self._v2 = FillProbabilityModel.load(self._v2_artifact.path)
+        self._v2 = TouchProbabilityModel.load(self._v2_artifact.path)
         semantics = self._v2.semantic_identity(require_artifact_hash=True)
         if semantics != {
             "event_type": "touch",

@@ -347,7 +347,7 @@ COMPOSITE_ARM_SPECS: tuple[ArmSpec, ...] = (
             "skew_strength": 0.0,
             "asym_strength": 0.0,
             "ret_skew": 0.0,
-            "gamma_dir_bonus": 0.0,
+            "inventory_direction_alignment_strength": 0.0,
         },
         "Approximate ml.enabled=false arm for replay: keep the loaded window but zero active ML pricing knobs.",
     ),

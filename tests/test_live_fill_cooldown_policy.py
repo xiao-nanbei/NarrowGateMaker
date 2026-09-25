@@ -31,12 +31,15 @@ def _policy_authority(paths: dict[str, Path]) -> dict[str, dict[str, str]]:
 
 def _write_live_p3(path: Path) -> None:
     path.write_text(json.dumps({
-        "schema_version": "narrowgate_p3_touch_calibration.v2",
+        "schema_version": "narrowgate_p3_touch_calibration.v3",
         "model_type": "empirical_survival",
         "delta_grid": [0.1, 14.0, 30.0],
         "probability_grid": [0.8, 0.2, 0.01],
         "metadata": {
             "event_type": "touch", "horizon_s": 10.0, "distance_unit": "USDC_per_BTC",
+            "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+            "side": "pooled_buy_sell",
+            "queue_included": False,
         },
         "delta_star": 14.0,
         "kappa_eff": 0.067,
@@ -335,8 +338,8 @@ def test_quote_preparation_refuses_p3_changed_after_startup_admission(
     engine._model_dir = Path("synthetic")
     engine._p3_artifact_sha256 = "a" * 64
     model = None if loaded == "missing" else SimpleNamespace(
-        optimal_delta=lambda: 1.0,
-        effective_kappa=lambda _delta: 1.0,
+        distance_touch_product_argmax=lambda: 1.0,
+        touch_log_probability_distance_slope=lambda _delta: 1.0,
         semantic_identity=lambda **_kwargs: {"artifact_sha256": "b" * 64},
     )
     monkeypatch.setattr(maker_engine_module, "_get_fill_model", lambda _path: model)

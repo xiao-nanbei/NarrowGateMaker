@@ -289,7 +289,7 @@ class MLConfig:
     vol_blend: float = 0.5            # Step 25C: was 0.7
     skew_strength: float = 0.0
     asym_strength: float = 0.1
-    gamma_dir_bonus: float = 0.0      # Step 25A: disabled (was 0.3)
+    inventory_direction_alignment_strength: float = 0.0      # Step 25A: disabled (was 0.3)
     dir_threshold: float = 0.05
     ret_skew: float = 200.0           # Step 25A: was 5000
     ret_shift_max_pct: float = 0.3    # Step 25C: was 0.5
@@ -302,11 +302,11 @@ class MLConfig:
 class RegimeConfig:
     enabled: bool = True
     vol_baseline: float = 3.0
-    gamma_scale_min: float = 0.5
-    gamma_scale_max: float = 2.0
+    volatility_spread_scale_min: float = 0.5
+    volatility_spread_scale_max: float = 2.0
     liq_baseline: float = 200.0
-    gamma_liq_scale_min: float = 0.5
-    gamma_liq_scale_max: float = 3.0
+    liquidity_spread_scale_min: float = 0.5
+    liquidity_spread_scale_max: float = 3.0
 
 
 @dataclass
@@ -615,18 +615,18 @@ BACKTEST_PARAM_SOURCES = (
     ("vol_blend", ("ml", "vol_blend")),
     ("skew_strength", ("ml", "skew_strength")),
     ("asym_strength", ("ml", "asym_strength")),
-    ("gamma_dir_bonus", ("ml", "gamma_dir_bonus")),
+    ("inventory_direction_alignment_strength", ("ml", "inventory_direction_alignment_strength")),
     ("dir_threshold", ("ml", "dir_threshold")),
     ("ret_skew", ("ml", "ret_skew")),
     ("ret_shift_max_pct", ("ml", "ret_shift_max_pct")),
     ("ret_demean_halflife", ("ml", "ret_demean_halflife")),
     ("regime_enabled", ("regime", "enabled")),
     ("vol_baseline", ("regime", "vol_baseline")),
-    ("gamma_scale_min", ("regime", "gamma_scale_min")),
-    ("gamma_scale_max", ("regime", "gamma_scale_max")),
+    ("volatility_spread_scale_min", ("regime", "volatility_spread_scale_min")),
+    ("volatility_spread_scale_max", ("regime", "volatility_spread_scale_max")),
     ("liq_baseline", ("regime", "liq_baseline")),
-    ("gamma_liq_scale_min", ("regime", "gamma_liq_scale_min")),
-    ("gamma_liq_scale_max", ("regime", "gamma_liq_scale_max")),
+    ("liquidity_spread_scale_min", ("regime", "liquidity_spread_scale_min")),
+    ("liquidity_spread_scale_max", ("regime", "liquidity_spread_scale_max")),
     ("maker_fee", ("fees", "maker")),
     ("taker_fee", ("fees", "taker")),
     ("max_daily_loss", ("risk", "max_daily_loss")),

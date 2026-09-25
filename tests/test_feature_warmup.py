@@ -118,12 +118,15 @@ def test_label_quote_params_use_explicit_empirical_p3_artifact(tmp_path: Path) -
     config, artifact = _write_feature_config(
         tmp_path,
         {
-            "schema_version": "narrowgate_p3_touch_calibration.v2",
+            "schema_version": "narrowgate_p3_touch_calibration.v3",
             "model_type": "empirical_survival",
             "delta_grid": [0.1, 1.0, 2.0, 3.0],
             "probability_grid": [1.0, 0.8, 0.4, 0.1],
             "metadata": {
                 "event_type": "touch",
+                "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+                "side": "pooled_buy_sell",
+                "queue_included": False,
                 "horizon_s": 10.0,
                 "distance_unit": "USDC_per_BTC",
             },
@@ -136,7 +139,7 @@ def test_label_quote_params_use_explicit_empirical_p3_artifact(tmp_path: Path) -
     assert params["fill_probability_sha256"] == hashlib.sha256(
         artifact.read_bytes()
     ).hexdigest()
-    assert params["fill_probability_schema_version"] == "narrowgate_p3_touch_calibration.v2"
+    assert params["fill_probability_schema_version"] == "narrowgate_p3_touch_calibration.v3"
     assert params["fill_probability_model_type"] == "empirical_survival"
     assert params["p3_delta_star"] > 0.0
     assert params["p3_kappa_eff"] > 0.0
@@ -149,7 +152,7 @@ def test_label_quote_params_reject_legacy_su_artifact(tmp_path: Path) -> None:
         {"xi": 0.0, "lam": 1.0, "gamma": 0.0, "delta0": 1.0},
     )
 
-    with pytest.raises(ValueError, match="empirical causal P3 v2"):
+    with pytest.raises(RuntimeError, match="unsupported P3 schema"):
         _load_label_quote_params("BTCUSDC", config)
 
 
@@ -165,10 +168,10 @@ def test_quote_labels_use_spread_coefficient_kappa_horizon_and_dynamic_cap() -> 
         "liq_baseline": 0.0,
         "vol_baseline": 10.0,
         "vol_power": 0.0,
-        "gamma_scale_min": 1.0,
-        "gamma_scale_max": 1.0,
-        "gamma_liq_scale_min": 1.0,
-        "gamma_liq_scale_max": 1.0,
+        "volatility_spread_scale_min": 1.0,
+        "volatility_spread_scale_max": 1.0,
+        "liquidity_spread_scale_min": 1.0,
+        "liquidity_spread_scale_max": 1.0,
         "p3_delta_star": 0.0,
         "tick_size": 0.1,
         "maker_fee": 0.0,

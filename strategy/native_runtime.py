@@ -19,6 +19,8 @@ NATIVE_REPLACE_CONTINUATION_METHODS = (
     "take_ready", "finalize_decision", "drop_in_flight", "clear_all", "telemetry",
 )
 
+APPLICATION_INTERFACE_VERSION = 20260925
+
 
 def load_native_module(*, optional: bool = False) -> Any:
     """Load the installed extension, respecting an explicit deployment root.
@@ -33,6 +35,12 @@ def load_native_module(*, optional: bool = False) -> Any:
         if optional and exc.name == "narrowgate_cpp":
             return None
         raise
+    actual_version = getattr(module, "APPLICATION_INTERFACE_VERSION", None)
+    if actual_version != APPLICATION_INTERFACE_VERSION:
+        raise RuntimeError(
+            "narrowgate_cpp application interface mismatch: "
+            f"expected={APPLICATION_INTERFACE_VERSION} actual={actual_version!r}"
+        )
     expected_root = os.environ.get("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", "").strip()
     if expected_root:
         root = Path(expected_root).expanduser()
