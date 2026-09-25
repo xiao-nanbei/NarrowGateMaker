@@ -277,6 +277,20 @@
         "whole_strategy_fresh_holdout": false,
         "evidence_availability": "private_not_distributed"
       },
+      "current_research_baseline": {
+        "selection": "owner_selected_B_g050_a000_after_four_arm_development_comparison",
+        "eta_inventory": 0.05,
+        "a_spread": 0.05,
+        "risk_per_order": 0.05,
+        "asym_strength": 0.0,
+        "ml_enabled": true,
+        "inventory_reference_qty": 1.0,
+        "effective_config": "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/research-baseline-current.json",
+        "evidence_availability": "private_not_distributed",
+        "scope": "offline_research_only_no_live_change_or_additional_run_budget",
+        "historical_baseline_and_risk_gate": "unchanged; original four-arm reference remains A; historical B peak-inventory failure is not reversed",
+        "whole_strategy_fresh_holdout": false
+      },
       "remaining_scope": "other_preexisting_F01_parameter_questions_require_separately_frozen_budget_and_support_no_automatic_followup_from_this_result"
     },
     {
