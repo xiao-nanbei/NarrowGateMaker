@@ -144,7 +144,7 @@ def synthetic_model_bundle_173(tmp_path_factory: pytest.TempPathFactory) -> Path
     for name in REQUIRED_MODEL_HEADS:
         booster.save_model(str(root / f"{name}.txt"))
         head_metadata = dict(metadata)
-        if name.startswith("vol_"):
+        if name.startswith("absolute_price_variance_rate_"):
             head_metadata["label_semantics"] = (
                 "fixed_forward_h_absolute_price_variance"
             )
@@ -255,7 +255,7 @@ def _active_lightgbm_library() -> str:
 
 def _model_feature_names(bundle: Path = MODEL_BUNDLE) -> list[str]:
     metadata = json.loads(
-        (bundle / "dir_10s_meta.json").read_text(encoding="utf-8")
+        (bundle / "touch_conditioned_up_probability_10000ms_meta.json").read_text(encoding="utf-8")
     )
     return [str(name) for name in metadata["feature_cols"]]
 
@@ -1169,7 +1169,7 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(
         best_ask=60_002.1,
     )
     config = QuoteCoreConfig(
-        gamma=0.046,
+        eta_inventory=0.046, a_spread=0.046, risk_per_order=0.046,
         kappa=0.01,
         tick_size=0.1,
         lot_size=0.001,
@@ -1187,11 +1187,11 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(
             state,
             config,
             QuotePrediction(
-                dir_10s=prediction.dir_10s,
-                vol_10s=prediction.vol_10s,
-                ret_10s=prediction.ret_10s,
-                tox_bid=prediction.tox_bid_10s,
-                tox_ask=prediction.tox_ask_10s,
+                touch_conditioned_up_probability_10000ms=prediction.touch_conditioned_up_probability_10000ms,
+                absolute_price_variance_rate_10000ms=prediction.absolute_price_variance_rate_10000ms,
+                touch_conditioned_price_change_fraction_10000ms=prediction.touch_conditioned_price_change_fraction_10000ms,
+                tox_bid=prediction.touch_side_adverse_probability_bid_10000ms,
+                tox_ask=prediction.touch_side_adverse_probability_ask_10000ms,
             ),
         )
 

@@ -67,7 +67,6 @@ class ApiConfig:
 
 @dataclass
 class StrategyConfig:
-    gamma: float = 0.010                  # legacy B0 compatibility input; not portable CARA risk aversion
     kappa: float = 0.05                   # legacy internal spread-adapter fallback, not identified arrival intensity
     p3_kappa_eff_override: float = 0.0    # frozen replay/config ABI; live preflight/runtime rejects any nonzero value
     order_size: float = 0.0026
@@ -75,16 +74,12 @@ class StrategyConfig:
     requote_interval: float = 10.0
     position_timeout: float = 0.0
     quote_horizon_s: float = 1.0           # empirical variance-integration horizon; not order exposure/cancel-ACK quantile
-    # Explicit unit/estimand contract.  The defaults are the behavior-identical
-    # B0 projection: q_ref=1 base asset, eta=gamma*q_ref, a/risk=gamma,
-    # execution slope=kappa, and risk horizon=quote_horizon_s.  None means
-    # derive that legacy value; it never means an independently calibrated
-    # optimum.  The quantity-aware formula is a replay candidate, not a live
-    # default.
+    # Explicit inventory and spread coefficients. None is invalid for these
+    # three fields; no shared risk coefficient is inherited at runtime.
     inventory_reference_qty: float = 1.0
-    eta_inventory: Optional[float] = None
-    a_spread: Optional[float] = None
-    risk_per_order: Optional[float] = None
+    eta_inventory: float = 0.010
+    a_spread: float = 0.010
+    risk_per_order: float = 0.010
     execution_intensity_slope: Optional[float] = None
     risk_horizon_s: Optional[float] = None
     historical_p3_scalar_adapter_enabled: bool = True
@@ -204,7 +199,7 @@ class StrategyConfig:
     fill_cooldown_reducing_inv_threshold: float = 0.0   # abs inventory BTC threshold for campaign-only reducing cooldown
     fill_cooldown_reducing_inv_ratio: float = 0.0       # abs inventory / order_size threshold for campaign-only reducing cooldown
     fill_cooldown_reducing_age_s: float = 0.0           # campaign age threshold for campaign-only reducing cooldown
-    fill_cooldown_reducing_vol_ref: float = 0.0       # if >0, scale reducing cooldown by vol_10s / ref
+    fill_cooldown_reducing_vol_ref: float = 0.0       # if >0, scale reducing cooldown by absolute_price_variance_rate_10000ms / ref
     fill_cooldown_reducing_vol_min_mult: float = 0.5
     fill_cooldown_reducing_vol_max_mult: float = 2.0
     # Optional private F05 policy envelope. It replaces only the total SELL
@@ -560,7 +555,6 @@ BACKTEST_PARAM_SOURCES = (
     ("async_order_lanes_enabled", ("api", "async_order_lanes_enabled")),
     ("cross_side_order_lanes_enabled", ("api", "cross_side_order_lanes_enabled")),
     ("async_order_lane_capacity", ("api", "async_order_lane_capacity")),
-    ("gamma", ("strategy", "gamma")),
     ("kappa", ("strategy", "kappa")),
     ("p3_kappa_eff_override", ("strategy", "p3_kappa_eff_override")),
     ("order_size", ("strategy", "order_size")),
@@ -1274,7 +1268,7 @@ def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None
     sign = float(getattr(cfg.strategy, "markout_side_asymmetry_sign", 1.0))
     if sign not in {-1.0, 1.0}:
         raise ValueError("strategy.markout_side_asymmetry_sign must be -1 or +1")
-    for field_name in ("gamma", "kappa", "order_size", "max_inventory"):
+    for field_name in ("eta_inventory", "a_spread", "risk_per_order", "kappa", "order_size", "max_inventory"):
         value = float(getattr(cfg.strategy, field_name))
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"strategy.{field_name} must be positive and finite")
@@ -1639,7 +1633,7 @@ def reload_config(*_args):
             _engine_ref.on_config_reload(cfg)
         with _lock:
             _cfg = cfg
-        logger.info(f"Reloaded {active_path}: γ={cfg.strategy.gamma}, "
+        logger.info(f"Reloaded {active_path}: inventory_coefficient={cfg.strategy.eta_inventory}, "
                     f"fallback_κ={cfg.strategy.kappa}, vol_blend={cfg.ml.vol_blend}")
         if _engine_ref is not None:
             logger.info("Config propagated to running engine via on_config_reload")

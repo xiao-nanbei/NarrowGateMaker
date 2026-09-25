@@ -7,22 +7,16 @@ ML enhancements over pure AS:
   2. Direction skew:      pred_dir → shifts reservation price toward predicted side
   3. Confidence gating:   only apply ML when prediction confidence is high
 
-Usage:
-  python models/backtest_ml.py                         # default: test set
-  python models/backtest_ml.py --sweep                 # sweep ML params
-  python models/backtest_ml.py --no-ml                 # pure AS baseline comparison
+Library-only bar-shape diagnostic. Economic replay uses ``narrowgate replay``.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import math
-import sys
 import time
 from itertools import product
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
@@ -39,37 +33,21 @@ except ImportError:
     def njit_opt(f):
         return f
 
-try:
-    from models.backtest_config import build_backtest_base_params, disable_ml_params
-    from models.backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
-    from models.queue_calibration import (
-        build_daily_queue_arrays,
-    )
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
-except ImportError:
-    from backtest_config import build_backtest_base_params, disable_ml_params
-    from backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
-    from queue_calibration import (
-        build_daily_queue_arrays,
-    )
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
+from models.backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
+from models.queue_calibration import (
+    build_daily_queue_arrays,
+)
+from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
 
 from data_paths import cache_root, normalized_l2_root
 
-try:
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
+from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
 
 DATA_ROOT = data_root(ROOT)
 BARS_DIR = DATA_ROOT / "bars_1s"
 L2_DIR = normalized_l2_root(ROOT) / "l2"
 
-try:
-    from models.backtest_config import DEFAULT_LIQ_BASELINE
-except ImportError:
-    from backtest_config import DEFAULT_LIQ_BASELINE
+from models.backtest_config import DEFAULT_LIQ_BASELINE
 
 SYMBOL = DEFAULT_SYMBOL
 MODEL_DIR: Path
@@ -382,9 +360,9 @@ def build_ml_arrays(bars_1s, pred_10s, sigma_window=60):
     pred_ret = np.zeros(n, dtype=np.float64)
 
     # Get prediction values
-    dir_col = "pred_dir_10s"
-    vol_col = "pred_vol_10s"
-    ret_col = "pred_ret_10s"
+    dir_col = "pred_touch_conditioned_up_probability_10000ms"
+    vol_col = "pred_absolute_price_variance_rate_10000ms"
+    ret_col = "pred_touch_conditioned_price_change_fraction_10000ms"
     has_dir = dir_col in pred_10s.columns
     has_vol = vol_col in pred_10s.columns
     has_ret = ret_col in pred_10s.columns
@@ -495,8 +473,8 @@ def build_toxicity_arrays(ts_ms, pred_10s, pred_dir=None, toxicity_horizon_s=10)
     tox_bid = np.full(n, 0.5, dtype=np.float64)
     tox_ask = np.full(n, 0.5, dtype=np.float64)
 
-    tox_bid_col = f"pred_tox_bid_{int(toxicity_horizon_s)}s"
-    tox_ask_col = f"pred_tox_ask_{int(toxicity_horizon_s)}s"
+    tox_bid_col = f"pred_touch_side_adverse_probability_bid_{int(toxicity_horizon_s) * 1000}ms"
+    tox_ask_col = f"pred_touch_side_adverse_probability_ask_{int(toxicity_horizon_s) * 1000}ms"
     has_tox_bid = tox_bid_col in pred_10s.columns
     has_tox_ask = tox_ask_col in pred_10s.columns
 
@@ -544,7 +522,7 @@ def build_toxicity_arrays(ts_ms, pred_10s, pred_dir=None, toxicity_horizon_s=10)
 @njit_opt
 def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                       book_imb, trade_intensity,
-                      gamma, kappa, order_size, max_inv,
+                      inventory_price_risk, risk_per_order, kappa, order_size, max_inv,
                       rq_ms, fee, taker_fee, tick, sample_rate,
                       skew_strength, vol_blend, dir_threshold,
                       asym_strength, inventory_direction_alignment_strength,
@@ -577,7 +555,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                       inventory_asym_strength,
                       inventory_signal_fade_strength):
     """
-    ML-enhanced AS simulation with regime-adaptive gamma,
+    ML-enhanced AS simulation with regime-adaptive spread scaling,
     fixed/dynamic max_spread_bps clamp, position_timeout, queue-aware fills,
     eta order size decay, exit urgency asymmetry, dynamic requote interval,
     lazy requote (Step 26B), and fill cooldown (Step 27).
@@ -989,7 +967,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
             # This avoids the counterintuitive effect where multiplying γ
             # in the (2/γ)·ln(1+γ/κ) term REDUCES spread for small γ.
             regime_spread_scale = 1.0
-            g_base = gamma
+            g_base = inventory_price_risk
             if regime_enabled > 0.5:
                 # Layer 0: Liquidity → spread scale (low liq → wider spread)
                 if liq_baseline > 0.0:
@@ -1063,7 +1041,7 @@ def _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                     cur_kappa_eff = kappa_base * d_ratio * kappa_ratio
 
             r = mid - q * g_eff * s
-            d = gamma * s + (2.0 / gamma) * np.log(1.0 + gamma / cur_kappa_eff)
+            d = risk_per_order * s + (2.0 / risk_per_order) * np.log(1.0 + risk_per_order / cur_kappa_eff)
 
             # Apply regime spread scaling (L0 liquidity + L1 vol)
             d = d * regime_spread_scale
@@ -1408,7 +1386,8 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
         tox_bid = np.clip(1.0 - pred_dir, 0.0, 1.0)
     if tox_ask is None:
         tox_ask = np.clip(pred_dir, 0.0, 1.0)
-    gamma   = params["gamma"]
+    inventory_price_risk = params["eta_inventory"] / params["inventory_reference_qty"]
+    risk_per_order = params["risk_per_order"]
     kappa   = params["kappa"]
     osiz    = params["order_size"]
     maxinv  = params["max_inventory"]
@@ -1511,7 +1490,7 @@ def simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
 
     raw = _simulate_ml_core(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
                             book_imb, trade_intensity,
-                            gamma, kappa, osiz, maxinv,
+                            inventory_price_risk, risk_per_order, kappa, osiz, maxinv,
                             rq_ms, fee, taker_fee, TICK, sr,
                             skew, vblend, dthr,
                             asym, gdir,
@@ -1601,7 +1580,7 @@ def _unpack(raw, params):
     cap_label = params.get("cap_label", _cap_label_from_fields(cap_mode, cap_bps))
 
     return {
-        "gamma": params["gamma"],
+        "eta_inventory": params["eta_inventory"], "risk_per_order": params["risk_per_order"],
         "kappa": params["kappa"],
         "skew": params["skew_strength"],
         "vol_blend": params["vol_blend"],
@@ -1690,7 +1669,7 @@ def _unpack(raw, params):
 # maker_fill_prob < 1.0 models queue position (no free touch-fill).
 # Fee floor: 2 × 0.018% × $85k ≈ $30.6 → need spread > $31 minimum.
 SWEEP_GRID = {
-    "gamma": [0.01, 0.02, 0.05, 0.1],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
     "kappa": [0.05],               # overridden by p3_kappa_eff; fallback placeholder
     "skew_strength": [0.0],
     "vol_blend": [0.5],
@@ -1718,7 +1697,7 @@ SWEEP_GRID = {
 
 # Regime-aware sweep grid (v1.4 reachability-constrained)
 SWEEP_GRID_REGIME = {
-    "gamma": [0.01, 0.02, 0.05, 0.1],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
     "kappa": [0.02, 0.05, 0.1],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
@@ -1748,7 +1727,7 @@ SWEEP_GRID_REGIME = {
 # Includes a true no-ML control arm via vol_blend=0.0, asym_strength=0.0,
 # ret_skew=0.0, skew_strength=0.0, inventory_direction_alignment_strength=0.0.
 SWEEP_GRID_LIVE = {
-    "gamma": [0.01, 0.02, 0.05, 0.1],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
     "kappa": [0.02, 0.05, 0.1],
     "skew_strength": [0.0],
     "vol_blend": [0.0, 0.5],
@@ -1776,7 +1755,7 @@ SWEEP_GRID_LIVE = {
 
 # ── v1.1 sweep: P1 BER (v1.4 reachability-constrained base) ──
 SWEEP_GRID_V1_1 = {
-    "gamma": [0.01, 0.02],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}],
     "kappa": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
@@ -1826,7 +1805,7 @@ def _dedup_v1_1_combos(params_list):
 
 # ── v1.2 sweep: empirical volatility/markout scaling ──
 SWEEP_GRID_V1_2 = {
-    "gamma": [0.01, 0.02],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}],
     "kappa": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.5],
@@ -1862,7 +1841,7 @@ SWEEP_GRID_V1_2 = {
 # Step 27: Fill cooldown sweep grid
 # Sweeps fill_cooldown base seconds; effective cooldown = base × n_consecutive
 SWEEP_GRID_COOLDOWN = {
-    "gamma": [0.01],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}],
     "kappa": [0.05],
     "skew_strength": [0.0],
     "vol_blend": [0.0, 0.5],
@@ -2002,7 +1981,12 @@ def run_sweep(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     for idx, combo in enumerate(combos):
         p = dict(base)
         for k, v in zip(keys, combo, strict=True):
-            p[k] = v
+            if k == "quote_coefficients":
+                if p["inventory_reference_qty"] != 1.0:
+                    raise ValueError("registered coefficient tuples require inventory_reference_qty=1")
+                p.update(v)
+            else:
+                p[k] = v
         if "rng_seed" not in p:
             p["rng_seed"] = 42 + (idx * 7919)
         params_list.append(p)
@@ -2050,7 +2034,7 @@ _HDR = (f"{'Rk':>3s}  {'γ':>6s}  {'κ':>6s}  {'κR':>4s}  {'MI':>5s}  {'RQn':>3
 
 
 def _row(i, r):
-    return (f"{i:3d}  {r['gamma']:6.3f}  {r['kappa']:6.3f}  "
+    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['kappa']:6.3f}  "
             f"{r.get('kappa_ratio', 1.0):4.1f}  "
             f"{r.get('max_inv_cfg', 0.01):5.3f}  "
             f"{r.get('rq_min', r.get('rq_sec', 10)):3.0f}  "
@@ -2112,7 +2096,7 @@ def print_results(results, top_n=20, sort_by="selection_score"):
         robust = _pick_robust_best(results, sort_by=sort_by, top_k=k)
         print(f"\n  Selection-robust (top-{k} by {metric_label}): median {metric_label}={np.median(metric_values):.2f}, "
               f"median PnL=${np.median(pnl):.2f}")
-        print(f"  Robust pick: Cap={_cap_cell(robust)}, γ={robust['gamma']}, κ={robust['kappa']}, "
+        print(f"  Robust pick: Cap={_cap_cell(robust)}, γ={robust['risk_per_order']}, κ={robust['kappa']}, "
               f"{metric_label}={robust.get(metric_field, 0.0):.2f}, "
               f"InvAdj=${robust.get('inventory_adjusted_pnl', 0.0):.2f}, PnL=${robust['pnl']:.2f}")
 
@@ -2195,351 +2179,5 @@ def _run_paired_experiment(ts, hi, lo, cl, ssq,
     save_pnl_series(off_result, "paired_ml_off")
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  5. MAIN
-# ═══════════════════════════════════════════════════════════════════
-
-def main():
-    ap = argparse.ArgumentParser(description="ML-Enhanced AS Backtest")
-    ap.add_argument("--symbol", default=None,
-                    help=f"Symbol (default from config/MM_SYMBOL, fallback {DEFAULT_SYMBOL})")
-    ap.add_argument("--config", type=str, default=None,
-                    help="Path to live/config.yaml — overrides all default params with live config")
-    ap.add_argument("--sweep", action="store_true")
-    ap.add_argument("--no-ml", action="store_true",
-                    help="Run pure AS baseline for comparison")
-    ap.add_argument("--workers", type=int, default=None)
-    ap.add_argument("--paired-ml", action="store_true",
-                    help="Strict paired comparison: hold AS params fixed and compare ML on/off only")
-    ap.add_argument("--day-start", default=None,
-                    help="UTC daily start YYYY-MM-DD for this legacy bar backtest")
-    ap.add_argument("--day-end", default=None,
-                    help="UTC daily end YYYY-MM-DD for this legacy bar backtest")
-    ap.add_argument("--gamma", type=float, default=None)
-    ap.add_argument("--kappa", type=float, default=None)
-    ap.add_argument("--order-size", type=float, default=None)
-    ap.add_argument("--max-inventory", type=float, default=None)
-    ap.add_argument("--requote-interval", type=float, default=None)
-    ap.add_argument("--maker-fee", type=float, default=None)
-    ap.add_argument("--skew-strength", type=float, default=None)
-    ap.add_argument("--vol-blend", type=float, default=None)
-    ap.add_argument("--dir-threshold", type=float, default=None)
-    ap.add_argument("--asym-strength", type=float, default=None)
-    ap.add_argument("--gamma-dir-bonus", type=float, default=None)
-    ap.add_argument("--regime", action="store_true", default=None,
-                    help="Enable regime-adaptive gamma scaling")
-    ap.add_argument("--no-regime", action="store_true", default=False,
-                    help="Disable regime-adaptive gamma scaling")
-    ap.add_argument("--liq-baseline", type=float, default=None,
-                    help="Liquidity baseline for regime scaling (default 200)")
-    ap.add_argument("--sweep-live", action="store_true",
-                    help="Sweep with live-aligned grid (regime ON, no maker_fill_prob sweep)")
-    ap.add_argument("--sweep-v1-1", action="store_true", dest="sweep_v1_1",
-                    help="Sweep with v1.1 grid (P1 BER feature)")
-    ap.add_argument("--vol-baseline", type=float, default=None)
-    ap.add_argument("--gamma-scale-min", type=float, default=None)
-    ap.add_argument("--gamma-scale-max", type=float, default=None)
-    ap.add_argument("--ret-skew", type=float, default=None,
-                    help="ret prediction skew factor")
-    ap.add_argument("--taker-fee", type=float, default=None,
-                    help="taker fee for timeout closes")
-    ap.add_argument("--max-spread-bps", type=float, default=None,
-                    help="max spread in bps (0=no cap)")
-    ap.add_argument("--position-timeout", type=float, default=None,
-                    help="position timeout in seconds (0=disabled)")
-    ap.add_argument("--kappa-ratio", type=float, default=None,
-                    help="kappa multiplier simulating dynamic depth (0.3=thin book, 1.0=static)")
-    ap.add_argument("--queue-depth", type=float, default=None,
-                    help="$ price must cross beyond limit for fill (0=trade-through)")
-    ap.add_argument("--eta", type=float, default=None,
-                    help="inventory order size decay coefficient (0=disabled, live=0.5)")
-    ap.add_argument("--exit-urgency", type=float, default=None,
-                    help="exit urgency asymmetry strength (0=disabled, live=0.5)")
-    ap.add_argument("--inventory-skew-strength", type=float, default=None,
-                    help="CJP (2015) inventory r-shift: r -= φ·(q/q_max)·δ (0=disabled, 0.3=live)")
-    ap.add_argument("--lot-size", type=float, default=None,
-                    help="minimum order size step (BTCUSDT=0.001)")
-    ap.add_argument("--book-imb-strength", type=float, default=None,
-                    help="book imbalance → spread asymmetry strength (0=disabled)")
-    ap.add_argument("--rq-min", type=float, default=None,
-                    help="dynamic RQ minimum (seconds). If set, enables dynamic RQ.")
-    ap.add_argument("--rq-max", type=float, default=None,
-                    help="dynamic RQ maximum (seconds). If set, enables dynamic RQ.")
-    ap.add_argument("--fill-dist-decay", type=float, default=None,
-                    help="distance-decay fill model: P(fill|touch)=exp(-δ/λ). 0=touch-fill (legacy)")
-    ap.add_argument("--ret-shift-max-pct", type=float, default=None,
-                    help="max ret_skew shift as fraction of half_spread (0.3=30%%, 1.0=100%%)")
-    ap.add_argument("--ret-demean-halflife", type=int, default=None,
-                    help="EMA halflife for pred_ret demeaning (10s bars; 360=1h; 0=off)")
-    ap.add_argument("--maker-fill-prob", type=float, default=None,
-                    help="Queue-position fill probability gate (0-1). 1.0=legacy touch-fill. "
-                         "Live calibration: cancel/fill≈120:1 → try 0.02-0.10.")
-    ap.add_argument("--toxicity-horizon", type=int, default=None,
-                    help="Use 5s or 10s toxicity probabilities when available (default 10)")
-    ap.add_argument("--direction-aware-fill", action="store_true",
-                    help="Use within-bar directional pressure to avoid symmetric same-bar bid+ask fills")
-    ap.add_argument("--fill-directional-strength", type=float, default=None,
-                    help="Strength of the direction-aware fill bias (default 0.75)")
-    # ── P1 args ──
-    ap.add_argument("--ber-guard-thresh", type=float, default=None,
-                    help="P1: BER guard fires when ema_fast/ema_slow > thresh (0=disabled)")
-    ap.add_argument("--ber-spread-mult", type=float, default=None,
-                    help="P1: spread multiplier when BER guard is active (default 2.0)")
-    # ── v1.2 empirical volatility-scaling args ──
-    ap.add_argument("--vol-power", type=float, default=None,
-                    help="v1.2: empirical vol exponent (1.0=linear sqrt, 1.5=superlinear, 2.0=quadratic stress)")
-    ap.add_argument("--markout-spread-scale", type=float, default=None,
-                    help="v1.2: markout → spread scale factor (0=disabled, 0.3=moderate)")
-    # ── Step 26A: urgency weight args ──
-    ap.add_argument("--urgency-time-weight", type=float, default=None,
-                    help="urgency: time component weight (default 0.3)")
-    ap.add_argument("--urgency-pnl-weight", type=float, default=None,
-                    help="urgency: PnL component weight (default 0.3)")
-    ap.add_argument("--urgency-signal-weight", type=float, default=None,
-                    help="urgency: ML signal component weight (default 0.4)")
-    ap.add_argument("--sweep-v1-2", action="store_true", dest="sweep_v1_2",
-                    help="Sweep with v1.2 grid (empirical vol_power + markout)")
-    # ── Step 27: fill cooldown ──
-    ap.add_argument("--fill-cooldown", type=float, default=None,
-                    help="Same-side fill cooldown base (seconds). Effective CD = base × n_consecutive.")
-    ap.add_argument("--sweep-cooldown", action="store_true", dest="sweep_cooldown",
-                    help="Sweep with fill_cooldown grid (Step 27)")
-    ap.add_argument("--sort-by", choices=sorted(SORT_OBJECTIVES.keys()),
-                    default="selection_score",
-                    help="Sweep ranking metric")
-    args = ap.parse_args()
-
-    # ── Load base params from config.yaml (default) or CLI defaults ──
-    from backtest_config import load_live_config_as_params
-    cfg_path = args.config
-    if cfg_path is None:
-        default_cfg = ROOT / "live" / "config.yaml"
-        if default_cfg.exists():
-            cfg_path = str(default_cfg)
-    if cfg_path:
-        live_params = load_live_config_as_params(cfg_path)
-        print(f"  Config loaded from: {cfg_path}")
-    else:
-        # Fallback hardcoded defaults (legacy — should match config.yaml)
-        live_params = {
-            "gamma": 0.01, "kappa": 0.05, "order_size": 0.0026,
-            "max_inventory": 0.026, "requote_interval": 10.0,
-            "maker_fee": 0.0, "taker_fee": 0.00036,
-            "skew_strength": 0.0, "vol_blend": 0.5,
-            "dir_threshold": 0.05, "asym_strength": 0.1,
-            "inventory_direction_alignment_strength": 0.0, "regime_enabled": True,
-            "vol_baseline": 3.0, "volatility_spread_scale_min": 0.5,
-            "volatility_spread_scale_max": 2.0, "ret_skew": 200.0,
-            "max_spread_bps": 8.0, "position_timeout": 0.0,
-            "kappa_ratio": 1.0, "queue_depth": 0.0,
-            "eta": 0.5, "exit_urgency_strength": 0.5,
-            "inventory_skew_strength": 0.1, "lot_size": 0.001,
-            "book_imb_strength": 0.0, "fill_dist_decay": 0.0,
-            "ret_shift_max_pct": 0.3, "ret_demean_halflife": 0,
-            "liq_baseline": 200.0, "liquidity_spread_scale_min": 0.5,
-            "liquidity_spread_scale_max": 3.0,
-            "rq_min": 5.0, "rq_max": 10.0,
-            "ber_guard_thresh": 1.2, "ber_spread_mult": 2.0,
-            "vol_power": 1.5, "markout_ema_span_fills": 50,
-            "markout_spread_scale": 0.2,
-            "urgency_time_weight": 0.3, "urgency_pnl_weight": 0.3,
-            "urgency_signal_weight": 0.4,
-            "toxicity_horizon_s": 10,
-            "direction_aware_fill": True,
-            "fill_directional_strength": 0.75,
-        }
-    configure_symbol(args.symbol or live_params.get("symbol"))
-
-    # CLI args override config values (only if explicitly provided)
-    _cli_map = {
-        "gamma": "gamma", "kappa": "kappa", "order_size": "order_size",
-        "max_inventory": "max_inventory", "requote_interval": "requote_interval",
-        "maker_fee": "maker_fee", "taker_fee": "taker_fee",
-        "skew_strength": "skew_strength", "vol_blend": "vol_blend",
-        "dir_threshold": "dir_threshold", "asym_strength": "asym_strength",
-        "inventory_direction_alignment_strength": "inventory_direction_alignment_strength", "vol_baseline": "vol_baseline",
-        "volatility_spread_scale_min": "volatility_spread_scale_min", "volatility_spread_scale_max": "volatility_spread_scale_max",
-        "ret_skew": "ret_skew", "max_spread_bps": "max_spread_bps",
-        "position_timeout": "position_timeout", "kappa_ratio": "kappa_ratio",
-        "queue_depth": "queue_depth", "eta": "eta",
-        "exit_urgency": "exit_urgency_strength",
-        "inventory_skew_strength": "inventory_skew_strength",
-        "lot_size": "lot_size", "book_imb_strength": "book_imb_strength",
-        "rq_min": "rq_min", "rq_max": "rq_max",
-        "fill_dist_decay": "fill_dist_decay",
-        "ret_shift_max_pct": "ret_shift_max_pct",
-        "ret_demean_halflife": "ret_demean_halflife",
-        "maker_fill_prob": "maker_fill_prob",
-        "ber_guard_thresh": "ber_guard_thresh",
-        "ber_spread_mult": "ber_spread_mult",
-        "vol_power": "vol_power",
-        "markout_spread_scale": "markout_spread_scale",
-        "urgency_time_weight": "urgency_time_weight",
-        "urgency_pnl_weight": "urgency_pnl_weight",
-        "urgency_signal_weight": "urgency_signal_weight",
-        "toxicity_horizon": "toxicity_horizon_s",
-        "fill_directional_strength": "fill_directional_strength",
-        "fill_cooldown": "fill_cooldown",
-    }
-    for cli_attr, param_key in _cli_map.items():
-        v = getattr(args, cli_attr, None)
-        if v is not None:
-            live_params[param_key] = v
-    # --regime flag override
-    if args.regime is not None and args.regime:
-        live_params["regime_enabled"] = True
-    if args.no_regime:
-        live_params["regime_enabled"] = False
-    if args.liq_baseline is not None:
-        live_params["liq_baseline"] = args.liq_baseline
-    if args.direction_aware_fill:
-        live_params["direction_aware_fill"] = True
-
-    import platform
-    print(f"\n{'='*60}")
-    print(f"  {SYMBOL} ML-Enhanced Backtest")
-    print(f"  Chip: {platform.processor() or 'Apple M4'}  "
-          f"Cores: {cpu_count()}  Numba: {'✓' if HAS_NUMBA else '✗'}")
-    print(f"{'='*60}\n")
-
-    # ── Load data ──
-    print("Loading 1s bars (test set) …")
-    bars = load_test_bars(day_start=args.day_start, day_end=args.day_end)
-
-    print("Loading ML predictions …")
-    pred = load_predictions()
-
-    print("\nBuilding aligned arrays …")
-    ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret, book_imb, trade_intensity, depth_near = \
-        build_ml_arrays_cached(bars, pred)
-    tox_horizon = int(live_params.get("toxicity_horizon_s", 10))
-    tox_bid, tox_ask = build_toxicity_arrays(
-        ts, pred, pred_dir=pred_dir, toxicity_horizon_s=tox_horizon,
-    )
-    del bars, pred  # free memory
-
-    # Auto-load P3 fill probability model for delta_star + effective kappa
-    p3_delta_star = 0.0
-    p3_kappa_eff = 0.0
-    try:
-        from research.families.f02_empirical_p3_touch.touch_probability import TouchProbabilityModel
-        fp_path = MODEL_DIR / "fill_prob_params.json"
-        if fp_path.exists():
-            fp_model = TouchProbabilityModel.load(fp_path)
-            p3_delta_star = fp_model.distance_touch_product_argmax()
-            p3_kappa_eff = fp_model.touch_log_probability_distance_slope()
-            print(f"  P3 δ* = {p3_delta_star:.2f} USDT, κ_eff = {p3_kappa_eff:.6f}")
-    except Exception as e:
-        print(f"  P3 model not loaded: {e}")
-
-    live_params["toxicity_horizon_s"] = tox_horizon
-    base = build_backtest_base_params(
-        live_params,
-        p3_delta_star=p3_delta_star,
-        p3_kappa_eff=p3_kappa_eff,
-        queue_calibration=None,
-    )
-    if args.no_ml:
-        disable_ml_params(base)
-
-    if args.paired_ml:
-        _run_paired_experiment(
-            ts, hi, lo, cl, ssq,
-            pred_dir, pred_vol, pred_ret,
-            tox_bid, tox_ask,
-            base, args, book_imb, trade_intensity, depth_near,
-        )
-        return
-
-    if args.sweep:
-        if args.sweep_cooldown:
-            sweep_grid = SWEEP_GRID_COOLDOWN
-            dedup = None
-        elif args.sweep_v1_2:
-            sweep_grid = SWEEP_GRID_V1_2
-            dedup = _dedup_v1_2_combos
-        elif args.sweep_v1_1:
-            sweep_grid = SWEEP_GRID_V1_1
-            dedup = _dedup_v1_1_combos
-        elif args.sweep_live:
-            sweep_grid = SWEEP_GRID_LIVE
-            dedup = None
-        elif args.regime:
-            sweep_grid = SWEEP_GRID_REGIME
-            dedup = None
-        else:
-            sweep_grid = SWEEP_GRID
-            dedup = None
-        results = run_sweep(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
-                            book_imb, base, args.workers, trade_intensity,
-                            tox_bid=tox_bid, tox_ask=tox_ask,
-                            grid=sweep_grid, depth_near=depth_near,
-                            dedup_fn=dedup, sort_by=args.sort_by)
-        print_results(results, sort_by=args.sort_by)
-        save_results(results)
-
-        # Re-run best with full PnL series
-        best_p = dict(base)
-        best_r = _pick_robust_best(results, sort_by=args.sort_by, top_k=5)
-        best_p["gamma"] = best_r["gamma"]
-        best_p["kappa"] = best_r["kappa"]
-        best_p["skew_strength"] = best_r["skew"]
-        best_p["vol_blend"] = best_r["vol_blend"]
-        best_p["dir_threshold"] = best_r["dir_thr"]
-        best_p["asym_strength"] = best_r.get("asym", 0.0)
-        best_p["inventory_direction_alignment_strength"] = best_r.get("gdir", 0.0)
-        best_p["regime_enabled"] = best_r.get("regime", False)
-        best_p["ret_skew"] = best_r.get("ret_skew", 0.0)
-        best_p["kappa_ratio"] = best_r.get("kappa_ratio", 1.0)
-        best_p["book_imb_strength"] = best_r.get("book_imb_str", 0.0)
-        best_p["rq_min"] = best_r.get("rq_min", best_r.get("rq_sec", 10.0))
-        best_p["rq_max"] = best_r.get("rq_max", best_r.get("rq_sec", 10.0))
-        best_p["fill_dist_decay"] = best_r.get("fill_dist_decay", 0.0)
-        best_p["ret_shift_max_pct"] = best_r.get("ret_shift_max_pct", 1.0)
-        best_p["maker_fill_prob"] = best_r.get("maker_fill_prob", 1.0)
-        best_p["ber_guard_thresh"] = best_r.get("ber_guard_thresh", 0.0)
-        best_p["ber_spread_mult"] = best_r.get("ber_spread_mult", 2.0)
-        best_p["vol_power"] = best_r.get("vol_power", 1.0)
-        best_p["markout_ema_span_fills"] = best_r.get(
-            "markout_ema_span_fills",
-            0,
-        )
-        best_p["markout_spread_scale"] = best_r.get("markout_spread_scale", 0.0)
-        best_result = simulate_ml(ts, hi, lo, cl, ssq,
-                                  pred_dir, pred_vol, pred_ret, best_p,
-                                  book_imb=book_imb, trade_intensity=trade_intensity,
-                                  depth_near=depth_near,
-                                  tox_bid=tox_bid, tox_ask=tox_ask)
-        save_pnl_series(best_result, "ml_best")
-
-        # Also save baseline PnL
-        bl_p = dict(base)
-        bl_p["skew_strength"] = 0.0
-        bl_p["vol_blend"] = 0.0
-        bl_p["asym_strength"] = 0.0
-        bl_p["inventory_direction_alignment_strength"] = 0.0
-        bl_result = simulate_ml(ts, hi, lo, cl, ssq,
-                                pred_dir, pred_vol, pred_ret, bl_p,
-                                book_imb=book_imb, trade_intensity=trade_intensity,
-                                depth_near=depth_near,
-                                tox_bid=tox_bid, tox_ask=tox_ask)
-        save_pnl_series(bl_result, "baseline")
-    else:
-        tag = "baseline" if args.no_ml else "ml"
-        print(f"Running {'baseline' if args.no_ml else 'ML-enhanced'} backtest …")
-        t0 = time.perf_counter()
-        result = simulate_ml(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
-                             base, book_imb=book_imb, trade_intensity=trade_intensity,
-                             depth_near=depth_near,
-                             tox_bid=tox_bid, tox_ask=tox_ask)
-        t_sim = time.perf_counter() - t0
-        print(f"  {t_sim:.2f}s  ({len(ts)/t_sim/1e6:.1f}M bars/s)\n")
-        print_results([{k: v for k, v in result.items()
-                        if not k.startswith("_")}], sort_by=args.sort_by)
-        save_pnl_series(result, tag)
-
-    print()
-
-
 if __name__ == "__main__":
-    main()
+    raise SystemExit("This is a diagnostic library; use narrowgate replay for economic replay")

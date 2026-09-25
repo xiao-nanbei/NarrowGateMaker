@@ -52,19 +52,19 @@ FORBIDDEN_BOUND_PATH_PARTS = {
     "trades.csv",
 }
 EXPECTED_HEADS = (
-    "dir_10s",
-    "ret_10s",
-    "vol_10s",
-    "dir_30s",
-    "ret_30s",
-    "vol_30s",
-    "dir_60s",
-    "ret_60s",
-    "vol_60s",
-    "tox_bid_5s",
-    "tox_ask_5s",
-    "tox_bid_10s",
-    "tox_ask_10s",
+    "touch_conditioned_up_probability_10000ms",
+    "touch_conditioned_price_change_fraction_10000ms",
+    "absolute_price_variance_rate_10000ms",
+    "touch_conditioned_up_probability_30000ms",
+    "touch_conditioned_price_change_fraction_30000ms",
+    "absolute_price_variance_rate_30000ms",
+    "touch_conditioned_up_probability_60000ms",
+    "touch_conditioned_price_change_fraction_60000ms",
+    "absolute_price_variance_rate_60000ms",
+    "touch_side_adverse_probability_bid_5000ms",
+    "touch_side_adverse_probability_ask_5000ms",
+    "touch_side_adverse_probability_bid_10000ms",
+    "touch_side_adverse_probability_ask_10000ms",
 )
 
 
@@ -155,11 +155,14 @@ def _literal_assignment(path: Path, name: str) -> Any:
 
 
 def _head_contract(name: str) -> dict[str, Any]:
-    match = re.fullmatch(r"(dir|ret|vol)_(10|30|60)s", name)
+    match = re.fullmatch(
+        r"(touch_conditioned_up_probability|touch_conditioned_price_change_fraction|absolute_price_variance_rate)_(10000|30000|60000)ms",
+        name,
+    )
     if match:
         family, horizon_text = match.groups()
-        horizon_s = int(horizon_text)
-        if family == "vol":
+        horizon_s = int(horizon_text) // 1000
+        if family == "absolute_price_variance_rate":
             return {
                 "name": name,
                 "family": "fixed_forward_absolute_price_variance",
@@ -177,10 +180,10 @@ def _head_contract(name: str) -> dict[str, Any]:
             "fill_conditioned": True,
         }
 
-    match = re.fullmatch(r"tox_(bid|ask)_(5|10)s", name)
+    match = re.fullmatch(r"touch_side_adverse_probability_(bid|ask)_(5000|10000)ms", name)
     if match:
         side, horizon_text = match.groups()
-        horizon_s = int(horizon_text)
+        horizon_s = int(horizon_text) // 1000
         return {
             "name": name,
             "family": "fill_conditioned_side_adverse_markout",

@@ -217,9 +217,9 @@ struct DepthSnapshot {
 };
 
 struct QuotePrediction {
-    double dir_10s = 0.5;
-    double vol_10s = 0.0;
-    double ret_10s = 0.0;
+    double touch_conditioned_up_probability_10000ms = 0.5;
+    double absolute_price_variance_rate_10000ms = 0.0;
+    double touch_conditioned_price_change_fraction_10000ms = 0.0;
     double tox_bid = 0.5;
     double tox_ask = 0.5;
 };

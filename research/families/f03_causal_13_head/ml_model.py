@@ -16,7 +16,7 @@ Local benchmark assumptions:
 
 Usage:
   .venv/bin/python -m research.families.f03_causal_13_head.ml_model                   # train all models
-  .venv/bin/python -m research.families.f03_causal_13_head.ml_model --target dir_10s  # diagnostic single head
+  .venv/bin/python -m research.families.f03_causal_13_head.ml_model --target touch_conditioned_up_probability_10000ms  # diagnostic single head
   .venv/bin/python -m research.families.f03_causal_13_head.ml_model --tune            # Optuna search
 
 Source-profile and taker-feature ablations use this same entrypoint with an
@@ -47,50 +47,27 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-try:
-    from models.backtest_config import build_backtest_base_params
-    from research.families.f03_causal_13_head.feature_variants import (
-        apply_feature_variant,
-        available_variants,
-        feature_variant_contract,
-        normalize_variant,
-        write_bundle_meta,
-    )
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
-    from strategy.model_contract import (
-        REQUIRED_FEATURE_DAG_ID,
-        REQUIRED_FEATURE_DAG_SHA256,
-        REQUIRED_FEATURE_SEMANTICS_VERSION,
-        REQUIRED_MODEL_HEADS,
-        absolute_price_variance_unit_contract,
-        validate_variance_unit_contract,
-    )
-except ImportError:
-    from backtest_config import build_backtest_base_params
-    from feature_variants import (
-        apply_feature_variant,
-        available_variants,
-        feature_variant_contract,
-        normalize_variant,
-        write_bundle_meta,
-    )
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
-    from strategy.model_contract import (
-        REQUIRED_FEATURE_DAG_ID,
-        REQUIRED_FEATURE_DAG_SHA256,
-        REQUIRED_FEATURE_SEMANTICS_VERSION,
-        REQUIRED_MODEL_HEADS,
-        absolute_price_variance_unit_contract,
-        validate_variance_unit_contract,
-    )
+from models.backtest_config import build_backtest_base_params
+from research.families.f03_causal_13_head.feature_variants import (
+    apply_feature_variant,
+    available_variants,
+    feature_variant_contract,
+    normalize_variant,
+    write_bundle_meta,
+)
+from models.symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
+from strategy.model_contract import (
+    REQUIRED_FEATURE_DAG_ID,
+    REQUIRED_FEATURE_DAG_SHA256,
+    REQUIRED_FEATURE_SEMANTICS_VERSION,
+    REQUIRED_MODEL_HEADS,
+    absolute_price_variance_unit_contract,
+    validate_variance_unit_contract,
+)
 from market_fusion import default_reference_symbol
 from calendar_features import legacy_calendar_feature_names
 
-try:
-    from data_quality import filter_frame_for_orderbook_quality
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from data_quality import filter_frame_for_orderbook_quality
+from data_quality import filter_frame_for_orderbook_quality
 
 _SYMBOL_PATHS = paths_for(DEFAULT_SYMBOL)
 SYMBOL = _SYMBOL_PATHS.symbol
@@ -603,11 +580,11 @@ def release_memory():
 # ═══════════════════════════════════════════════════════════════════
 
 LABEL_COLS = [
-    "label_ret_10s", "label_dir_10s", "label_vol_10s",
-    "label_ret_30s", "label_dir_30s", "label_vol_30s",
-    "label_ret_60s", "label_dir_60s", "label_vol_60s",
-    "label_tox_bid_5s", "label_tox_ask_5s",
-    "label_tox_bid_10s", "label_tox_ask_10s",
+    "label_touch_conditioned_price_change_fraction_10000ms", "label_touch_conditioned_up_probability_10000ms", "label_absolute_price_variance_rate_10000ms",
+    "label_touch_conditioned_price_change_fraction_30000ms", "label_touch_conditioned_up_probability_30000ms", "label_absolute_price_variance_rate_30000ms",
+    "label_touch_conditioned_price_change_fraction_60000ms", "label_touch_conditioned_up_probability_60000ms", "label_absolute_price_variance_rate_60000ms",
+    "label_touch_side_adverse_probability_bid_5000ms", "label_touch_side_adverse_probability_ask_5000ms",
+    "label_touch_side_adverse_probability_bid_10000ms", "label_touch_side_adverse_probability_ask_10000ms",
 ]
 WEIGHT_COL = "sample_weight"
 TRAINING_AUXILIARY_COLS = {
@@ -671,22 +648,22 @@ SOURCE_PROFILE_ABLATION_PROFILES = (
 # Model configs: name → (label_col, objective, metric, is_classification)
 MODEL_SPECS = {}
 for h in [10, 30, 60]:
-    MODEL_SPECS[f"dir_{h}s"] = (
-        f"label_dir_{h}s", "binary", "auc", True
+    MODEL_SPECS[f"touch_conditioned_up_probability_{h * 1000}ms"] = (
+        f"label_touch_conditioned_up_probability_{h * 1000}ms", "binary", "auc", True
     )
-    MODEL_SPECS[f"ret_{h}s"] = (
-        f"label_ret_{h}s", "regression", "mae", False
+    MODEL_SPECS[f"touch_conditioned_price_change_fraction_{h * 1000}ms"] = (
+        f"label_touch_conditioned_price_change_fraction_{h * 1000}ms", "regression", "mae", False
     )
-    MODEL_SPECS[f"vol_{h}s"] = (
-        f"label_vol_{h}s", "regression", "mae", False
+    MODEL_SPECS[f"absolute_price_variance_rate_{h * 1000}ms"] = (
+        f"label_absolute_price_variance_rate_{h * 1000}ms", "regression", "mae", False
     )
 
 for h in [5, 10]:
-    MODEL_SPECS[f"tox_bid_{h}s"] = (
-        f"label_tox_bid_{h}s", "binary", "auc", True
+    MODEL_SPECS[f"touch_side_adverse_probability_bid_{h * 1000}ms"] = (
+        f"label_touch_side_adverse_probability_bid_{h * 1000}ms", "binary", "auc", True
     )
-    MODEL_SPECS[f"tox_ask_{h}s"] = (
-        f"label_tox_ask_{h}s", "binary", "auc", True
+    MODEL_SPECS[f"touch_side_adverse_probability_ask_{h * 1000}ms"] = (
+        f"label_touch_side_adverse_probability_ask_{h * 1000}ms", "binary", "auc", True
     )
 
 if set(MODEL_SPECS) != set(REQUIRED_MODEL_HEADS):
@@ -1337,17 +1314,17 @@ def train_one(
         "feature_availability_train": feature_availability,
         "label_semantics": (
             "fill_within_h_then_markout_h_after_fill; decision outcome spans h_to_2h"
-            if label_col.startswith(("label_ret_", "label_dir_"))
+            if label_col.startswith(("label_touch_conditioned_price_change_fraction_", "label_touch_conditioned_up_probability_"))
             else (
                 "fixed_forward_h_absolute_price_variance"
-                if label_col.startswith("label_vol_")
+                if label_col.startswith("label_absolute_price_variance_rate_")
                 else "fill_within_h_then_side_adverse_markout"
             )
         ),
     }
-    if label_col.startswith(("label_ret_", "label_dir_")):
+    if label_col.startswith(("label_touch_conditioned_price_change_fraction_", "label_touch_conditioned_up_probability_")):
         horizon_token = label_col.rsplit("_", 1)[-1]
-        horizon_s = int(horizon_token.removesuffix("s"))
+        horizon_s = int(horizon_token.removesuffix("ms")) // 1000
         metadata["outcome_identity"] = {
             "schema_version": "narrowgate.f03.fill_conditioned_outcome.v1",
             "event_type": "fill_conditioned_first_touch_then_markout",
@@ -1724,18 +1701,14 @@ def _is_ml_enabled_result(result):
 def evaluate_bundle_backtest(pred_df, config_path=None,
                              sort_by="selection_score",
                              sweep=False):
-    required = {"pred_dir_10s", "pred_vol_10s", "pred_ret_10s"}
+    required = {"pred_touch_conditioned_up_probability_10000ms", "pred_absolute_price_variance_rate_10000ms", "pred_touch_conditioned_price_change_fraction_10000ms"}
     if not required.issubset(pred_df.columns):
         missing = sorted(required - set(pred_df.columns))
         print(f"\nSkipping bundle backtest: missing columns {missing}")
         return None
 
-    try:
-        from models import backtest_ml as bt
-        from models.backtest_config import load_live_config_as_params
-    except ImportError:
-        import backtest_ml as bt
-        from backtest_config import load_live_config_as_params
+    from models import backtest_ml as bt
+    from models.backtest_config import load_live_config_as_params
 
     bt.configure_symbol(SYMBOL)
     cfg = Path(config_path) if config_path else ROOT / "live" / "config.yaml"
@@ -1890,7 +1863,7 @@ def main():
         help="versioned model output directory; never overwrite a promoted bundle implicitly",
     )
     ap.add_argument("--target", default=None,
-                    help="Train single target (e.g. dir_10s, ret_30s, vol_60s)")
+                    help="Train single target (e.g. touch_conditioned_up_probability_10000ms, touch_conditioned_price_change_fraction_30000ms, absolute_price_variance_rate_60000ms)")
     ap.add_argument("--tune", action="store_true",
                     help="Optuna hyperparameter tuning before training")
     ap.add_argument("--n-trials", type=int, default=50)

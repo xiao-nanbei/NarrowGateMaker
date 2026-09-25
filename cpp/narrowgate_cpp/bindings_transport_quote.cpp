@@ -1276,9 +1276,9 @@ void bind_quote_core(py::module_& m) {
             state.unrealized_pnl = py::cast<double>(state_values[15]);
 
             QuotePrediction pred;
-            pred.dir_10s = py::cast<double>(pred_values[0]);
-            pred.vol_10s = py::cast<double>(pred_values[1]);
-            pred.ret_10s = py::cast<double>(pred_values[2]);
+            pred.touch_conditioned_up_probability_10000ms = py::cast<double>(pred_values[0]);
+            pred.absolute_price_variance_rate_10000ms = py::cast<double>(pred_values[1]);
+            pred.touch_conditioned_price_change_fraction_10000ms = py::cast<double>(pred_values[2]);
             pred.tox_bid = py::cast<double>(pred_values[3]);
             pred.tox_ask = py::cast<double>(pred_values[4]);
             return compute_quote_core(state, cfg, pred, depth_from_python_levels(bids, asks));
@@ -1298,9 +1298,9 @@ void bind_quote_core(py::module_& m) {
            CArray<double> trade_intensity,
            CArray<double> best_bid,
            CArray<double> best_ask,
-           CArray<double> dir_10s,
-           CArray<double> vol_10s,
-           CArray<double> ret_10s,
+           CArray<double> touch_conditioned_up_probability_10000ms,
+           CArray<double> absolute_price_variance_rate_10000ms,
+           CArray<double> touch_conditioned_price_change_fraction_10000ms,
            CArray<double> tox_bid,
            CArray<double> tox_ask,
            const QuoteCoreConfig& cfg) {
@@ -1315,9 +1315,9 @@ void bind_quote_core(py::module_& m) {
             require(trade_intensity, "trade_intensity");
             require(best_bid, "best_bid");
             require(best_ask, "best_ask");
-            require(dir_10s, "dir_10s");
-            require(vol_10s, "vol_10s");
-            require(ret_10s, "ret_10s");
+            require(touch_conditioned_up_probability_10000ms, "touch_conditioned_up_probability_10000ms");
+            require(absolute_price_variance_rate_10000ms, "absolute_price_variance_rate_10000ms");
+            require(touch_conditioned_price_change_fraction_10000ms, "touch_conditioned_price_change_fraction_10000ms");
             require(tox_bid, "tox_bid");
             require(tox_ask, "tox_ask");
 
@@ -1351,9 +1351,9 @@ void bind_quote_core(py::module_& m) {
                     state.best_ask = best_ask.data()[i];
 
                     QuotePrediction pred;
-                    pred.dir_10s = dir_10s.data()[i];
-                    pred.vol_10s = vol_10s.data()[i];
-                    pred.ret_10s = ret_10s.data()[i];
+                    pred.touch_conditioned_up_probability_10000ms = touch_conditioned_up_probability_10000ms.data()[i];
+                    pred.absolute_price_variance_rate_10000ms = absolute_price_variance_rate_10000ms.data()[i];
+                    pred.touch_conditioned_price_change_fraction_10000ms = touch_conditioned_price_change_fraction_10000ms.data()[i];
                     pred.tox_bid = tox_bid.data()[i];
                     pred.tox_ask = tox_ask.data()[i];
 
@@ -1386,9 +1386,9 @@ void bind_quote_core(py::module_& m) {
         py::arg("trade_intensity"),
         py::arg("best_bid"),
         py::arg("best_ask"),
-        py::arg("dir_10s"),
-        py::arg("vol_10s"),
-        py::arg("ret_10s"),
+        py::arg("touch_conditioned_up_probability_10000ms"),
+        py::arg("absolute_price_variance_rate_10000ms"),
+        py::arg("touch_conditioned_price_change_fraction_10000ms"),
         py::arg("tox_bid"),
         py::arg("tox_ask"),
         py::arg("cfg")
@@ -1402,9 +1402,9 @@ void bind_quote_core(py::module_& m) {
            CArray<double> trade_intensity,
            CArray<double> best_bid,
            CArray<double> best_ask,
-           CArray<double> dir_10s,
-           CArray<double> vol_10s,
-           CArray<double> ret_10s,
+           CArray<double> touch_conditioned_up_probability_10000ms,
+           CArray<double> absolute_price_variance_rate_10000ms,
+           CArray<double> touch_conditioned_price_change_fraction_10000ms,
            CArray<double> tox_bid,
            CArray<double> tox_ask,
            CArray<double> mo_ema_bid,
@@ -1432,9 +1432,9 @@ void bind_quote_core(py::module_& m) {
             require(trade_intensity, "trade_intensity");
             require(best_bid, "best_bid");
             require(best_ask, "best_ask");
-            require(dir_10s, "dir_10s");
-            require(vol_10s, "vol_10s");
-            require(ret_10s, "ret_10s");
+            require(touch_conditioned_up_probability_10000ms, "touch_conditioned_up_probability_10000ms");
+            require(absolute_price_variance_rate_10000ms, "absolute_price_variance_rate_10000ms");
+            require(touch_conditioned_price_change_fraction_10000ms, "touch_conditioned_price_change_fraction_10000ms");
             require(tox_bid, "tox_bid");
             require(tox_ask, "tox_ask");
             require(mo_ema_bid, "mo_ema_bid");
@@ -1582,9 +1582,9 @@ void bind_quote_core(py::module_& m) {
                     state.unrealized_pnl = unrealized_pnl.data()[i];
 
                     QuotePrediction pred;
-                    pred.dir_10s = dir_10s.data()[i];
-                    pred.vol_10s = vol_10s.data()[i];
-                    pred.ret_10s = ret_10s.data()[i];
+                    pred.touch_conditioned_up_probability_10000ms = touch_conditioned_up_probability_10000ms.data()[i];
+                    pred.absolute_price_variance_rate_10000ms = absolute_price_variance_rate_10000ms.data()[i];
+                    pred.touch_conditioned_price_change_fraction_10000ms = touch_conditioned_price_change_fraction_10000ms.data()[i];
                     pred.tox_bid = tox_bid.data()[i];
                     pred.tox_ask = tox_ask.data()[i];
 
@@ -1771,9 +1771,9 @@ void bind_quote_core(py::module_& m) {
         py::arg("trade_intensity"),
         py::arg("best_bid"),
         py::arg("best_ask"),
-        py::arg("dir_10s"),
-        py::arg("vol_10s"),
-        py::arg("ret_10s"),
+        py::arg("touch_conditioned_up_probability_10000ms"),
+        py::arg("absolute_price_variance_rate_10000ms"),
+        py::arg("touch_conditioned_price_change_fraction_10000ms"),
         py::arg("tox_bid"),
         py::arg("tox_ask"),
         py::arg("mo_ema_bid"),

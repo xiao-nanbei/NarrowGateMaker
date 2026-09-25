@@ -381,17 +381,17 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
     if not args.ml:
         pred = Prediction(
             ts=time.time(),
-            dir_10s=0.53,
-            dir_30s=0.52,
-            dir_60s=0.51,
-            vol_10s=1.2,
-            vol_30s=1.1,
-            vol_60s=1.0,
-            ret_10s=2e-5,
-            ret_30s=1e-5,
-            ret_60s=0.0,
-            tox_bid_10s=0.55,
-            tox_ask_10s=0.54,
+            touch_conditioned_up_probability_10000ms=0.53,
+            touch_conditioned_up_probability_30000ms=0.52,
+            touch_conditioned_up_probability_60000ms=0.51,
+            absolute_price_variance_rate_10000ms=1.2,
+            absolute_price_variance_rate_30000ms=1.1,
+            absolute_price_variance_rate_60000ms=1.0,
+            touch_conditioned_price_change_fraction_10000ms=2e-5,
+            touch_conditioned_price_change_fraction_30000ms=1e-5,
+            touch_conditioned_price_change_fraction_60000ms=0.0,
+            touch_side_adverse_probability_bid_10000ms=0.55,
+            touch_side_adverse_probability_ask_10000ms=0.54,
         )
 
     q = float(args.inventory)
@@ -441,14 +441,14 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
 
     signal.compute_signal()
     rows.append(
-        _time_samples("signal cached", args.n, lambda _idx: signal.compute_signal().vol_10s)
+        _time_samples("signal cached", args.n, lambda _idx: signal.compute_signal().absolute_price_variance_rate_10000ms)
     )
 
     cached_spans: dict[str, list[float]] = {}
 
     def signal_cached_telemetry(_idx: int) -> float:
         timings: dict[str, object] = {}
-        value = _compute_signal_with_wall_timing(signal, timings).vol_10s
+        value = _compute_signal_with_wall_timing(signal, timings).absolute_price_variance_rate_10000ms
         if timings["signal_compute_path"] != "cached_no_new_bucket":
             raise RuntimeError(f"expected cached signal path, got {timings}")
         _record_signal_spans(timings, cached_spans)
@@ -463,7 +463,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
             _feed_second(signal, next_ts, idx * 10 + step, args.trades_per_second)
             next_ts += 1000
         pred = signal.compute_signal()
-        return pred.vol_10s + pred.ret_10s
+        return pred.absolute_price_variance_rate_10000ms + pred.touch_conditioned_price_change_fraction_10000ms
 
     rows.append(_time_samples("signal 10s features", max(1, args.signal_n), signal_10s))
 
@@ -479,7 +479,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
         if timings["signal_compute_path"] != "new_bucket":
             raise RuntimeError(f"expected new signal path, got {timings}")
         _record_signal_spans(timings, new_spans)
-        return pred.vol_10s + pred.ret_10s
+        return pred.absolute_price_variance_rate_10000ms + pred.touch_conditioned_price_change_fraction_10000ms
 
     rows.append(
         _time_samples(
@@ -502,7 +502,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
         if timings["signal_compute_path"] != "catch_up":
             raise RuntimeError(f"expected catch_up signal path, got {timings}")
         _record_signal_spans(timings, catch_up_spans)
-        return pred.vol_10s + pred.ret_10s
+        return pred.absolute_price_variance_rate_10000ms + pred.touch_conditioned_price_change_fraction_10000ms
 
     rows.append(
         _time_samples(

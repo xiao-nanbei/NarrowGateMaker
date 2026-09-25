@@ -49,7 +49,10 @@ def _inputs(
 
 def _params(*, cancel_latency_ms: int = 500) -> dict[str, object]:
     return {
-        "gamma": 0.01,
+        "inventory_reference_qty": 1.0,
+        "eta_inventory": 0.01,
+        "a_spread": 0.01,
+        "risk_per_order": 0.01,
         "kappa": 1.0,
         "order_size": 0.001,
         "max_inventory": 0.01,

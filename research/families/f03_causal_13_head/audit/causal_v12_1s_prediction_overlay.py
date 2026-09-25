@@ -47,7 +47,7 @@ JOIN_COLUMNS = (
 HEADS = tuple(training.HEAD_SPECS)
 PREDICTION_COLUMN_BY_HEAD = {head: f"prediction__{head}" for head in HEADS}
 CLASSIFICATION_HEADS = frozenset(head for head, spec in training.HEAD_SPECS.items() if spec[3])
-VOLATILITY_HEADS = frozenset(head for head in HEADS if head.startswith("vol_"))
+VOLATILITY_HEADS = frozenset(head for head in HEADS if head.startswith("absolute_price_variance_rate_"))
 PREDICTION_POSTPROCESS_CONTRACT = {
     "classification_heads": "clip_raw_prediction_to_closed_interval_0_1",
     "volatility_heads": "max_raw_prediction_with_zero",

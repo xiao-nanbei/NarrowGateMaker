@@ -5,16 +5,11 @@ Tick-level event replay using raw aggTrades and FIFO-style fill accounting.
 Strategy mechanics are kept aligned with the live engine; this module focuses
 on per-trade replay, queue volume and parameter sweeps.
 
-中文说明：正式研究结论默认使用 UTC 日度 fresh-start replay。连续跨日单段
-replay 只适合调试，因为 adverse/defense/markout EMA、cooldown、pending
-orders 等状态会穿过坏日或长 gap，容易制造伪 alpha 或伪失效。
+Account boundaries come from the frozen experiment contract. Continuous
+accounts retain order, inventory and risk state across UTC midnight.
+账户边界遵循冻结实验合同；连续账户跨 UTC 日界保留订单、库存与风险状态。
 
-Usage:
-  python models/backtest_tick.py                         # default params, test set
-  python models/backtest_tick.py --sweep                 # parallel parameter sweep
-  python models/backtest_tick.py --day 2026-01-15       # specific UTC day
-  python models/backtest_tick.py --gamma 0.05 --day 2026-01-15
-  python models/backtest_tick.py --sweep --ml            # sweep with ML on
+The sole command entry is ``narrowgate replay``. This module owns the executor.
 """
 
 import argparse
@@ -44,34 +39,6 @@ FEATURES_DIR: Path
 MODEL_DIR: Path
 RESULTS_DIR: Path
 
-
-def _canonical_checkout_root(script_file):
-    """Resolve an ordinary offline entrypoint to one physical package root.
-
-    Checkout aliases and platform aliases such as /tmp are valid here. This
-    code-location lookup grants no authority to private live/replay artifacts;
-    their dedicated readers retain their no-symlink validation.
-    """
-
-    try:
-        script = Path(script_file).resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise RuntimeError("backtest_tick checkout path is unavailable") from exc
-    if not script.is_file():
-        raise RuntimeError("backtest_tick entrypoint is not a regular file")
-    if script.parent.name != "models":
-        raise RuntimeError("backtest_tick entrypoint is outside the models directory")
-    return script.parent.parent
-
-
-_CANONICAL_CHECKOUT_ROOT = _canonical_checkout_root(__file__)
-_checkout_root_text = str(_CANONICAL_CHECKOUT_ROOT)
-sys.path[:] = [
-    entry
-    for entry in sys.path
-    if os.path.abspath(entry or os.curdir) != _checkout_root_text
-]
-sys.path.insert(0, _checkout_root_text)
 
 from execution.order_lifecycle import (
     OrderLifecyclePhase,
@@ -1318,337 +1285,163 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-try:
-    from models.active_order_queue import ActiveOrderQueueCoverageError
-    from models.backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
-    from research.families.f09_campaign_action_uplift.causal_path_features import compute_causal_path_features
-    from models.backtest_config import apply_cli_overrides, disable_ml_params, load_tick_base_params
-    from models.queue_calibration import (
-        build_daily_queue_arrays,
-        build_queue_deplete_lookup,
-        build_queue_mo_lookup,
-        build_queue_regime_lookup,
-        lookup_queue_deplete_multiplier,
-        lookup_queue_mo_multiplier,
-        lookup_queue_regime_multiplier,
-        reason_bucket_from_flags,
-    )
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, paths_for
-    from research.families.f05_fill_quality_quote_ev.quote_ev import materialize_quote_ev_feature_values
-    from models.replay_policies import (
-        LOCAL_ACTIONS,
-        apply_local_add_action,
-        choose_action,
-        normalize_action_probabilities,
-    )
-    from models.replay_policies import (
-        QUEUE_VALUE_CANCEL_REENTER_ACTIONS,
-        QUEUE_VALUE_KEEP_CANCEL_ACTIONS,
-        choose_queue_value_cancel_reenter_action,
-        choose_queue_value_action,
-        normalize_queue_value_cancel_reenter_probabilities,
-        normalize_queue_value_probabilities,
-    )
-    from models.replay_policies import (
-        SAFE_ADD_REARM_ACTIONS,
-        apply_safe_add_rearm_action,
-        choose_safe_add_rearm_action,
-        normalize_safe_add_rearm_probabilities,
-    )
-    from models.replay_policies import (
-        CAMPAIGN_STOP_ADD_ACTIONS,
-        SELL_ADD_SKIP_ACTIONS,
-        choose_campaign_stop_add_action,
-        choose_sell_add_skip_action,
-        normalize_campaign_stop_add_probabilities,
-        normalize_sell_add_skip_probabilities,
-    )
-    from models.replay_policies import (
-        STATE_CONDITIONED_REARM_ACTIONS,
-        RecoveryEventSpec,
-        StateConditionedRearmSpec,
-        choose_state_conditioned_rearm_action,
-        evaluate_recovery_event,
-        evaluate_state_conditioned_rearm,
-        normalize_state_conditioned_rearm_probabilities,
-    )
-    from research.families.f07_active_order_continuation.audit.queue_value_models import (
-        EVENT_COLUMNS,
-        NATIVE_EXCHANGE_EVENT_COLUMNS,
-        EmpiricalMicropriceArtifact,
-        QueueReactiveHawkesArtifact,
-        QueueReactiveRuntime,
-        QueueValueModelBundle,
-        QueueValueStateConfig,
-        QueueValueStateEvaluator,
-    )
-    from research.families.f07_active_order_continuation.audit.queue_value_competing_risk import (
-        CompetingRiskBundle,
-        QueueValueNetEvaluator,
-    )
-    from models.audit.order_lifecycle import OrderLifecycleRecorder
-    from models.tick_data_types import HistoricalBBOData, HistoricalL2Data, book_observation_times_us, book_observation_status, book_usable_mask
-    from strategy.fill_selection_model import (
-        FillSelectionScoreEnsemble,
-        build_fill_selection_feature_row,
-        fill_selection_actionable,
-    )
-except ImportError:
-    from active_order_queue import ActiveOrderQueueCoverageError
-    from backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
-    from causal_path_features import compute_causal_path_features
-    from backtest_config import apply_cli_overrides, disable_ml_params, load_tick_base_params
-    from queue_calibration import (
-        build_daily_queue_arrays,
-        build_queue_deplete_lookup,
-        build_queue_mo_lookup,
-        build_queue_regime_lookup,
-        lookup_queue_deplete_multiplier,
-        lookup_queue_mo_multiplier,
-        lookup_queue_regime_multiplier,
-        reason_bucket_from_flags,
-    )
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, paths_for
-    from quote_ev import materialize_quote_ev_feature_values
-    from replay_policies import (  # type: ignore
-        LOCAL_ACTIONS,
-        apply_local_add_action,
-        choose_action,
-        normalize_action_probabilities,
-    )
-    from replay_policies import (  # type: ignore
-        QUEUE_VALUE_CANCEL_REENTER_ACTIONS,
-        QUEUE_VALUE_KEEP_CANCEL_ACTIONS,
-        choose_queue_value_cancel_reenter_action,
-        choose_queue_value_action,
-        normalize_queue_value_cancel_reenter_probabilities,
-        normalize_queue_value_probabilities,
-    )
-    from replay_policies import (  # type: ignore
-        SAFE_ADD_REARM_ACTIONS,
-        apply_safe_add_rearm_action,
-        choose_safe_add_rearm_action,
-        normalize_safe_add_rearm_probabilities,
-    )
-    from replay_policies import (  # type: ignore
-        CAMPAIGN_STOP_ADD_ACTIONS,
-        SELL_ADD_SKIP_ACTIONS,
-        choose_campaign_stop_add_action,
-        choose_sell_add_skip_action,
-        normalize_campaign_stop_add_probabilities,
-        normalize_sell_add_skip_probabilities,
-    )
-    from replay_policies import (  # type: ignore
-        STATE_CONDITIONED_REARM_ACTIONS,
-        RecoveryEventSpec,
-        StateConditionedRearmSpec,
-        choose_state_conditioned_rearm_action,
-        evaluate_recovery_event,
-        evaluate_state_conditioned_rearm,
-        normalize_state_conditioned_rearm_probabilities,
-    )
-    from audit.queue_value_models import (  # type: ignore
-        EVENT_COLUMNS,
-        NATIVE_EXCHANGE_EVENT_COLUMNS,
-        EmpiricalMicropriceArtifact,
-        QueueReactiveHawkesArtifact,
-        QueueReactiveRuntime,
-        QueueValueModelBundle,
-        QueueValueStateConfig,
-        QueueValueStateEvaluator,
-    )
-    from audit.queue_value_competing_risk import (  # type: ignore
-        CompetingRiskBundle,
-        QueueValueNetEvaluator,
-    )
-    from audit.order_lifecycle import OrderLifecycleRecorder  # type: ignore
-    from tick_data_types import HistoricalBBOData, HistoricalL2Data, book_observation_times_us, book_observation_status, book_usable_mask
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from strategy.fill_selection_model import (  # type: ignore
-        FillSelectionScoreEnsemble,
-        build_fill_selection_feature_row,
-        fill_selection_actionable,
-    )
+from models.active_order_queue import ActiveOrderQueueCoverageError
+from models.backtest_utils import attach_selection_scores as _attach_selection_scores, default_backtest_workers
+from research.families.f09_campaign_action_uplift.causal_path_features import compute_causal_path_features
+from models.backtest_config import apply_cli_overrides, disable_ml_params, load_tick_base_params
+from models.queue_calibration import (
+    build_daily_queue_arrays,
+    build_queue_deplete_lookup,
+    build_queue_mo_lookup,
+    build_queue_regime_lookup,
+    lookup_queue_deplete_multiplier,
+    lookup_queue_mo_multiplier,
+    lookup_queue_regime_multiplier,
+    reason_bucket_from_flags,
+)
+from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, paths_for
+from research.families.f05_fill_quality_quote_ev.quote_ev import materialize_quote_ev_feature_values
+from models.replay_policies import (
+    LOCAL_ACTIONS,
+    apply_local_add_action,
+    choose_action,
+    normalize_action_probabilities,
+)
+from models.replay_policies import (
+    QUEUE_VALUE_CANCEL_REENTER_ACTIONS,
+    QUEUE_VALUE_KEEP_CANCEL_ACTIONS,
+    choose_queue_value_cancel_reenter_action,
+    choose_queue_value_action,
+    normalize_queue_value_cancel_reenter_probabilities,
+    normalize_queue_value_probabilities,
+)
+from models.replay_policies import (
+    SAFE_ADD_REARM_ACTIONS,
+    apply_safe_add_rearm_action,
+    choose_safe_add_rearm_action,
+    normalize_safe_add_rearm_probabilities,
+)
+from models.replay_policies import (
+    CAMPAIGN_STOP_ADD_ACTIONS,
+    SELL_ADD_SKIP_ACTIONS,
+    choose_campaign_stop_add_action,
+    choose_sell_add_skip_action,
+    normalize_campaign_stop_add_probabilities,
+    normalize_sell_add_skip_probabilities,
+)
+from models.replay_policies import (
+    STATE_CONDITIONED_REARM_ACTIONS,
+    RecoveryEventSpec,
+    StateConditionedRearmSpec,
+    choose_state_conditioned_rearm_action,
+    evaluate_recovery_event,
+    evaluate_state_conditioned_rearm,
+    normalize_state_conditioned_rearm_probabilities,
+)
+from research.families.f07_active_order_continuation.audit.queue_value_models import (
+    EVENT_COLUMNS,
+    NATIVE_EXCHANGE_EVENT_COLUMNS,
+    EmpiricalMicropriceArtifact,
+    QueueReactiveHawkesArtifact,
+    QueueReactiveRuntime,
+    QueueValueModelBundle,
+    QueueValueStateConfig,
+    QueueValueStateEvaluator,
+)
+from research.families.f07_active_order_continuation.audit.queue_value_competing_risk import (
+    CompetingRiskBundle,
+    QueueValueNetEvaluator,
+)
+from models.audit.order_lifecycle import OrderLifecycleRecorder
+from models.tick_data_types import HistoricalBBOData, HistoricalL2Data, book_observation_times_us, book_observation_status, book_usable_mask
+from strategy.fill_selection_model import (
+    FillSelectionScoreEnsemble,
+    build_fill_selection_feature_row,
+    fill_selection_actionable,
+)
 
-try:
-    from data_paths import daily_market_path, normalized_l2_root
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from data_paths import daily_market_path, normalized_l2_root
+from data_paths import daily_market_path, normalized_l2_root
 
-try:
-    from strategy.policy_guards import (
-        CommonSidePolicyInput,
-        LocalExtremeGuardConfig,
-        POLICY_REASON_BURST,
-        POLICY_REASON_DEFENSE,
-        POLICY_REASON_FILL_COOLDOWN,
-        POLICY_REASON_INV_LIMIT,
-        POLICY_REASON_STALE_HARD,
-        apply_local_extreme_guard_context,
-        evaluate_common_side_policy,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from strategy.policy_guards import (  # type: ignore
-        CommonSidePolicyInput,
-        LocalExtremeGuardConfig,
-        POLICY_REASON_BURST,
-        POLICY_REASON_DEFENSE,
-        POLICY_REASON_FILL_COOLDOWN,
-        POLICY_REASON_INV_LIMIT,
-        POLICY_REASON_STALE_HARD,
-        apply_local_extreme_guard_context,
-        evaluate_common_side_policy,
-    )
+from strategy.policy_guards import (
+    CommonSidePolicyInput,
+    LocalExtremeGuardConfig,
+    POLICY_REASON_BURST,
+    POLICY_REASON_DEFENSE,
+    POLICY_REASON_FILL_COOLDOWN,
+    POLICY_REASON_INV_LIMIT,
+    POLICY_REASON_STALE_HARD,
+    apply_local_extreme_guard_context,
+    evaluate_common_side_policy,
+)
 
-try:
-    from strategy.state_conditioned_quote_policy import (
-        StateConditionedQuotePolicy,
-        inventory_role_for_quote,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from strategy.state_conditioned_quote_policy import (  # type: ignore
-        StateConditionedQuotePolicy,
-        inventory_role_for_quote,
-    )
+from strategy.state_conditioned_quote_policy import (
+    StateConditionedQuotePolicy,
+    inventory_role_for_quote,
+)
 
-try:
-    from data_quality import (
-        allowed_timestamp_mask,
-        continuous_segment_ids,
-        filter_frame_for_orderbook_quality,
-        filter_paths_for_orderbook_quality,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from data_quality import (
-        allowed_timestamp_mask,
-        continuous_segment_ids,
-        filter_frame_for_orderbook_quality,
-        filter_paths_for_orderbook_quality,
-    )
+from data_quality import (
+    allowed_timestamp_mask,
+    continuous_segment_ids,
+    filter_frame_for_orderbook_quality,
+    filter_paths_for_orderbook_quality,
+)
 
-try:
-    from strategy.quote_core import (
-        DepthSnapshot,
-        QuotePrediction,
-        QuoteState,
-        QUOTE_CORE_UNIT_ABI_FIELDS,
-        SPREAD_CAP_COMPRESS,
-        SPREAD_CAP_PAUSE_EXPOSURE,
-        apply_p3_side_bbo_floor,
-        apply_final_spread_cap,
-        apply_final_spread_cap_preserve_side,
-        ber_inventory_role_for_target,
-        circuit_breaker_triggered,
-        compose_ber_exposure_add_only_quote,
-        compute_quote_core,
-        _CPP_CFG_FIELDS,
-        _exposure_increasing,
-        quote_core_config_from_params,
-        quote_depth_from_l2_rows,
-        spread_cap_mode_name,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from strategy.quote_core import (
-        DepthSnapshot,
-        QuotePrediction,
-        QuoteState,
-        QUOTE_CORE_UNIT_ABI_FIELDS,
-        SPREAD_CAP_COMPRESS,
-        SPREAD_CAP_PAUSE_EXPOSURE,
-        apply_p3_side_bbo_floor,
-        apply_final_spread_cap,
-        apply_final_spread_cap_preserve_side,
-        ber_inventory_role_for_target,
-        circuit_breaker_triggered,
-        compose_ber_exposure_add_only_quote,
-        compute_quote_core,
-        _CPP_CFG_FIELDS,
-        _exposure_increasing,
-        quote_core_config_from_params,
-        quote_depth_from_l2_rows,
-        spread_cap_mode_name,
-    )
+from strategy.quote_core import (
+    DepthSnapshot,
+    QuotePrediction,
+    QuoteState,
+    QUOTE_CORE_UNIT_ABI_FIELDS,
+    SPREAD_CAP_COMPRESS,
+    SPREAD_CAP_PAUSE_EXPOSURE,
+    apply_p3_side_bbo_floor,
+    apply_final_spread_cap,
+    apply_final_spread_cap_preserve_side,
+    ber_inventory_role_for_target,
+    circuit_breaker_triggered,
+    compose_ber_exposure_add_only_quote,
+    compute_quote_core,
+    _CPP_CFG_FIELDS,
+    _exposure_increasing,
+    quote_core_config_from_params,
+    quote_depth_from_l2_rows,
+    spread_cap_mode_name,
+)
 
-try:
-    from strategy.policy_guards import (
-        adaptive_add_cooldown_config_from_params,
-        adaptive_add_cooldown_multiplier,
-        campaign_soft_gate_config_from_params,
-        campaign_soft_gate_result,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from strategy.policy_guards import (
-        adaptive_add_cooldown_config_from_params,
-        adaptive_add_cooldown_multiplier,
-        campaign_soft_gate_config_from_params,
-        campaign_soft_gate_result,
-    )
+from strategy.policy_guards import (
+    adaptive_add_cooldown_config_from_params,
+    adaptive_add_cooldown_multiplier,
+    campaign_soft_gate_config_from_params,
+    campaign_soft_gate_result,
+)
 
-try:
-    from models.exchange_book_replay import (
-        HistoricalExchangeBookScheduler,
-        HistoricalExchangeBookVisibilityScheduler,
-    )
-    from research.families.f04_external_market_alpha.reference_replay import (
-        CampaignRepairCursor,
-        HistoricalGlobalFlowCursor,
-        HistoricalReferenceScheduler,
-    )
-    from research.families.f04_external_market_alpha.audit.cross_venue_causal_fair_price import (
-        HistoricalFairPriceCursor,
-    )
-    from strategy.campaign_repair import (
-        CampaignRepairProbabilityHistory,
-        build_campaign_repair_features,
-        inventory_campaign_side,
-    )
-    from strategy.global_flow import DEFAULT_FLOW_HORIZONS_MS, GlobalFlowEngine
-    from strategy.multi_market_policy import (
-        NOOP_MODE,
-        MultiMarketPolicy,
-        MultiMarketPolicyConfig,
-        MultiMarketPolicyContext,
-    )
-    from strategy.post_fill_quote_response import (
-        PostFillQuoteResponse,
-        PostFillQuoteResponseConfig,
-    )
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from models.exchange_book_replay import (
-        HistoricalExchangeBookScheduler,
-        HistoricalExchangeBookVisibilityScheduler,
-    )
-    from research.families.f04_external_market_alpha.reference_replay import (
-        CampaignRepairCursor,
-        HistoricalGlobalFlowCursor,
-        HistoricalReferenceScheduler,
-    )
-    from research.families.f04_external_market_alpha.audit.cross_venue_causal_fair_price import (
-        HistoricalFairPriceCursor,
-    )
-    from strategy.campaign_repair import (
-        CampaignRepairProbabilityHistory,
-        build_campaign_repair_features,
-        inventory_campaign_side,
-    )
-    from strategy.global_flow import DEFAULT_FLOW_HORIZONS_MS, GlobalFlowEngine
-    from strategy.multi_market_policy import (
-        NOOP_MODE,
-        MultiMarketPolicy,
-        MultiMarketPolicyConfig,
-        MultiMarketPolicyContext,
-    )
-    from strategy.post_fill_quote_response import (
-        PostFillQuoteResponse,
-        PostFillQuoteResponseConfig,
-    )
+from models.exchange_book_replay import (
+    HistoricalExchangeBookScheduler,
+    HistoricalExchangeBookVisibilityScheduler,
+)
+from research.families.f04_external_market_alpha.reference_replay import (
+    CampaignRepairCursor,
+    HistoricalGlobalFlowCursor,
+    HistoricalReferenceScheduler,
+)
+from research.families.f04_external_market_alpha.audit.cross_venue_causal_fair_price import (
+    HistoricalFairPriceCursor,
+)
+from strategy.campaign_repair import (
+    CampaignRepairProbabilityHistory,
+    build_campaign_repair_features,
+    inventory_campaign_side,
+)
+from strategy.global_flow import DEFAULT_FLOW_HORIZONS_MS, GlobalFlowEngine
+from strategy.multi_market_policy import (
+    NOOP_MODE,
+    MultiMarketPolicy,
+    MultiMarketPolicyConfig,
+    MultiMarketPolicyContext,
+)
+from strategy.post_fill_quote_response import (
+    PostFillQuoteResponse,
+    PostFillQuoteResponseConfig,
+)
 
 DATA_ROOT = data_root(ROOT)
 RAW_DIR = DATA_ROOT / "raw"
@@ -3663,8 +3456,8 @@ def _load_ml_inference_metadata(
 ) -> dict[str, dict]:
     """Validate actual input metadata once, for prediction or cached reuse."""
     names = [
-        "dir_10s", "vol_10s", "ret_10s",
-        f"tox_bid_{int(toxicity_horizon_s)}s", f"tox_ask_{int(toxicity_horizon_s)}s",
+        "touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms",
+        f"touch_side_adverse_probability_bid_{int(toxicity_horizon_s) * 1000}ms", f"touch_side_adverse_probability_ask_{int(toxicity_horizon_s) * 1000}ms",
     ]
     metadata = {
         name: json.loads((MODEL_DIR / f"{name}_meta.json").read_text(encoding="utf-8"))
@@ -3877,11 +3670,11 @@ def load_ml_predictions(
 
     # Load models
     LABEL_COLS = [
-        "label_ret_10s", "label_dir_10s", "label_vol_10s",
-        "label_ret_30s", "label_dir_30s", "label_vol_30s",
-        "label_ret_60s", "label_dir_60s", "label_vol_60s",
-        "label_tox_bid_5s", "label_tox_ask_5s",
-        "label_tox_bid_10s", "label_tox_ask_10s",
+        "label_touch_conditioned_price_change_fraction_10000ms", "label_touch_conditioned_up_probability_10000ms", "label_absolute_price_variance_rate_10000ms",
+        "label_touch_conditioned_price_change_fraction_30000ms", "label_touch_conditioned_up_probability_30000ms", "label_absolute_price_variance_rate_30000ms",
+        "label_touch_conditioned_price_change_fraction_60000ms", "label_touch_conditioned_up_probability_60000ms", "label_absolute_price_variance_rate_60000ms",
+        "label_touch_side_adverse_probability_bid_5000ms", "label_touch_side_adverse_probability_ask_5000ms",
+        "label_touch_side_adverse_probability_bid_10000ms", "label_touch_side_adverse_probability_ask_10000ms",
     ]
     DROP_COLS = {"open", "high", "low", "vwap"}
     WEIGHT_COL = "sample_weight"
@@ -3896,13 +3689,13 @@ def load_ml_predictions(
     pred_vol = np.zeros(len(features), dtype=np.float64)
     pred_ret = np.zeros(len(features), dtype=np.float64)
     tox_horizon = int(toxicity_horizon_s)
-    tox_bid_name = f"tox_bid_{tox_horizon}s"
-    tox_ask_name = f"tox_ask_{tox_horizon}s"
+    tox_bid_name = f"touch_side_adverse_probability_bid_{tox_horizon * 1000}ms"
+    tox_ask_name = f"touch_side_adverse_probability_ask_{tox_horizon * 1000}ms"
     pred_tox_bid = np.full(len(features), np.nan, dtype=np.float64)
     pred_tox_ask = np.full(len(features), np.nan, dtype=np.float64)
 
     if run_model_inference:
-        for name in ["dir_10s", "vol_10s", "ret_10s", tox_bid_name, tox_ask_name]:
+        for name in ["touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", tox_bid_name, tox_ask_name]:
             model_path = MODEL_DIR / f"{name}.txt"
             if not model_path.exists():
                 continue
@@ -3920,11 +3713,11 @@ def load_ml_predictions(
             )
             preds = booster.predict(features[feat_cols])
 
-            if name == "dir_10s":
+            if name == "touch_conditioned_up_probability_10000ms":
                 pred_dir = preds.astype(np.float64)
-            elif name == "vol_10s":
+            elif name == "absolute_price_variance_rate_10000ms":
                 pred_vol = np.maximum(preds.astype(np.float64), 0.0)
-            elif name == "ret_10s":
+            elif name == "touch_conditioned_price_change_fraction_10000ms":
                 pred_ret = preds.astype(np.float64)
             elif name == tox_bid_name:
                 pred_tox_bid = preds.astype(np.float64)
@@ -5024,7 +4817,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         trades_df=trades_df,
     )
     # ── Unpack params ──
-    _tick_state.gamma = params["gamma"]
+    _tick_state.eta_inventory = params["eta_inventory"]
+    _tick_state.risk_per_order = params["risk_per_order"]
     _tick_state.kappa = params["kappa"]
     _tick_state.order_size = params["order_size"]
     _tick_state.max_inv = params["max_inventory"]
@@ -29231,9 +29025,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 unrealized_pnl=_tick_state.unrealized_pnl,
             )
             _tick_state.quote_prediction = QuotePrediction(
-                dir_10s=_tick_state.cur_dir,
-                vol_10s=_tick_state.cur_vol,
-                ret_10s=_tick_state.quote_ret,
+                touch_conditioned_up_probability_10000ms=_tick_state.cur_dir,
+                absolute_price_variance_rate_10000ms=_tick_state.cur_vol,
+                touch_conditioned_price_change_fraction_10000ms=_tick_state.quote_ret,
                 tox_bid=_tick_state.cur_tox_bid,
                 tox_ask=_tick_state.cur_tox_ask,
             )
@@ -33745,7 +33539,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     )
 
     _tick_state.result = {
-        "gamma": _tick_state.gamma,
+        "eta_inventory": _tick_state.eta_inventory,
+        "risk_per_order": _tick_state.risk_per_order,
         "planned_quote_stop_ts_ms": int(_tick_state.planned_quote_stop_ts_ms),
         "planned_quote_stop_triggered": bool(_tick_state.planned_quote_stop_triggered),
         "planned_quote_stop_trigger_ts_ms": int(
@@ -38849,7 +38644,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "fixed_spread_probe_ask_fill_qty": float(
             getattr(summary, "fixed_spread_probe_ask_fill_qty", 0.0)
         ),
-        "gamma": float(params.get("gamma", 0.0)),
+        "eta_inventory": float(params["eta_inventory"]),
+        "risk_per_order": float(params["risk_per_order"]),
         "kappa": float(params.get("kappa", 0.0)),
         "queue_base": float(params.get("queue_base", 5.0)),
         "queue_decay": float(params.get("queue_decay", 0.1)),
@@ -39820,7 +39616,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
 # parameter surface: current live/tick quotes use p3_kappa_eff when available,
 # so raw kappa is only a fallback/legacy AS diagnostic.
 SWEEP_GRID = {
-    "gamma": [0.005, 0.01, 0.02, 0.05, 0.1],
+    "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
     "kappa": [0.02, 0.05, 0.1, 0.5],
     "queue_base": [3.0, 5.0, 10.0],
     "queue_decay": [0.05, 0.1],
@@ -39829,7 +39625,7 @@ SWEEP_GRID = {
 # ML-enhanced legacy sweep grid. Keep fallback kappa fixed; effective-kappa
 # experiments belong in parameter_racing_sweep.py via p3_kappa_eff/cap arms.
 SWEEP_GRID_ML = {
-    "gamma": [0.005, 0.01, 0.02, 0.05, 0.1],
+    "quote_coefficients": [{"eta_inventory": 0.005, "a_spread": 0.005, "risk_per_order": 0.005}, {"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}],
     "kappa": [0.05],
     "queue_base": [5.0],
     "queue_decay": [0.1],
@@ -40931,11 +40727,6 @@ def run_sweep(trades_df, var_ts_ms, var_ssq, base, n_workers=None,
               engine="python"):
     import multiprocessing as mp
 
-    if base.get("eta_inventory") is not None or base.get("a_spread") is not None:
-        raise ValueError(
-            "legacy gamma sweep is invalid when eta_inventory or a_spread is explicit"
-        )
-
     _init_global(trades_df, var_ts_ms, var_ssq, ml_data, bbo_data, l2_data,
                  var_ti, var_retsq, engine=engine)
 
@@ -40950,7 +40741,12 @@ def run_sweep(trades_df, var_ts_ms, var_ssq, base, n_workers=None,
         if engine == "cpp":
             p["collect_curves"] = False
         for k, v in zip(keys, combo, strict=True):
-            p[k] = v
+            if k == "quote_coefficients":
+                if p["inventory_reference_qty"] != 1.0:
+                    raise ValueError("registered coefficient tuples require inventory_reference_qty=1")
+                p.update(v)
+            else:
+                p[k] = v
         params_list.append(p)
 
     nw = n_workers or default_backtest_workers()
@@ -41049,7 +40845,7 @@ _HDR = (f"{'Rk':>3s}  {'γ':>6s}  {'κ':>6s}  {'QBase':>6s}  {'QDec':>5s}  {'Cap
 
 
 def _row(i, r):
-    return (f"{i:3d}  {r['gamma']:6.3f}  {r['kappa']:6.3f}  "
+    return (f"{i:3d}  {r['risk_per_order']:6.3f}  {r['kappa']:6.3f}  "
             f"{r.get('queue_base', 5.0):6.1f}  {r.get('queue_decay', 0.1):5.2f}  "
             f"{_cap_cell(r):>4s}  "
             f"{r.get('eta', 0.0):4.1f}  "
@@ -41095,7 +40891,7 @@ def _format_pick(label, r):
                   f"Asy={r.get('asym', 0)}, "
                   f"GD={r.get('gdir', 0)}, "
                   f"RS={r.get('ret_skew', 0)}")
-    print(f"  {label}: Cap={_cap_cell(r)}, γ={r['gamma']}, κ={r['kappa']}, "
+    print(f"  {label}: Cap={_cap_cell(r)}, spread-risk={r['risk_per_order']}, κ={r['kappa']}, "
           f"QB={r.get('queue_base', 5)}, QD={r.get('queue_decay', 0.1)}"
           f"{ml_str}")
     print(f"         InvAdj=${r.get('inventory_adjusted_pnl', 0.0):.2f}, PnL=${r['pnl']:.2f}, "
@@ -41122,7 +40918,7 @@ def print_results(results, top_n=30, sort_by="selection_score"):
         print(f"\n  Selection-robust (displayed top-{k} by {metric_label}): "
               f"median {metric_label}={np.median(metric_values):.2f}, "
               f"median PnL=${np.median(pnl):.2f}")
-        print(f"  Robust pick: Cap={_cap_cell(robust)}, γ={robust['gamma']}, κ={robust['kappa']}, "
+        print(f"  Robust pick: Cap={_cap_cell(robust)}, spread-risk={robust['risk_per_order']}, κ={robust['kappa']}, "
               f"{metric_label}={robust.get(metric_field, 0.0):.2f}, "
               f"InvAdj=${robust.get('inventory_adjusted_pnl', 0.0):.2f}, "
               f"PnL=${robust['pnl']:.2f}, Sharpe={robust['sharpe']:.2f}")
@@ -41283,7 +41079,7 @@ def simulate_prepared_inputs(prepared, params, *, signal_engine=None, public_str
     return result
 
 
-def main():
+def run_cli(argv=None):
     global VERBOSE, BBO_DIR, L2_DIR
     ap = argparse.ArgumentParser(
         description="Tick-Level AS+ML Backtest (aligned with live engine)")
@@ -41372,7 +41168,9 @@ def main():
     ap.add_argument("--quality-segment-max-gap-s", type=float, default=3600.0,
                     help="Gap threshold that resets replay state for quality-segment-aware runs")
     # CLI overrides (these take precedence over config.yaml)
-    ap.add_argument("--gamma", type=float, default=None)
+    ap.add_argument("--eta-inventory", type=float, default=None)
+    ap.add_argument("--a-spread", type=float, default=None)
+    ap.add_argument("--risk-per-order", type=float, default=None)
     ap.add_argument("--kappa", type=float, default=None)
     ap.add_argument("--order-size", type=float, default=None)
     ap.add_argument("--max-inventory", type=float, default=None)
@@ -41502,7 +41300,7 @@ def main():
                     help="Maximum multiplier for dynamic cap scaling")
     ap.add_argument("--dynamic-cap-var-baseline", type=float, default=None,
                     help="Variance baseline sigma0^2 for dynamic cap; default uses vol_baseline^2")
-    ap.add_argument("--gamma-dir-bonus", type=float, default=None)
+    ap.add_argument("--inventory-direction-alignment-strength", type=float, default=None)
     ap.add_argument("--adverse-guard", action="store_true", default=None,
                     help="Enable side-aware adverse-selection guard")
     ap.add_argument("--adverse-pause", action="store_true", default=None,
@@ -41565,7 +41363,7 @@ def main():
     ap.add_argument("--fill-cooldown-reducing-age-s", type=float, default=None,
                     help="Campaign age threshold seconds for campaign-only reducing cooldown")
     ap.add_argument("--fill-cooldown-reducing-vol-ref", type=float, default=None,
-                    help="If >0, scale reducing cooldown by vol_10s / this reference")
+                    help="If >0, scale reducing cooldown by absolute_price_variance_rate_10000ms / this reference")
     ap.add_argument("--fill-cooldown-reducing-vol-min-mult", type=float, default=None,
                     help="Lower clamp for volatility-scaled reducing cooldown")
     ap.add_argument("--fill-cooldown-reducing-vol-max-mult", type=float, default=None,
@@ -41618,7 +41416,7 @@ def main():
                     help="Write scalar replay summary JSON for diagnostics")
     ap.add_argument("--verbose", action="store_true",
                     help="Print per-file loading and extended diagnostics")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.data_check_only:
         import json
         if args.data_bundle is None:
@@ -41756,7 +41554,7 @@ def main():
 
     # Apply CLI overrides
     _cli_map = {
-        "gamma": "gamma", "kappa": "kappa", "order_size": "order_size",
+        "eta_inventory": "eta_inventory", "a_spread": "a_spread", "risk_per_order": "risk_per_order", "kappa": "kappa", "order_size": "order_size",
         "max_inventory": "max_inventory", "requote_interval": "requote_interval",
         "initial_inventory": "initial_inventory",
         "initial_entry_price": "initial_entry_price",
@@ -41834,13 +41632,6 @@ def main():
         "defense_emergency_loss": "defense_emergency_loss",
         "flat_unilateral_max_s": "flat_unilateral_max_s",
     }
-    if args.gamma is not None and (
-        base.get("eta_inventory") is not None
-        or base.get("a_spread") is not None
-    ):
-        raise SystemExit(
-            "--gamma cannot override an explicit eta_inventory/a_spread split"
-        )
     apply_cli_overrides(base, args, _cli_map)
     if args.queue_regime_calibration:
         base["queue_regime_calibration_enabled"] = True
@@ -41976,7 +41767,7 @@ def main():
             f"jitter={float(base.get('exec_book_visibility_delay_jitter_ms', 0.0)):.1f}ms,"
             f"seed={int(base.get('exec_book_visibility_delay_seed', 20260718))}]"
         )
-    print(f"  Key params: γ={base['gamma']}, κ={base['kappa']}, "
+    print(f"  Key params: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
           f"regime={base.get('regime_enabled', False)}, "
             f"pricing={'bar' if base.get('use_bar_pricing', True) else 'microprice'}, "
             f"exit_urg={base.get('exit_urgency_strength', 0)}, "
@@ -42178,7 +41969,7 @@ def main():
             if args.quality_segment_aware is not None
             else False
         )
-        print(f"\nRunning single backtest: γ={base['gamma']}, κ={base['kappa']}, "
+        print(f"\nRunning single backtest: spread-risk={base['risk_per_order']}, κ={base['kappa']}, "
               f"QB={base['queue_base']}, QD={base['queue_decay']}, "
               f"QMode={base.get('queue_ahead_mode', 'exact_level')}")
         if run_ml and ml_data is not None:
@@ -42347,4 +42138,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use the installed narrowgate replay command")

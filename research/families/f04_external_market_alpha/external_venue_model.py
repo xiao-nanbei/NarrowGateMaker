@@ -63,13 +63,13 @@ DEFAULT_MANIFEST = (
 )
 DEFAULT_LATE_MANIFEST = ROOT / "logs" / "data_audit" / "extended_good_days_through_20260706.csv"
 TARGET_SPECS_10S = {
-    "dir_10s": ("label_dir_10s", "binary"),
-    "ret_10s": ("label_ret_10s", "regression"),
-    "ret_30s": ("label_ret_30s", "regression"),
-    "ret_60s": ("label_ret_60s", "regression"),
-    "vol_10s": ("label_vol_10s", "regression"),
-    "tox_bid_10s": ("label_tox_bid_10s", "binary"),
-    "tox_ask_10s": ("label_tox_ask_10s", "binary"),
+    "touch_conditioned_up_probability_10000ms": ("label_touch_conditioned_up_probability_10000ms", "binary"),
+    "touch_conditioned_price_change_fraction_10000ms": ("label_touch_conditioned_price_change_fraction_10000ms", "regression"),
+    "touch_conditioned_price_change_fraction_30000ms": ("label_touch_conditioned_price_change_fraction_30000ms", "regression"),
+    "touch_conditioned_price_change_fraction_60000ms": ("label_touch_conditioned_price_change_fraction_60000ms", "regression"),
+    "absolute_price_variance_rate_10000ms": ("label_absolute_price_variance_rate_10000ms", "regression"),
+    "touch_side_adverse_probability_bid_10000ms": ("label_touch_side_adverse_probability_bid_10000ms", "binary"),
+    "touch_side_adverse_probability_ask_10000ms": ("label_touch_side_adverse_probability_ask_10000ms", "binary"),
 }
 FAST_TARGET_KINDS = ("dir", "move")
 _FAST_TARGET_PATTERN = re.compile(r"^(dir|move)_(\d+)s$")

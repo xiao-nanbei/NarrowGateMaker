@@ -58,14 +58,14 @@ def test_live_authorization_does_not_rewrite_models(model_bundle):
     assert len(metadata) == 13
     assert resolve_model_authorization_manifest(model_bundle, metadata).name == "live_input_authorization.json"
     assert before == {p.name: digest(p) for p in model_bundle.iterdir()}
-    (model_bundle / "ret_10s.txt").write_text("changed")
+    (model_bundle / "touch_conditioned_price_change_fraction_10000ms.txt").write_text("changed")
     with pytest.raises(ValueError, match="identity"):
         validate_public_bundle(model_bundle, live=True)
 
 
 def test_new_publication_rejects_conflicting_clock_without_rewriting_frozen_bytes(model_bundle):
     manifest = json.loads((model_bundle / "public_input_model.json").read_text())
-    path = model_bundle / "ret_10s_meta.json"
+    path = model_bundle / "touch_conditioned_price_change_fraction_10000ms_meta.json"
     metadata = json.loads(path.read_text())
     metadata["feature_timestamp_semantics"] = "left_label_bucket_end"
     path.write_text(json.dumps(metadata))
@@ -106,13 +106,13 @@ def test_missing_live_authorization_fails_closed(model_bundle):
 ])
 def test_offline_rejects_identity_consistent_wrong_variance(model_bundle, field, value):
     from strategy.signal import SignalEngine
-    path = model_bundle / "vol_10s_meta.json"
+    path = model_bundle / "absolute_price_variance_rate_10000ms_meta.json"
     meta = json.loads(path.read_text())
     meta[field] = value
     path.write_text(json.dumps(meta))
     manifest_path = model_bundle / "public_input_model.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["heads"]["vol_10s"]["metadata_sha256"] = digest(path)
+    manifest["heads"]["absolute_price_variance_rate_10000ms"]["metadata_sha256"] = digest(path)
     manifest_path.write_text(json.dumps(manifest))
     for load in (validate_public_bundle, SignalEngine.from_public_models):
         with pytest.raises(ValueError):
@@ -132,18 +132,18 @@ def test_offline_preserves_validated_head_semantics(model_bundle):
 @pytest.mark.parametrize("damage", ["mixed_head", "feature_order", "model_hash"])
 def test_public_entrypoints_reject_artifact_contract_damage(model_bundle, damage):
     from strategy.signal import SignalEngine
-    path = model_bundle / "vol_10s_meta.json"
+    path = model_bundle / "absolute_price_variance_rate_10000ms_meta.json"
     meta = json.loads(path.read_text())
     manifest_path = model_bundle / "public_input_model.json"
     manifest = json.loads(manifest_path.read_text())
     if damage == "mixed_head":
-        meta["name"] = "vol_30s"
+        meta["name"] = "absolute_price_variance_rate_30000ms"
     elif damage == "feature_order":
         meta["feature_cols"] = list(reversed(meta["feature_cols"]))
     else:
-        (model_bundle / "vol_10s.txt").write_text("changed")
+        (model_bundle / "absolute_price_variance_rate_10000ms.txt").write_text("changed")
     path.write_text(json.dumps(meta))
-    manifest["heads"]["vol_10s"]["metadata_sha256"] = digest(path)
+    manifest["heads"]["absolute_price_variance_rate_10000ms"]["metadata_sha256"] = digest(path)
     manifest_path.write_text(json.dumps(manifest))
     for load in (validate_public_bundle, SignalEngine.from_public_models):
         with pytest.raises(ValueError):

@@ -29,19 +29,19 @@ DEFAULT_DESIGN_PATH = (
 NS_PER_SECOND = 1_000_000_000
 
 HEAD_MAXIMUM_FUTURE_DEPENDENCY_S = {
-    "dir_10s": 20,
-    "ret_10s": 20,
-    "vol_10s": 10,
-    "dir_30s": 60,
-    "ret_30s": 60,
-    "vol_30s": 30,
-    "dir_60s": 120,
-    "ret_60s": 120,
-    "vol_60s": 60,
-    "tox_bid_5s": 10,
-    "tox_ask_5s": 10,
-    "tox_bid_10s": 20,
-    "tox_ask_10s": 20,
+    "touch_conditioned_up_probability_10000ms": 20,
+    "touch_conditioned_price_change_fraction_10000ms": 20,
+    "absolute_price_variance_rate_10000ms": 10,
+    "touch_conditioned_up_probability_30000ms": 60,
+    "touch_conditioned_price_change_fraction_30000ms": 60,
+    "absolute_price_variance_rate_30000ms": 30,
+    "touch_conditioned_up_probability_60000ms": 120,
+    "touch_conditioned_price_change_fraction_60000ms": 120,
+    "absolute_price_variance_rate_60000ms": 60,
+    "touch_side_adverse_probability_bid_5000ms": 10,
+    "touch_side_adverse_probability_ask_5000ms": 10,
+    "touch_side_adverse_probability_bid_10000ms": 20,
+    "touch_side_adverse_probability_ask_10000ms": 20,
 }
 
 

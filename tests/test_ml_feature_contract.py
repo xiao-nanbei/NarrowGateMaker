@@ -56,7 +56,7 @@ def test_all_missing_training_feature_is_removed_from_every_split() -> None:
         {
             "usable": [1.0, np.nan],
             "offline_missing": [np.nan, np.nan],
-            "label_dir_10s": [0.0, 1.0],
+            "label_touch_conditioned_up_probability_10000ms": [0.0, 1.0],
             "sample_weight": [1.0, 1.0],
         }
     )
@@ -169,7 +169,7 @@ def test_authorization_bound_legacy_metadata_canonicalizes_without_owner_hash() 
 
 def test_legacy_f03_ret_name_does_not_imply_direct_quote_compatibility() -> None:
     legacy = {
-        "name": "ret_10s",
+        "name": "touch_conditioned_price_change_fraction_10000ms",
         "label_semantics": (
             "fill_within_h_then_markout_h_after_fill; "
             "decision outcome spans h_to_2h"
@@ -209,7 +209,7 @@ def test_causal_model_bundle_resolves_matching_feature_manifest(tmp_path, monkey
     manifest = feature_dir / "causal_feature_manifest.json"
     manifest.write_text('{"schema_version": 2}', encoding="utf-8")
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    (model_dir / "dir_10s_meta.json").write_text(
+    (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps(
             {
                 "feature_manifest_path": str(manifest),
@@ -235,7 +235,7 @@ def test_new_inference_panel_does_not_have_to_equal_training_manifest(
     feature_dir.mkdir()
     model_dir.mkdir()
     (feature_dir / "causal_feature_manifest.json").write_text("{}", encoding="utf-8")
-    (model_dir / "dir_10s_meta.json").write_text(
+    (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps(
             {
                 "feature_manifest_path": str(feature_dir / "causal_feature_manifest.json"),
@@ -288,14 +288,14 @@ def _inference_panel_fixture(tmp_path, monkeypatch):
          "min_data_in_leaf": 1, "num_leaves": 2},
         lgb.Dataset(frame, label=[0.1, 0.5, 0.9]), num_boost_round=1,
     )
-    booster.save_model(str(model / "dir_10s.txt"))
+    booster.save_model(str(model / "touch_conditioned_up_probability_10000ms.txt"))
     metadata = {
         **{k: v for k, v in manifest.items() if k not in {"daily_files", "labels_materialized"}},
         "feature_cols": ["a", "b"],
         "feature_manifest_path": str(tmp_path / "training" / "causal_feature_manifest.json"),
         "feature_manifest_sha256": "f" * 64,
     }
-    meta_path = model / "dir_10s_meta.json"
+    meta_path = model / "touch_conditioned_up_probability_10000ms_meta.json"
     meta_path.write_text(json.dumps(metadata))
     monkeypatch.setattr(backtest_tick, "MODEL_DIR", model)
     monkeypatch.setattr(backtest_tick, "SYMBOL", "BTCUSDC")
@@ -426,13 +426,13 @@ def test_live_prediction_uses_canonical_features_without_ret_stacking() -> None:
     engine._enable_ml = True
     engine._models = {
         name: _ConstantModel(
-            0.001 if name.startswith("ret_") else
-            3.0 if name.startswith("vol_") else
+            0.001 if name.startswith("touch_conditioned_price_change_fraction_") else
+            3.0 if name.startswith("absolute_price_variance_rate_") else
             0.5
         )
         for name in REQUIRED_MODEL_HEADS
     }
-    engine._models["dir_10s"] = _ConstantModel(0.6)
+    engine._models["touch_conditioned_up_probability_10000ms"] = _ConstantModel(0.6)
     engine._model_feature_cols = {
         name: list(FEATURE_NAMES_BASE) for name in REQUIRED_MODEL_HEADS
     }
@@ -440,8 +440,8 @@ def test_live_prediction_uses_canonical_features_without_ret_stacking() -> None:
 
     prediction = engine._predict(features)
 
-    assert prediction.ret_10s == 0.001
-    assert prediction.dir_10s == 0.6
+    assert prediction.touch_conditioned_price_change_fraction_10000ms == 0.001
+    assert prediction.touch_conditioned_up_probability_10000ms == 0.6
     assert prediction.features.shape == (len(FEATURE_NAMES_BASE),)
     assert prediction.feature_dict == features
     assert not any(name.startswith("stacked_ret_") for name in prediction.feature_dict)
@@ -452,19 +452,19 @@ def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() ->
     engine._enable_ml = True
     seen: list[np.ndarray] = []
     values = {
-        "dir_10s": 0.61,
-        "dir_30s": 0.57,
-        "dir_60s": 0.54,
-        "vol_10s": 3.25,
-        "vol_30s": 4.5,
-        "vol_60s": 6.75,
-        "ret_10s": 0.0002,
-        "ret_30s": -0.0001,
-        "ret_60s": 0.0003,
-        "tox_bid_5s": 0.72,
-        "tox_ask_5s": 0.31,
-        "tox_bid_10s": 0.68,
-        "tox_ask_10s": 0.36,
+        "touch_conditioned_up_probability_10000ms": 0.61,
+        "touch_conditioned_up_probability_30000ms": 0.57,
+        "touch_conditioned_up_probability_60000ms": 0.54,
+        "absolute_price_variance_rate_10000ms": 3.25,
+        "absolute_price_variance_rate_30000ms": 4.5,
+        "absolute_price_variance_rate_60000ms": 6.75,
+        "touch_conditioned_price_change_fraction_10000ms": 0.0002,
+        "touch_conditioned_price_change_fraction_30000ms": -0.0001,
+        "touch_conditioned_price_change_fraction_60000ms": 0.0003,
+        "touch_side_adverse_probability_bid_5000ms": 0.72,
+        "touch_side_adverse_probability_ask_5000ms": 0.31,
+        "touch_side_adverse_probability_bid_10000ms": 0.68,
+        "touch_side_adverse_probability_ask_10000ms": 0.36,
     }
     engine._models = {
         name: _RecordingFeatureModel(values[name], seen)
@@ -487,11 +487,11 @@ def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() ->
     )
     for row in seen:
         assert row == pytest.approx(expected_row, abs=0.0)
-    assert prediction.dir_10s == values["dir_10s"]
-    assert prediction.vol_10s == values["vol_10s"]
-    assert prediction.ret_10s == values["ret_10s"]
-    assert prediction.tox_bid_10s == values["tox_bid_10s"]
-    assert prediction.tox_ask_10s == values["tox_ask_10s"]
+    assert prediction.touch_conditioned_up_probability_10000ms == values["touch_conditioned_up_probability_10000ms"]
+    assert prediction.absolute_price_variance_rate_10000ms == values["absolute_price_variance_rate_10000ms"]
+    assert prediction.touch_conditioned_price_change_fraction_10000ms == values["touch_conditioned_price_change_fraction_10000ms"]
+    assert prediction.touch_side_adverse_probability_bid_10000ms == values["touch_side_adverse_probability_bid_10000ms"]
+    assert prediction.touch_side_adverse_probability_ask_10000ms == values["touch_side_adverse_probability_ask_10000ms"]
 
     state = QuoteState(
         mid=100.0,
@@ -501,7 +501,7 @@ def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() ->
         best_ask=100.1,
     )
     cfg = QuoteCoreConfig(
-        gamma=0.046,
+        eta_inventory=0.046, a_spread=0.046, risk_per_order=0.046,
         kappa=0.01,
         tick_size=0.1,
         lot_size=0.001,
@@ -517,22 +517,22 @@ def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() ->
         state,
         cfg,
         QuotePrediction(
-            dir_10s=prediction.dir_10s,
-            vol_10s=prediction.vol_10s,
-            ret_10s=prediction.ret_10s,
-            tox_bid=prediction.tox_bid_10s,
-            tox_ask=prediction.tox_ask_10s,
+            touch_conditioned_up_probability_10000ms=prediction.touch_conditioned_up_probability_10000ms,
+            absolute_price_variance_rate_10000ms=prediction.absolute_price_variance_rate_10000ms,
+            touch_conditioned_price_change_fraction_10000ms=prediction.touch_conditioned_price_change_fraction_10000ms,
+            tox_bid=prediction.touch_side_adverse_probability_bid_10000ms,
+            tox_ask=prediction.touch_side_adverse_probability_ask_10000ms,
         ),
     )
     reference_action = compute_quote_core(
         state,
         cfg,
         QuotePrediction(
-            dir_10s=values["dir_10s"],
-            vol_10s=values["vol_10s"],
-            ret_10s=values["ret_10s"],
-            tox_bid=values["tox_bid_10s"],
-            tox_ask=values["tox_ask_10s"],
+            touch_conditioned_up_probability_10000ms=values["touch_conditioned_up_probability_10000ms"],
+            absolute_price_variance_rate_10000ms=values["absolute_price_variance_rate_10000ms"],
+            touch_conditioned_price_change_fraction_10000ms=values["touch_conditioned_price_change_fraction_10000ms"],
+            tox_bid=values["touch_side_adverse_probability_bid_10000ms"],
+            tox_ask=values["touch_side_adverse_probability_ask_10000ms"],
         ),
     )
     assert optimized_action == reference_action

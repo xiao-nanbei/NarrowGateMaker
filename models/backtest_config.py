@@ -22,12 +22,8 @@ from research.governance.public_machine_projection import (
     projection_for,
 )
 
-try:
-    from models.queue_calibration import load_daily_queue_calibration
-    from models.symbol_paths import model_dir as symbol_model_dir
-except ImportError:
-    from queue_calibration import load_daily_queue_calibration
-    from symbol_paths import model_dir as symbol_model_dir
+from models.queue_calibration import load_daily_queue_calibration
+from models.symbol_paths import model_dir as symbol_model_dir
 
 from live.config import RegimeConfig, load_config, to_backtest_params
 from models.replay_contract import rest_return_sample_rows
@@ -1190,9 +1186,12 @@ def build_backtest_base_params(
     """Build the shared bar/tick-compatible backtest parameter dict."""
     # 这里是“把 live config 映射到 replay 参数”的唯一共享入口。
     # 新增 live guard/policy 参数时要先进这里，再分别做 Python/C++ parity。
+    if "gamma" in live_params:
+        raise ValueError("gamma is not a current quote parameter")
     params = {
-        "gamma": finite_positive_quote_coefficient("gamma", live_params["gamma"]),
-        "quote_math_mode": str(live_params.get("quote_math_mode", "legacy_v0")),
+        "eta_inventory": finite_positive_quote_coefficient("eta_inventory", live_params["eta_inventory"]),
+        "a_spread": finite_positive_quote_coefficient("a_spread", live_params["a_spread"]),
+        "risk_per_order": finite_positive_quote_coefficient("risk_per_order", live_params["risk_per_order"]),
         "inventory_reference_qty": finite_positive_quote_coefficient(
             "inventory_reference_qty",
             live_params.get("inventory_reference_qty", 1.0),

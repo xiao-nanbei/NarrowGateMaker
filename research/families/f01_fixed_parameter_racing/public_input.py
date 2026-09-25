@@ -16,14 +16,8 @@ def _validate_effective_quote_change(common_params, changes):
             raise ValueError(f"{name} must be finite")
         if value == common_params[name]:
             continue  # The explicitly named B0 arm is allowed.
-        if name in {"gamma", "kappa"} and value <= 0:
+        if name in {"eta_inventory", "risk_per_order", "a_spread", "kappa"} and value <= 0:
             raise ValueError(f"{name} must be positive")
-        if name == "gamma" and (
-            common_params.get("quote_math_mode", "legacy_v0") != "legacy_v0"
-            or any(common_params.get(key) is not None for key in
-                   ("eta_inventory", "a_spread", "risk_per_order"))
-        ):
-            raise ValueError("gamma is masked by explicit quote coefficients or quote_math_mode")
         if name == "kappa" and (
             common_params.get("execution_intensity_slope") is not None
             or (common_params.get("historical_p3_scalar_adapter_enabled", True)
@@ -62,7 +56,7 @@ def iter_parameter_candidates(root, candidates, *, common_params, model_dir=None
     bundle.source_paths()
     if not candidates:
         raise ValueError("explicit candidates required")
-    allowed = {"gamma", "kappa", "max_spread_bps"}
+    allowed = {"eta_inventory", "a_spread", "risk_per_order", "kappa", "max_spread_bps"}
     for name, changes in candidates.items():
         if not name or not changes or set(changes) - allowed:
             raise ValueError("candidate may vary only declared quote parameters")

@@ -1,14 +1,18 @@
-# Models：回放与分析兼容包
+# Models：回放与分析包
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-21
+Last materially modified: 2026-09-25
 
-Last materially synchronized: 2026-09-21
+Last materially synchronized: 2026-09-25
 
 该目录目前是过渡期的回放／分析包，不是只有机器学习模型的目录。tick 执行器、回放读取器、缓存工具及历史分析入口仍在这里；不要因为已有这个包，就把新的生产公共契约也放进来。实际归属及未完成迁移见[模块归属表](../docs/architecture.zh-CN.md)。研究族实现位于 `research.families.*`，已移除的 `research_*` 根目录不是导入别名。
 
 ## 模型产物与运行边界
+
+维护中的 tick 回放使用 `narrowgate replay --help`，已登记的 A/B 执行使用 `narrowgate tick-ab --help`，报价诊断使用 `narrowgate quote-diagnostics --help`，F10 成交／深度诊断使用 `narrowgate fill-depth-audit --help`。独立 Bar、ML-Bar、tick、A/B 和报价诊断模块 CLI 已退役，`models.experiment_runner` 已删除。Bar 诊断函数仍是库函数，不是另一套经济回放命令。报价配置显式提供 `eta_inventory`、`a_spread`、`risk_per_order` 与 `inventory_reference_qty`，不再从 `gamma` 继承。
+
+当前 Tardis 模型包要求 `narrowgate.semantic_model_bundle.v1`，各头使用触达条件方向／价格变化、绝对价格方差率及触达侧不利概率的明确名称。旧模型包协议被拒绝。转换保持已学习数值，但生成新的产物身份；冻结原件独立保留，加载不会修改原件。Python 与原生扩展必须具有匹配的应用接口版本。这是源码迁移，不是实盘部署。
 
 生成的模型包不纳入 Git。保留当前运行身份实际需要的包、最新正式绑定的因果包及仍被一致性测试引用的评分产物。文件存在不等于模型晋级。正式回放需绑定模型元数据、特征可见时间、预热及标签语义，并独立绑定 P3、队列与延迟。过时模型不进入参数搜索；删除前检查引用并取得授权，保留必要冻结身份。
 

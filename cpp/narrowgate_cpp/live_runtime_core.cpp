@@ -391,9 +391,9 @@ bool NativeLiveRuntimeCore::valid_quote_state(
 bool NativeLiveRuntimeCore::valid_prediction(
     const QuotePrediction& value
 ) noexcept {
-    return in_unit_interval(value.dir_10s) &&
-        finite_non_negative(value.vol_10s) &&
-        std::isfinite(value.ret_10s) &&
+    return in_unit_interval(value.touch_conditioned_up_probability_10000ms) &&
+        finite_non_negative(value.absolute_price_variance_rate_10000ms) &&
+        std::isfinite(value.touch_conditioned_price_change_fraction_10000ms) &&
         in_unit_interval(value.tox_bid) &&
         in_unit_interval(value.tox_ask);
 }

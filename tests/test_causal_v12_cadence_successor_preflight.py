@@ -16,6 +16,9 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _fixture_design(tmp_path: Path) -> Path:
     design = json.loads(preflight.DEFAULT_DESIGN_PATH.read_text(encoding="utf-8"))
+    # Synthetic current-input fixture; never translate the historical artifact
+    # in the application or mutate its frozen bytes.
+    design["current_reference"]["head_names"] = list(preflight.EXPECTED_HEADS)
     examples = sorted(
         {
             feature
@@ -154,9 +157,10 @@ def _read_design(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_frozen_design_contract_is_valid_without_reading_host_artifacts() -> None:
+def test_retired_design_is_rejected_without_reading_host_artifacts() -> None:
     design = json.loads(preflight.DEFAULT_DESIGN_PATH.read_text(encoding="utf-8"))
-    preflight.validate_design(design)
+    with pytest.raises(preflight.PreflightError, match="head_names mismatch"):
+        preflight.validate_design(design)
 
 
 def test_preflight_inventories_fixed_horizons_and_separate_cadences(
@@ -189,11 +193,11 @@ def test_fill_conditioned_head_discloses_two_horizon_dependency(tmp_path: Path) 
     report = preflight.run_preflight(_fixture_design(tmp_path))
     heads = {row["name"]: row for row in report["current_v12"]["head_contracts"]}
 
-    assert heads["ret_60s"]["reach_window_s"] == 60
-    assert heads["ret_60s"]["post_fill_markout_horizon_s"] == 60
-    assert heads["ret_60s"]["decision_outcome_span_s"] == [60, 120]
-    assert heads["vol_60s"]["maximum_future_dependency_s"] == 60
-    assert heads["tox_bid_5s"]["decision_outcome_span_s"] == [5, 10]
+    assert heads["touch_conditioned_price_change_fraction_60000ms"]["reach_window_s"] == 60
+    assert heads["touch_conditioned_price_change_fraction_60000ms"]["post_fill_markout_horizon_s"] == 60
+    assert heads["touch_conditioned_price_change_fraction_60000ms"]["decision_outcome_span_s"] == [60, 120]
+    assert heads["absolute_price_variance_rate_60000ms"]["maximum_future_dependency_s"] == 60
+    assert heads["touch_side_adverse_probability_bid_5000ms"]["decision_outcome_span_s"] == [5, 10]
 
 
 def test_all_previously_read_2026_panels_are_diagnostic_only(tmp_path: Path) -> None:

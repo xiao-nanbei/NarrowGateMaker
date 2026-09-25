@@ -216,19 +216,19 @@ TRAINABLE_FEATURE_ORDER = (
 )
 
 HEAD_LABEL_LINKAGE = (
-    ("dir_10s", "label_dir_10s", "binary"),
-    ("ret_10s", "label_ret_10s", "regression"),
-    ("vol_10s", "label_vol_10s", "regression"),
-    ("dir_30s", "label_dir_30s", "binary"),
-    ("ret_30s", "label_ret_30s", "regression"),
-    ("vol_30s", "label_vol_30s", "regression"),
-    ("dir_60s", "label_dir_60s", "binary"),
-    ("ret_60s", "label_ret_60s", "regression"),
-    ("vol_60s", "label_vol_60s", "regression"),
-    ("tox_bid_5s", "label_tox_bid_5s", "binary"),
-    ("tox_ask_5s", "label_tox_ask_5s", "binary"),
-    ("tox_bid_10s", "label_tox_bid_10s", "binary"),
-    ("tox_ask_10s", "label_tox_ask_10s", "binary"),
+    ("touch_conditioned_up_probability_10000ms", "label_touch_conditioned_up_probability_10000ms", "binary"),
+    ("touch_conditioned_price_change_fraction_10000ms", "label_touch_conditioned_price_change_fraction_10000ms", "regression"),
+    ("absolute_price_variance_rate_10000ms", "label_absolute_price_variance_rate_10000ms", "regression"),
+    ("touch_conditioned_up_probability_30000ms", "label_touch_conditioned_up_probability_30000ms", "binary"),
+    ("touch_conditioned_price_change_fraction_30000ms", "label_touch_conditioned_price_change_fraction_30000ms", "regression"),
+    ("absolute_price_variance_rate_30000ms", "label_absolute_price_variance_rate_30000ms", "regression"),
+    ("touch_conditioned_up_probability_60000ms", "label_touch_conditioned_up_probability_60000ms", "binary"),
+    ("touch_conditioned_price_change_fraction_60000ms", "label_touch_conditioned_price_change_fraction_60000ms", "regression"),
+    ("absolute_price_variance_rate_60000ms", "label_absolute_price_variance_rate_60000ms", "regression"),
+    ("touch_side_adverse_probability_bid_5000ms", "label_touch_side_adverse_probability_bid_5000ms", "binary"),
+    ("touch_side_adverse_probability_ask_5000ms", "label_touch_side_adverse_probability_ask_5000ms", "binary"),
+    ("touch_side_adverse_probability_bid_10000ms", "label_touch_side_adverse_probability_bid_10000ms", "binary"),
+    ("touch_side_adverse_probability_ask_10000ms", "label_touch_side_adverse_probability_ask_10000ms", "binary"),
 )
 
 

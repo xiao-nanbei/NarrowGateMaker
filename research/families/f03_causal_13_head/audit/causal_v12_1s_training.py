@@ -72,19 +72,19 @@ AMENDMENT_RESOLVED_DESIGN_PRECONDITIONS = (
 )
 
 HEAD_SPECS: dict[str, tuple[str, str, str, bool]] = {
-    "dir_10s": ("label_dir_10s", "binary", "auc", True),
-    "ret_10s": ("label_ret_10s", "regression", "mae", False),
-    "vol_10s": ("label_vol_10s", "regression", "mae", False),
-    "dir_30s": ("label_dir_30s", "binary", "auc", True),
-    "ret_30s": ("label_ret_30s", "regression", "mae", False),
-    "vol_30s": ("label_vol_30s", "regression", "mae", False),
-    "dir_60s": ("label_dir_60s", "binary", "auc", True),
-    "ret_60s": ("label_ret_60s", "regression", "mae", False),
-    "vol_60s": ("label_vol_60s", "regression", "mae", False),
-    "tox_bid_5s": ("label_tox_bid_5s", "binary", "auc", True),
-    "tox_ask_5s": ("label_tox_ask_5s", "binary", "auc", True),
-    "tox_bid_10s": ("label_tox_bid_10s", "binary", "auc", True),
-    "tox_ask_10s": ("label_tox_ask_10s", "binary", "auc", True),
+    "touch_conditioned_up_probability_10000ms": ("label_touch_conditioned_up_probability_10000ms", "binary", "auc", True),
+    "touch_conditioned_price_change_fraction_10000ms": ("label_touch_conditioned_price_change_fraction_10000ms", "regression", "mae", False),
+    "absolute_price_variance_rate_10000ms": ("label_absolute_price_variance_rate_10000ms", "regression", "mae", False),
+    "touch_conditioned_up_probability_30000ms": ("label_touch_conditioned_up_probability_30000ms", "binary", "auc", True),
+    "touch_conditioned_price_change_fraction_30000ms": ("label_touch_conditioned_price_change_fraction_30000ms", "regression", "mae", False),
+    "absolute_price_variance_rate_30000ms": ("label_absolute_price_variance_rate_30000ms", "regression", "mae", False),
+    "touch_conditioned_up_probability_60000ms": ("label_touch_conditioned_up_probability_60000ms", "binary", "auc", True),
+    "touch_conditioned_price_change_fraction_60000ms": ("label_touch_conditioned_price_change_fraction_60000ms", "regression", "mae", False),
+    "absolute_price_variance_rate_60000ms": ("label_absolute_price_variance_rate_60000ms", "regression", "mae", False),
+    "touch_side_adverse_probability_bid_5000ms": ("label_touch_side_adverse_probability_bid_5000ms", "binary", "auc", True),
+    "touch_side_adverse_probability_ask_5000ms": ("label_touch_side_adverse_probability_ask_5000ms", "binary", "auc", True),
+    "touch_side_adverse_probability_bid_10000ms": ("label_touch_side_adverse_probability_bid_10000ms", "binary", "auc", True),
+    "touch_side_adverse_probability_ask_10000ms": ("label_touch_side_adverse_probability_ask_10000ms", "binary", "auc", True),
 }
 
 

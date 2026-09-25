@@ -8,9 +8,20 @@
   "feature_manifest_sha256": "ffc85a81b177825f43455f346dab8c9926a699c8f7f8e34a2ce9188861eeadd2",
   "feature_semantics_version": 6,
   "feature_variant": "public_dry_run_fixture",
+  "label_semantics": "fixed_forward_h_absolute_price_variance",
   "label_semantics_version": 3,
   "label_window_semantics": "left_closed_right_open_[t,t+h)",
+  "name": "absolute_price_variance_rate_10000ms",
   "promotion_authority": "public_dry_run_only",
   "source_profile": "synthetic_fixture",
-  "training_experiment_id": "public_dry_run_model_bundle_v1"
+  "symbol": "BTCUSDC",
+  "training_experiment_id": "public_dry_run_model_bundle_v1",
+  "volatility_unit_contract": {
+    "base_asset": "BTC",
+    "quote_asset": "USDC",
+    "sample_period_s": 1.0,
+    "schema_version": "narrowgate.absolute_price_variance_unit_contract.v1",
+    "symbol": "BTCUSDC",
+    "variance_units": "(quote/base)^2_per_second"
+  }
 }

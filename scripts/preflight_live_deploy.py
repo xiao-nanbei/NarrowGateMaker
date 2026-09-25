@@ -251,7 +251,7 @@ def validate_deploy_config(
     ret_skew = float(ml.get("ret_skew", 0.0) or 0.0)
     if ml_enabled and ret_skew > 0.0:
         ret_action = f03_direct_quote_action_contract(
-            model_metadata.get("ret_10s", {})
+            model_metadata.get("touch_conditioned_price_change_fraction_10000ms", {})
         )
         producer_horizon_s = float(ret_action["horizon_s"])
         if (

@@ -56,7 +56,6 @@ api:
 strategy:
   # AS-shaped empirical quote-controller inputs. These are safe examples, not
   # an exact AS/GLFT solution or a promoted parameter set.
-  gamma: 0.01
   order_size: 0.001
   max_inventory: 0.01
   requote_interval: 10.0
@@ -70,9 +69,9 @@ strategy:
   # eta_inventory=gamma*q_ref, a_spread=risk_per_order=gamma,
   # execution_intensity_slope=kappa, risk_horizon_s=quote_horizon_s.
   inventory_reference_qty: 1.0
-  eta_inventory: null
-  a_spread: null
-  risk_per_order: null
+  eta_inventory: 0.01
+  a_spread: 0.01
+  risk_per_order: 0.01
   execution_intensity_slope: null
   risk_horizon_s: null
   # The historical P3 pair projection is the behavior-identical B0 adapter.

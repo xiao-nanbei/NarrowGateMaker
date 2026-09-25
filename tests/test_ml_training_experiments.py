@@ -137,7 +137,7 @@ def test_predictive_ablation_contract_preserves_source_and_taker_definitions() -
                 "feature_variant": "base",
                 "experiment_id": "source-ref-v1",
                 "model_dir": Path("models/saved_ablation"),
-                "target": "dir_10s",
+                "target": "touch_conditioned_up_probability_10000ms",
                 "predict": False,
             },
             "complete strict 13-head bundle",
@@ -155,7 +155,7 @@ def test_base_training_keeps_diagnostic_single_head_available() -> None:
         feature_variant="base",
         experiment_id=None,
         model_dir=None,
-        target="dir_10s",
+        target="touch_conditioned_up_probability_10000ms",
         predict=False,
     )
 
@@ -383,7 +383,7 @@ def _weighted_frame(contract):
     for name, (label, *_) in ml_model.MODEL_SPECS.items():
         frame[label] = np.arange(len(index)) % 2
         frame[contract.sample_weight_policy["outcome_end_columns"][name]] = index + pd.Timedelta(seconds=30)
-    frame.loc[index[1], "label_ret_10s"] = np.nan
+    frame.loc[index[1], "label_touch_conditioned_price_change_fraction_10000ms"] = np.nan
     days_ago = (pd.Timestamp("2025-08-12", tz="UTC") - index).total_seconds() / 86400
     frame["sample_weight"] = np.exp(-0.1 * days_ago / 30.44)
     return frame
@@ -394,7 +394,7 @@ def test_time_weights_replace_old_decay_after_per_head_purge(half_life):
     contract = _weighted_contract(half_life)
     fit, selection, refit = split_train_only_selection(_weighted_frame(contract), contract)
     X, _, weights, columns, report = ml_model.prepare_time_weighted_xy(
-        fit, "ret_10s", contract, phase="fit",
+        fit, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit",
     )
     assert columns == ["x"]
     assert len(X) == 4  # one NaN label and one cross-day endpoint are excluded
@@ -405,13 +405,13 @@ def test_time_weights_replace_old_decay_after_per_head_purge(half_life):
     assert day_totals[1] / day_totals[0] == pytest.approx(expected_ratio)
     assert weights.iloc[1] == pytest.approx(weights.iloc[2])
     _, _, refit_weights, _, refit_report = ml_model.prepare_time_weighted_xy(
-        refit, "ret_10s", contract, phase="refit",
+        refit, "touch_conditioned_price_change_fraction_10000ms", contract, phase="refit",
     )
     assert refit_weights.mean() == pytest.approx(1)
     assert refit_report["effective_day_count"] == 4
     assert weights.iloc[0] != pytest.approx(refit_weights.iloc[0])
     _, _, eval_weights, _, eval_report = ml_model.prepare_time_weighted_xy(
-        selection, "ret_10s", contract, phase="selection",
+        selection, "touch_conditioned_price_change_fraction_10000ms", contract, phase="selection",
     )
     assert eval_weights is None
     assert eval_report["unweighted_early_stopping"] is True
@@ -420,17 +420,17 @@ def test_time_weights_replace_old_decay_after_per_head_purge(half_life):
 def test_time_weighting_reports_zero_support_and_rejects_unknown_weight():
     contract = _weighted_contract()
     frame = _weighted_frame(contract)
-    frame.loc[frame.index.strftime("%Y-%m-%d") == "2025-08-04", "label_ret_10s"] = np.nan
+    frame.loc[frame.index.strftime("%Y-%m-%d") == "2025-08-04", "label_touch_conditioned_price_change_fraction_10000ms"] = np.nan
     fit, _, _ = split_train_only_selection(frame, contract)
-    _, _, _, _, report = ml_model.prepare_time_weighted_xy(fit, "ret_10s", contract, phase="fit")
+    _, _, _, _, report = ml_model.prepare_time_weighted_xy(fit, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
     assert report["unsupported_days"] == ["2025-08-04"]
     fit["sample_weight"] *= 0.5
     with pytest.raises(ValueError, match="not the declared time-only weight"):
-        ml_model.prepare_time_weighted_xy(fit, "ret_10s", contract, phase="fit")
+        ml_model.prepare_time_weighted_xy(fit, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
     fit = _weighted_frame(contract).iloc[:2].copy()
-    fit["label_ret_10s"] = np.nan
+    fit["label_touch_conditioned_price_change_fraction_10000ms"] = np.nan
     with pytest.raises(ValueError, match="no effective labels"):
-        ml_model.prepare_time_weighted_xy(fit, "ret_10s", contract, phase="fit")
+        ml_model.prepare_time_weighted_xy(fit, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
 
 
 def test_weighted_helpers_never_enter_features_or_allow_ambiguous_clock():
@@ -438,14 +438,14 @@ def test_weighted_helpers_never_enter_features_or_allow_ambiguous_clock():
     frame = _weighted_frame(contract).iloc[:2].copy()
     for column in ml_model.TRAINING_AUXILIARY_COLS:
         frame[column] = 1
-    assert ml_model.prepare_xy(frame, "label_ret_10s")[3] == ["x"]
-    endpoint = "label_outcome_end_ret_10s"
+    assert ml_model.prepare_xy(frame, "label_touch_conditioned_price_change_fraction_10000ms")[3] == ["x"]
+    endpoint = "label_outcome_end_touch_conditioned_price_change_fraction_10000ms"
     frame[endpoint] = frame.index.astype("int64")
     with pytest.raises(ValueError, match="explicit datetime UTC units"):
-        ml_model.prepare_time_weighted_xy(frame, "ret_10s", contract, phase="fit")
+        ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
     frame[endpoint] = frame.index
     with pytest.raises(ValueError, match="before its decision is visible"):
-        ml_model.prepare_time_weighted_xy(frame, "ret_10s", contract, phase="fit")
+        ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
 
 
 def test_ready_frame_weighting_does_not_add_legacy_ten_seconds():
@@ -456,14 +456,14 @@ def test_ready_frame_weighting_does_not_add_legacy_ten_seconds():
               "decision_clock": "feature_ready_index"}
     contract = replace(contract, sample_weight_policy=policy)
     frame = _weighted_frame(contract).iloc[[0]].copy()
-    frame["label_outcome_end_ret_10s"] = frame.index + pd.Timedelta(seconds=5)
-    X, _, _, _, report = ml_model.prepare_time_weighted_xy(frame, "ret_10s", contract, phase="fit")
+    frame["label_outcome_end_touch_conditioned_price_change_fraction_10000ms"] = frame.index + pd.Timedelta(seconds=5)
+    X, _, _, _, report = ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
     assert len(X) == 1
     assert report["first_decision_utc"] == frame.index[0].isoformat()
     assert report["decision_clock"] == "feature_ready_index"
-    frame["label_outcome_end_ret_10s"] = frame.index - pd.Timedelta(nanoseconds=1)
+    frame["label_outcome_end_touch_conditioned_price_change_fraction_10000ms"] = frame.index - pd.Timedelta(nanoseconds=1)
     with pytest.raises(ValueError, match="before its decision"):
-        ml_model.prepare_time_weighted_xy(frame, "ret_10s", contract, phase="fit")
+        ml_model.prepare_time_weighted_xy(frame, "touch_conditioned_price_change_fraction_10000ms", contract, phase="fit")
     policy.pop("decision_clock")
     with pytest.raises(ValueError, match="explicit feature_ready_index"):
         ml_model._validate_sample_weight_policy(policy, contract.refit_days)
@@ -629,7 +629,7 @@ def test_research_only_predictive_bundle_cannot_enter_live(tmp_path: Path) -> No
                 "BTCUSDC"
             ),
         }
-        if name.startswith("vol_"):
+        if name.startswith("absolute_price_variance_rate_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
         (tmp_path / f"{name}_meta.json").write_text(
             json.dumps(metadata),
@@ -687,7 +687,7 @@ def test_private_deployment_authorization_binds_every_head_hash(
             metadata["volatility_unit_contract"] = (
                 absolute_price_variance_unit_contract("BTCUSDC")
             )
-        if name.startswith("vol_"):
+        if name.startswith("absolute_price_variance_rate_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
         metadata_path = tmp_path / f"{name}_meta.json"
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -752,7 +752,7 @@ def test_private_deployment_authorization_binds_every_head_hash(
         tmp_path / authorization_file
     )
 
-    (tmp_path / "dir_10s.txt").write_text("changed", encoding="utf-8")
+    (tmp_path / "touch_conditioned_up_probability_10000ms.txt").write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="model hash mismatch"):
         validate_model_bundle(tmp_path)
 

@@ -13,19 +13,13 @@ Apple M4 optimisations
   ✦  multiprocessing.fork  → parameter sweep across all 10 P-cores (zero-copy data)
   ✦  Contiguous numpy arrays + pandas rolling  → M4 Accelerate / NEON SIMD
 
-Usage
-─────
-  python models/backtest.py --day 2026-03-01           # single UTC day
-  python models/backtest.py --day 2026-03-01 --sweep   # daily diagnostic sweep
-  python models/backtest.py --day 2026-03-01 --gamma 0.1 --kappa 0.05
+Library-only bar-shape diagnostic. Economic replay uses ``narrowgate replay``.
 """
 
-import argparse
 import math
 import sys
 import time
 from itertools import product
-from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
@@ -43,18 +37,10 @@ except ImportError:
         return f
 
 # ── Paths ──────────────────────────────────────────────────────────
-try:
-    from models.backtest_utils import default_backtest_workers
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
-except ImportError:
-    from backtest_utils import default_backtest_workers
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
+from models.backtest_utils import default_backtest_workers
+from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
 
-try:
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
+from data_quality import filter_frame_for_orderbook_quality, filter_paths_for_orderbook_quality
 
 BARS_DIR = data_root(ROOT) / "bars_1s"
 
@@ -73,11 +59,11 @@ TICK = 0.1  # legacy bar diagnostic tick; tick replay/live config is authoritati
 # These grids are archival diagnostics.  The current tick/live path uses
 # p3_kappa_eff when available, so strategy.kappa is not an active tuning axis.
 SWEEP_COARSE = {
-    "gamma": [0.01, 0.05, 0.1, 0.2, 0.5, 1.0],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}, {"eta_inventory": 0.2, "a_spread": 0.2, "risk_per_order": 0.2}, {"eta_inventory": 0.5, "a_spread": 0.5, "risk_per_order": 0.5}, {"eta_inventory": 1.0, "a_spread": 1.0, "risk_per_order": 1.0}],
     "kappa": [0.02, 0.05, 0.1, 0.5],
 }
 SWEEP_REFINE = {
-    "gamma": [0.01, 0.02, 0.05, 0.1, 0.2],
+    "quote_coefficients": [{"eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01}, {"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02}, {"eta_inventory": 0.05, "a_spread": 0.05, "risk_per_order": 0.05}, {"eta_inventory": 0.1, "a_spread": 0.1, "risk_per_order": 0.1}, {"eta_inventory": 0.2, "a_spread": 0.2, "risk_per_order": 0.2}],
     "kappa": [0.02, 0.05, 0.1, 0.2],
     "max_inventory": [0.01, 0.02, 0.026],
     "order_size": [0.001, 0.0026],
@@ -141,7 +127,7 @@ def prepare_arrays(bars, sigma_window=60):
 
 @njit_opt
 def _simulate_core(ts, hi, lo, cl, ssq,
-                   gamma, kappa, order_size, max_inv,
+                   inventory_price_risk, risk_per_order, kappa, order_size, max_inv,
                    rq_ms, fee, taker_fee, tick, sample_rate):
     """Hot loop — compiled to ARM64 by Numba on M4, or runs as CPython."""
     n = len(ts)
@@ -159,7 +145,7 @@ def _simulate_core(ts, hi, lo, cl, ssq,
     tsprd = 0.0; mx = 0.0; si_sum = 0.0
     si = 0
 
-    spread_const = (2.0 / gamma) * np.log(1.0 + gamma / kappa)
+    spread_const = (2.0 / risk_per_order) * np.log(1.0 + risk_per_order / kappa)
 
     for i in range(n):
         mid = cl[i]
@@ -177,8 +163,8 @@ def _simulate_core(ts, hi, lo, cl, ssq,
         # ── requote ──
         if ts[i] - lrt >= rq_ms:
             s = ssq[i]
-            r = mid - q * gamma * s
-            d = gamma * s + spread_const
+            r = mid - q * inventory_price_risk * s
+            d = risk_per_order * s + spread_const
             mn = 2.0 * fee * mid + tick
             if d < mn:
                 d = mn
@@ -217,7 +203,8 @@ def _simulate_core(ts, hi, lo, cl, ssq,
 
 def simulate(ts, hi, lo, cl, ssq, params):
     """Run single backtest and return metrics dict."""
-    gamma   = params["gamma"]
+    inventory_price_risk = params["eta_inventory"] / params["inventory_reference_qty"]
+    risk_per_order = params["risk_per_order"]
     kappa   = params["kappa"]
     osiz    = params["order_size"]
     maxinv  = params["max_inventory"]
@@ -228,7 +215,7 @@ def simulate(ts, hi, lo, cl, ssq, params):
     sr      = max(1, rq_ms // 1000)
 
     raw = _simulate_core(ts, hi, lo, cl, ssq,
-                         gamma, kappa, osiz, maxinv,
+                         inventory_price_risk, risk_per_order, kappa, osiz, maxinv,
                          rq_ms, fee, taker_fee, tick, sr)
     return _unpack(raw, params)
 
@@ -263,7 +250,7 @@ def _unpack(raw, params):
     max_dd = float(dd.max()) if len(dd) > 0 else 0.0
 
     return {
-        "gamma": params["gamma"],
+        "eta_inventory": params["eta_inventory"], "risk_per_order": params["risk_per_order"],
         "kappa": params["kappa"],
         "pnl": fp,
         "pnl_per_day": fp / max(n_days, 0.01),
@@ -325,7 +312,12 @@ def run_sweep(ts, hi, lo, cl, ssq, base_params,
     for combo in combos:
         p = dict(base_params)
         for k, v in zip(keys, combo, strict=True):
-            p[k] = v
+            if k == "quote_coefficients":
+                if p["inventory_reference_qty"] != 1.0:
+                    raise ValueError("registered coefficient tuples require inventory_reference_qty=1")
+                p.update(v)
+            else:
+                p[k] = v
         params_list.append(p)
 
     n_combos = len(params_list)
@@ -371,7 +363,7 @@ _HDR = (f"{'Rank':>4s}  {'γ':>7s}  {'κ':>7s}  {'OrdSz':>6s}  {'MaxPos':>6s}  "
 
 
 def _row(i, r):
-    return (f"{i:4d}  {r['gamma']:7.3f}  {r['kappa']:7.3f}  "
+    return (f"{i:4d}  {r['risk_per_order']:7.3f}  {r['kappa']:7.3f}  "
             f"{r.get('order_size',0.01):6.3f}  "
             f"{r.get('max_inventory',0.1):6.2f}  "
             f"{r['pnl']:10.2f}  {r['pnl_per_day']:9.2f}  "
@@ -400,6 +392,10 @@ def save_sweep_csv(results):
     print(f"\nSweep results saved → {path}")
 
 
+if __name__ == "__main__":
+    raise SystemExit("This is a diagnostic library; use narrowgate replay for economic replay")
+
+
 def save_pnl_series(result):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame({
@@ -415,93 +411,3 @@ def save_pnl_series(result):
 # ═══════════════════════════════════════════════════════════════════
 #  5. MAIN
 # ═══════════════════════════════════════════════════════════════════
-
-def main():
-    ap = argparse.ArgumentParser(description="AS Backtest on 1s bars")
-    ap.add_argument("--symbol", default=DEFAULT_SYMBOL,
-                    help=f"Symbol (default {DEFAULT_SYMBOL}; MM_SYMBOL also supported)")
-    ap.add_argument("--split", default="test",
-                    choices=["train", "val", "test", "all"])
-    ap.add_argument("--day", required=True, help="UTC day, e.g. 2026-03-01")
-    ap.add_argument("--sweep", action="store_true", help="Coarse sweep")
-    ap.add_argument("--refine", action="store_true", help="Refined sweep")
-    ap.add_argument("--workers", type=int, default=None)
-    ap.add_argument("--sigma-window", type=int, default=60)
-    ap.add_argument("--gamma", type=float, default=0.1)
-    ap.add_argument("--kappa", type=float, default=0.05)
-    ap.add_argument("--order-size", type=float, default=0.01)
-    ap.add_argument("--max-inventory", type=float, default=0.1)
-    ap.add_argument("--requote-interval", type=float, default=10)
-    ap.add_argument("--maker-fee", type=float, default=0.0)
-    ap.add_argument("--taker-fee", type=float, default=0.00036)
-    args = ap.parse_args()
-    configure_symbol(args.symbol)
-
-    # ── hardware info ──
-    import platform
-    ncpu = cpu_count()
-    print(f"\n{'='*60}")
-    print(f"  {SYMBOL} Avellaneda-Stoikov Backtest")
-    print(f"  Chip: {platform.processor() or 'Apple M4'}  "
-          f"Cores: {ncpu}  Numba: {'✓' if HAS_NUMBA else '✗'}")
-    print(f"{'='*60}\n")
-
-    # ── load data ──
-    print("Loading 1s bars …")
-    bars = load_bars(split=args.split, day=args.day)
-
-    print("Pre-computing rolling volatility …")
-    t0 = time.perf_counter()
-    ts, hi, lo, cl, ssq = prepare_arrays(bars, args.sigma_window)
-    t_prep = time.perf_counter() - t0
-    print(f"  σ² computed in {t_prep:.2f}s  "
-          f"(median σ²={np.median(ssq):.2f}, "
-          f"mean spread_min=${2*args.maker_fee*np.mean(cl)+TICK:.1f})\n")
-
-    base = {
-        "gamma": args.gamma,
-        "kappa": args.kappa,
-        "order_size": args.order_size,
-        "max_inventory": args.max_inventory,
-        "requote_interval": args.requote_interval,
-        "maker_fee": args.maker_fee,
-        "taker_fee": args.taker_fee,
-    }
-
-    if args.sweep or args.refine:
-        # ── parallel parameter sweep ──
-        results = run_sweep(ts, hi, lo, cl, ssq, base,
-                            args.workers, refine=args.refine)
-        print_results(results)
-        save_sweep_csv(results)
-
-        # re-run best with time series
-        best_p = dict(base)
-        best_p["gamma"] = results[0]["gamma"]
-        best_p["kappa"] = results[0]["kappa"]
-        best_result = simulate(ts, hi, lo, cl, ssq, best_p)
-        save_pnl_series(best_result)
-    else:
-        # ── single run ──
-        print(f"Running AS backtest  γ={args.gamma}  κ={args.kappa}  "
-              f"order={args.order_size} BTC …")
-        t0 = time.perf_counter()
-        result = simulate(ts, hi, lo, cl, ssq, base)
-        t_sim = time.perf_counter() - t0
-
-        bars_per_sec = len(ts) / t_sim
-        print(f"  Simulation: {t_sim:.2f}s  "
-              f"({bars_per_sec/1e6:.1f}M bars/s"
-              f"{' — Numba JIT' if HAS_NUMBA else ' — CPython'})\n")
-
-        print_results([{k: v for k, v in result.items()
-                        if not k.startswith("_")}
-                       | {"order_size": args.order_size,
-                          "max_inv_param": args.max_inventory}])
-        save_pnl_series(result)
-
-    print()
-
-
-if __name__ == "__main__":
-    main()

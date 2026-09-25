@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Reusable local experiment runner for canonical model and fill-depth studies."""
+"""F10 fill/depth diagnostics. No training or replay CLI forwarding."""
 
 from __future__ import annotations
 
-import argparse
-import importlib
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,28 +11,23 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 from data_quality import COMPLETE_DATA_POLICY, excluded_orderbook_days  # noqa: E402
 from live.config import load_config  # noqa: E402
 from models.backtest_config import (  # noqa: E402
-    load_operational_baseline_binding,
     resolve_backtest_config_path,
 )
-from research.families.f03_causal_13_head import ml_model as ml  # noqa: E402
-from models.symbol_paths import DEFAULT_SYMBOL, paths_for  # noqa: E402
-from research.families.f05_fill_quality_quote_ev.train_quote_ev import add_quote_ev_training_args, run_quote_ev_training  # noqa: E402
+from models.symbol_paths import paths_for  # noqa: E402
 
 LIVE_TARGETS = [
-    "ret_10s",
-    "ret_30s",
-    "ret_60s",
-    "dir_10s",
-    "vol_10s",
-    "tox_bid_10s",
-    "tox_ask_10s",
+    "touch_conditioned_price_change_fraction_10000ms",
+    "touch_conditioned_price_change_fraction_30000ms",
+    "touch_conditioned_price_change_fraction_60000ms",
+    "touch_conditioned_up_probability_10000ms",
+    "absolute_price_variance_rate_10000ms",
+    "touch_side_adverse_probability_bid_10000ms",
+    "touch_side_adverse_probability_ask_10000ms",
 ]
 
 FILL_CONTEXT_COLS = [
@@ -68,23 +60,6 @@ FILL_TRACE_BUCKET_COLS = [
     "final_distance_to_mid",
 ]
 
-MODULE_COMMANDS = {
-    "train": ("research.families.f03_causal_13_head.ml_model", "Train LightGBM model heads with the canonical ml_model.py CLI"),
-    "backtest-ml": (
-        "models.backtest_ml",
-        "Run the legacy/exploratory ML 1s-bar diagnostic (not formal evidence)",
-    ),
-    "backtest-as": (
-        "models.backtest",
-        "Run the legacy/exploratory AS 1s-bar diagnostic (not formal evidence)",
-    ),
-    "backtest-tick": (
-        "models.backtest_tick",
-        "Run the authoritative tick replay with FIFO/depth simulation",
-    ),
-    "quote-decompose": ("models.quote_decomposition_tick", "Generate quote/fill decomposition traces"),
-    "fill-model": ("research.families.f02_empirical_p3_touch.touch_probability", "Fit the fill probability model"),
-}
 
 
 def _source_model_dir() -> Path:
@@ -321,108 +296,12 @@ def run_fill_depth_audit(symbol: str, days: list[str], tag: str, trace_fills_max
         print(f"Saved {name}: {path}")
 
 
-def run_describe(args: argparse.Namespace) -> None:
-    symbol = args.symbol.upper()
-    paths = paths_for(symbol)
-    cfg = load_config(resolve_backtest_config_path())
-    baseline_binding = load_operational_baseline_binding()
-    quality = _data_quality_meta(symbol)
-    print(f"NarrowGate experiment platform ({symbol})")
-    print(f"  live_config_symbol: {getattr(cfg, 'symbol', '')}")
-    print(f"  live_model_dir: {cfg.ml.model_dir}")
-    if baseline_binding is not None and baseline_binding["config_exists"]:
-        runtime_match = baseline_binding["runtime_code_audit"].get("matches")
-        label = (
-            "operational_baseline"
-            if runtime_match is not False
-            else "operational_baseline_config"
-        )
-        print(f"  {label}: {baseline_binding['pointer']['baseline_id']}")
-        if runtime_match is False:
-            print(
-                "  runtime_code: overlay "
-                f"({len(baseline_binding['runtime_code_audit']['mismatched_paths'])} mismatches, "
-                f"{len(baseline_binding['runtime_code_audit']['missing_paths'])} missing)"
-            )
-        print(f"  backtest_control_arm: {baseline_binding['pointer']['backtest_control_arm']}")
-    print(f"  feature_dir: {paths.feature_dir}")
-    print(f"  results_dir: {paths.results_dir}")
-    print(f"  live_targets: {', '.join(LIVE_TARGETS)}")
-    print(f"  full_targets: {len(ml.MODEL_SPECS)} model heads")
-    print("  data_quality:")
-    print(f"    policy: {quality['policy']}")
-    print(f"    excluded_orderbook_days: {', '.join(quality['excluded_orderbook_days']) or 'none'}")
-    print("  canonical_commands:")
-    print(f"    train: python3 models/experiment_runner.py train --symbol {symbol}")
-    print(
-        "    legacy bar diagnostic (not formal): "
-        f"python3 models/experiment_runner.py backtest-ml --symbol {symbol}"
-    )
-    print(
-        "    formal tick replay: "
-        f"python3 models/experiment_runner.py backtest-tick --symbol {symbol} "
-        "--day 2026-05-15"
-    )
-    print(f"    quote ev: python3 models/experiment_runner.py quote-ev --symbol {symbol} --trace-tag <tag>")
-    print(f"    fill audit: python3 models/experiment_runner.py fill-depth-audit --symbol {symbol} --days 2026-05-15")
 
 
-def _run_module_main(module_name: str, argv: list[str]) -> None:
-    if argv and argv[0] == "--":
-        argv = argv[1:]
-    module = importlib.import_module(module_name)
-    main_func = getattr(module, "main", None)
-    if main_func is None:
-        raise SystemExit(f"{module_name} does not expose main()")
-    old_argv = sys.argv
-    sys.argv = [f"{module_name.rsplit('.', 1)[-1]}.py", *argv]
-    try:
-        main_func()
-    finally:
-        sys.argv = old_argv
 
 
-def run_module_command(args: argparse.Namespace) -> None:
-    _run_module_main(args.module_name, args.module_args)
 
 
-def add_module_command(sub: argparse._SubParsersAction, name: str, module_name: str, help_text: str) -> None:
-    parser = sub.add_parser(name, help=help_text, add_help=False)
-    parser.add_argument("module_args", nargs=argparse.REMAINDER, help="Arguments forwarded to the underlying script")
-    parser.set_defaults(func=run_module_command, module_name=module_name)
 
 
-def main() -> None:
-    raw_args = sys.argv[1:]
-    if raw_args and raw_args[0] in MODULE_COMMANDS:
-        module_name, _ = MODULE_COMMANDS[raw_args[0]]
-        _run_module_main(module_name, raw_args[1:])
-        return
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    for name, (module_name, help_text) in MODULE_COMMANDS.items():
-        add_module_command(sub, name, module_name, help_text)
-
-    p_describe = sub.add_parser("describe", help="Show canonical training windows, outputs, and data-quality policy")
-    p_describe.add_argument("--symbol", default=DEFAULT_SYMBOL)
-    p_describe.set_defaults(func=run_describe)
-
-    p_quote_ev = sub.add_parser("quote-ev", help="Train quote-level EV/toxicity models from tick quote traces")
-    add_quote_ev_training_args(p_quote_ev)
-    p_quote_ev.set_defaults(func=run_quote_ev_training)
-
-    p_fill = sub.add_parser("fill-depth-audit", help="Trace fills and bucket post-fill markout by quote/fill depth signals")
-    p_fill.add_argument("--symbol", default=DEFAULT_SYMBOL)
-    p_fill.add_argument("--days", nargs="+", required=True)
-    p_fill.add_argument("--tag", default="20260528")
-    p_fill.add_argument("--trace-fills-max", type=int, default=200_000)
-    p_fill.set_defaults(func=lambda args: run_fill_depth_audit(args.symbol.upper(), args.days, args.tag, args.trace_fills_max))
-
-    args = parser.parse_args()
-    args.func(args)
-
-
-if __name__ == "__main__":
-    main()

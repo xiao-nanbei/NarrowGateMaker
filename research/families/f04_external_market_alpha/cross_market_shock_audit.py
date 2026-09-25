@@ -62,9 +62,9 @@ LOCAL_FEATURE_COLS = [
 CROSS_SUFFIXES = [
     "basis_bps",
     "basis_residual_bps",
-    "ret_10s",
-    "ret_30s",
-    "ret_60s",
+    "touch_conditioned_price_change_fraction_10000ms",
+    "touch_conditioned_price_change_fraction_30000ms",
+    "touch_conditioned_price_change_fraction_60000ms",
     "volatility_60s",
     "volume_imbalance",
     "trade_intensity_60s",

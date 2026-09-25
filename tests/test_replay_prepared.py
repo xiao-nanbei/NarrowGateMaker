@@ -13,7 +13,8 @@ bundle = input_bundle
 
 def parameters():
     return dict(
-        gamma=0.01,
+        inventory_reference_qty=1.0,
+        eta_inventory=0.01, a_spread=0.01, risk_per_order=0.01,
         kappa=1.0,
         order_size=0.001,
         max_inventory=0.01,
@@ -45,7 +46,8 @@ def test_prepared_a_b_a_and_readonly(bundle):
     p = parameters()
     prepared = replay.prepare_public_inputs(bundle, tick_size=0.1)
     first = replay.simulate_prepared_inputs(prepared, p)
-    replay.simulate_prepared_inputs(prepared, {**p, "gamma": 0.02})
+    replay.simulate_prepared_inputs(prepared, {**p, "eta_inventory": 0.02,
+                                             "a_spread": 0.02, "risk_per_order": 0.02})
     repeat = replay.simulate_prepared_inputs(prepared, p)
     assert first == repeat == replay.simulate_public_inputs(bundle, p)
     with pytest.raises(ValueError):
@@ -85,7 +87,7 @@ def test_f01_prepares_once(bundle, monkeypatch):
 
     monkeypatch.setattr(replay, "load_public_inputs", load)
     results = replay_parameter_candidates(
-        bundle, {"a": {"gamma": 0.01}, "b": {"gamma": 0.02}}, common_params=parameters()
+        bundle, {"a": {"eta_inventory": 0.01}, "b": {"eta_inventory": 0.02}}, common_params=parameters()
     )
     assert len(calls) == 1 and len(results) == 2
 
@@ -105,8 +107,8 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
 
         def compute_feature_frames(self, frames):
             self.calls += 1
-            return [SimpleNamespace(dir_10s=0.5, vol_10s=0.0, ret_10s=0.0,
-                                    tox_bid_10s=0.5, tox_ask_10s=0.5)
+            return [SimpleNamespace(touch_conditioned_up_probability_10000ms=0.5, absolute_price_variance_rate_10000ms=0.0, touch_conditioned_price_change_fraction_10000ms=0.0,
+                                    touch_side_adverse_probability_bid_10000ms=0.5, touch_side_adverse_probability_ask_10000ms=0.5)
                     for _ in frames]
 
     def load(cls, model_dir, *, symbol, ret_demean_halflife):
@@ -120,10 +122,10 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
     params = {**parameters(), "ml_enabled": True, "vol_blend": 0.5,
               "ret_demean_halflife": 0}
     with pytest.raises(ValueError, match="explicit frozen model_dir"):
-        replay_parameter_candidates(bundle, {"b0": {"gamma": params["gamma"]}},
+        replay_parameter_candidates(bundle, {"b0": {"eta_inventory": params["eta_inventory"]}},
                                     common_params=params)
     with pytest.raises(ValueError, match="loaded frozen P3 identity"):
-        replay_parameter_candidates(bundle, {"b0": {"gamma": params["gamma"]}},
+        replay_parameter_candidates(bundle, {"b0": {"eta_inventory": params["eta_inventory"]}},
                                     common_params=params, model_dir=tmp_path / "frozen")
     params.update(fill_probability_calibrated=True, p3_identity_required=True,
                   p3_delta_star=1.0, p3_kappa_eff=0.05,
@@ -134,8 +136,8 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
                   fill_probability_queue_included=False,
                   fill_probability_artifact_sha256="a" * 64)
     arms = replay_parameter_candidates(
-        bundle, {"b0": {"gamma": params["gamma"]},
-                 "candidate": {"gamma": params["gamma"] * 1.2}},
+        bundle, {"b0": {"eta_inventory": params["eta_inventory"]},
+                 "candidate": {"eta_inventory": params["eta_inventory"] * 1.2}},
         common_params=params, model_dir=tmp_path / "frozen",
     )
     assert len(created) == 2 and created[0] is not created[1]
@@ -145,8 +147,8 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
 
 
 @pytest.mark.parametrize("change, mask, match", [
-    ({"gamma": 0.02}, {"a_spread": 0.01}, "gamma is masked"),
-    ({"gamma": 0.02}, {"quote_math_mode": "quantity_aware_v1"}, "gamma is masked"),
+    ({"gamma": 0.02}, {"a_spread": 0.01}, "only declared quote parameters"),
+    ({"gamma": 0.02}, {"quote_math_mode": "quantity_aware_v1"}, "only declared quote parameters"),
     ({"kappa": 2.0}, {"execution_intensity_slope": 1.0}, "kappa is masked"),
     ({"kappa": 2.0}, {"p3_kappa_eff": 3.0}, "kappa is masked"),
     ({"max_spread_bps": 25.0}, {"dynamic_cap_enabled": True,
@@ -178,7 +180,8 @@ def test_f01_unmasked_aliases_reach_effective_quote_coefficients():
 
     b0 = effective(base)
     for change, fields in (
-        ({"gamma": 0.02}, ("eta_inventory", "a_spread", "risk_per_order")),
+        ({"eta_inventory": 0.02, "a_spread": 0.02, "risk_per_order": 0.02},
+         ("eta_inventory", "a_spread", "risk_per_order")),
         ({"kappa": 2.0}, ("execution_intensity_slope",)),
         ({"max_spread_bps": 25.0}, ("max_spread_bps", "dynamic_cap_base_bps")),
     ):

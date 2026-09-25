@@ -105,7 +105,7 @@ def _contract_params(tmp_path):
     config.write_text("project_name: NarrowGate\n", encoding="utf-8")
     model_dir = tmp_path / "model"
     model_dir.mkdir(exist_ok=True)
-    (model_dir / "dir_10s_meta.json").write_text(
+    (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps({"feature_cols": ["return_1"]}), encoding="utf-8"
     )
     p3 = tmp_path / "fill_prob_params.json"
@@ -1036,7 +1036,7 @@ def test_contract_rejects_artifact_or_queue_drift(tmp_path):
 
     params = _contract_params(tmp_path)
     freeze_replay_contract(params, root=tmp_path)
-    model_meta = tmp_path / "model" / "dir_10s_meta.json"
+    model_meta = tmp_path / "model" / "touch_conditioned_up_probability_10000ms_meta.json"
     model_meta.write_text('{"feature_cols":["changed"]}\n', encoding="utf-8")
     with pytest.raises(RuntimeError, match="differs from the frozen contract"):
         validate_frozen_replay_contract(params)

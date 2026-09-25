@@ -35,7 +35,7 @@ def _policy(side: str) -> SidePolicyDecision:
 
 def test_live_q1_long_shifts_pair_without_widening() -> None:
     engine = _engine(0.004)
-    pred = Prediction(vol_10s=3.0)
+    pred = Prediction(absolute_price_variance_rate_10000ms=3.0)
     bid, ask = engine._apply_post_fill_quote_response(
         q=0.004,
         bid_price=99.0,

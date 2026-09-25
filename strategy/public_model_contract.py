@@ -22,7 +22,7 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
     manifest_path = root / "public_input_model.json"
     manifest_digest = digest(manifest_path)
     manifest = json.loads(manifest_path.read_text())
-    expected = dict(symbol=expected_symbol, input_contract_id=INPUT,
+    expected = dict(schema="narrowgate.semantic_model_bundle.v1", symbol=expected_symbol, input_contract_id=INPUT,
                     observation_contract_id=CONTRACT, feature_contract_id=FEATURE_CONTRACT,
                     reference_market=None)
     if any(manifest.get(k) != v for k, v in expected.items()):
@@ -60,7 +60,7 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
         if identity != manifest.get("training_identity") or selection.get("external_panel_read_during_fit") is not False:
             raise ValueError("mixed training identity")
         validate_variance_unit_contract(meta.get("volatility_unit_contract"), symbol=expected_symbol)
-        if name.startswith("vol_") and meta.get("label_semantics") != ABSOLUTE_PRICE_VARIANCE_SEMANTICS:
+        if name.startswith("absolute_price_variance_rate_") and meta.get("label_semantics") != ABSOLUTE_PRICE_VARIANCE_SEMANTICS:
             raise ValueError("public model variance label mismatch")
         schemas.add(tuple(names))
         metadata[name] = {**meta, **spec}

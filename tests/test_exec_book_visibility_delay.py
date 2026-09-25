@@ -263,7 +263,9 @@ def _message_schedule_replay_inputs(*, crossing_fill: bool = False):
     }
     delivery["trade"]["last_child_row_index"] = np.asarray([0, 4, 6, 7])
     params = {
-        "gamma": 0.01, "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
+        "inventory_reference_qty": 1.0,
+        "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01,
+        "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
         "requote_interval": 1.0, "rq_min": 1.0, "rq_max": 1.0, "requote_clock": "fixed",
         "maker_fee": 0.0, "taker_fee": 0.0, "tick_size": 0.1, "lot_size": 0.001,
         "queue_base": 0.0, "queue_decay": 0.0, "maker_fill_prob": 1.0,
@@ -1434,7 +1436,8 @@ def test_refill_features_use_depth_visibility_clock() -> None:
         ask_qty=np.ones((ts.size, levels)),
     )
     params = {
-        "gamma": 0.01,
+        "inventory_reference_qty": 1.0,
+        "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01,
         "kappa": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,
@@ -1540,7 +1543,8 @@ def test_source_offset_does_not_make_paired_depth_age_negative() -> None:
         ask_qty=np.ones((trade_ts.size, 1)),
     )
     params = {
-        "gamma": 0.01,
+        "inventory_reference_qty": 1.0,
+        "eta_inventory": 0.01, "a_spread": 0.01, "risk_per_order": 0.01,
         "kappa": 1.0,
         "maker_fee": 0.0,
         "max_inventory": 0.01,

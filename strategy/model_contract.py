@@ -12,11 +12,11 @@ from typing import Any
 from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
 
 REQUIRED_MODEL_HEADS = (
-    "dir_10s", "dir_30s", "dir_60s",
-    "vol_10s", "vol_30s", "vol_60s",
-    "ret_10s", "ret_30s", "ret_60s",
-    "tox_bid_5s", "tox_ask_5s",
-    "tox_bid_10s", "tox_ask_10s",
+    "touch_conditioned_up_probability_10000ms", "touch_conditioned_up_probability_30000ms", "touch_conditioned_up_probability_60000ms",
+    "absolute_price_variance_rate_10000ms", "absolute_price_variance_rate_30000ms", "absolute_price_variance_rate_60000ms",
+    "touch_conditioned_price_change_fraction_10000ms", "touch_conditioned_price_change_fraction_30000ms", "touch_conditioned_price_change_fraction_60000ms",
+    "touch_side_adverse_probability_bid_5000ms", "touch_side_adverse_probability_ask_5000ms",
+    "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms",
 )
 
 ABSOLUTE_PRICE_VARIANCE_SEMANTICS = "fixed_forward_h_absolute_price_variance"
@@ -179,7 +179,7 @@ def _legacy_authorization_variance_contract(root: Path) -> Mapping[str, Any] | N
 def f03_direct_quote_action_contract(meta: Mapping[str, Any]) -> dict[str, Any]:
     """Return a fail-closed, explicitly declared F03 quote-action contract.
 
-    Existing F03 ``ret_10s`` labels are fill-conditioned outcomes spanning
+    Existing F03 ``touch_conditioned_price_change_fraction_10000ms`` labels are fill-conditioned outcomes spanning
     10--20 seconds.  Their historical name is not permission to consume them
     as a point-horizon quote-center action.  A future action model must carry
     this separate contract; absence deliberately returns an incompatible
@@ -561,7 +561,7 @@ def validate_model_bundle(
         if promotion_authority == "research_only" and not allow_research_only:
             errors.append(f"{meta_path.name} is research_only and cannot enter live")
             continue
-        if name.startswith("vol_"):
+        if name.startswith("absolute_price_variance_rate_"):
             semantics = str(meta.get("label_semantics") or "")
             if semantics != ABSOLUTE_PRICE_VARIANCE_SEMANTICS:
                 errors.append(

@@ -30,7 +30,7 @@ def _assert_accounted(timings: dict[str, Any]) -> None:
 
 def test_compute_signal_cached_path_returns_same_prediction_without_prediction_or_commit() -> None:
     engine = _engine_ready_for_signal()
-    cached = Prediction(ts=123.0, dir_10s=0.61)
+    cached = Prediction(ts=123.0, touch_conditioned_up_probability_10000ms=0.61)
     engine._last_prediction = cached
     engine._process_completed_feature_buckets_locked = lambda _bars: []
     timings: dict[str, Any] = {}
@@ -59,7 +59,7 @@ def test_compute_signal_new_and_catch_up_paths_preserve_order_and_commit_once(
     feature_batches = [{"sequence": index} for index in range(bucket_count)]
     seen: list[dict[str, int]] = []
     predictions = [
-        Prediction(ts=float(index), dir_10s=0.5 + index * 0.01)
+        Prediction(ts=float(index), touch_conditioned_up_probability_10000ms=0.5 + index * 0.01)
         for index in range(bucket_count)
     ]
     engine._process_completed_feature_buckets_locked = lambda _bars: feature_batches
@@ -102,7 +102,7 @@ def test_compute_signal_snapshot_feature_exception_propagates_and_closes_partial
 
 def test_compute_signal_prediction_exception_propagates_without_committing() -> None:
     engine = _engine_ready_for_signal()
-    cached = Prediction(ts=123.0, dir_10s=0.61)
+    cached = Prediction(ts=123.0, touch_conditioned_up_probability_10000ms=0.61)
     engine._last_prediction = cached
     engine._process_completed_feature_buckets_locked = lambda _bars: [{"sequence": 0}]
 
@@ -126,7 +126,7 @@ def test_compute_signal_without_timing_sink_keeps_clock_free_cached_fast_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
-    cached = Prediction(ts=123.0, dir_10s=0.61)
+    cached = Prediction(ts=123.0, touch_conditioned_up_probability_10000ms=0.61)
     engine._last_prediction = cached
 
     def unexpected_clock() -> int:
@@ -157,7 +157,7 @@ def test_compute_signal_cached_bucket_returns_before_bar_ring_copy() -> None:
             raise AssertionError("cached signal path copied or iterated the bar ring")
 
     engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
-    cached = Prediction(ts=123.0, dir_10s=0.61)
+    cached = Prediction(ts=123.0, touch_conditioned_up_probability_10000ms=0.61)
     engine._last_prediction = cached
     engine._last_processed_bucket = 20_000
     engine._bar_buffer = NoIterationBarRing()  # type: ignore[assignment]

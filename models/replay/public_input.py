@@ -152,7 +152,7 @@ def public_predictions(frames, signal_engine, cross_columns):
         raise ValueError("no public feature frames in the requested interval")
     timestamps = np.asarray([(f.cutoff_ns+999_999)//1_000_000 for f in frames], dtype=np.int64)
     heads = [np.asarray([getattr(p, name) for p in predictions], dtype=np.float64)
-             for name in ("dir_10s", "vol_10s", "ret_10s", "tox_bid_10s", "tox_ask_10s")]
+             for name in ("touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms")]
     # Explicit unavailable reference columns, not neutralized fake observations.
     cross = [np.full(len(frames), np.nan) for _ in cross_columns]
     mappings = [dict(f.values) for f in frames]

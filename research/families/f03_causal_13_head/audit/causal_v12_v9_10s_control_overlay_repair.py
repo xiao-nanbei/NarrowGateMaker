@@ -38,21 +38,21 @@ ROWS_PER_DAY = 8_640
 MAIN_ARRAY_COUNT = 6 + len(bt.XMARKET_REPLAY_FEATURE_COLUMNS)
 EXPECTED_TUPLE_LENGTH = MAIN_ARRAY_COUNT + 1
 EXPECTED_HEADS = (
-    "dir_10s",
-    "ret_10s",
-    "vol_10s",
-    "dir_30s",
-    "ret_30s",
-    "vol_30s",
-    "dir_60s",
-    "ret_60s",
-    "vol_60s",
-    "tox_bid_5s",
-    "tox_ask_5s",
-    "tox_bid_10s",
-    "tox_ask_10s",
+    "touch_conditioned_up_probability_10000ms",
+    "touch_conditioned_price_change_fraction_10000ms",
+    "absolute_price_variance_rate_10000ms",
+    "touch_conditioned_up_probability_30000ms",
+    "touch_conditioned_price_change_fraction_30000ms",
+    "absolute_price_variance_rate_30000ms",
+    "touch_conditioned_up_probability_60000ms",
+    "touch_conditioned_price_change_fraction_60000ms",
+    "absolute_price_variance_rate_60000ms",
+    "touch_side_adverse_probability_bid_5000ms",
+    "touch_side_adverse_probability_ask_5000ms",
+    "touch_side_adverse_probability_bid_10000ms",
+    "touch_side_adverse_probability_ask_10000ms",
 )
-POLICY_HEADS = ("dir_10s", "vol_10s", "ret_10s", "tox_bid_10s", "tox_ask_10s")
+POLICY_HEADS = ("touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms")
 LABEL_COLUMNS = frozenset(f"label_{head}" for head in EXPECTED_HEADS)
 DROP_COLUMNS = frozenset(("open", "high", "low", "vwap", "sample_weight"))
 PLAN_FILENAME = "execution-plan.json"
@@ -741,8 +741,8 @@ def _generate_ml_data(
         if not np.isfinite(values).all():
             raise ControlOverlayRepairError(f"{head} generated nonfinite predictions")
         predictions[head] = values
-    predictions["vol_10s"] = np.maximum(predictions["vol_10s"], 0.0)
-    for head in ("tox_bid_10s", "tox_ask_10s"):
+    predictions["absolute_price_variance_rate_10000ms"] = np.maximum(predictions["absolute_price_variance_rate_10000ms"], 0.0)
+    for head in ("touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms"):
         predictions[head] = np.clip(predictions[head], 0.0, 1.0)
     xmarket = []
     for column in bt.XMARKET_REPLAY_FEATURE_COLUMNS:
@@ -756,11 +756,11 @@ def _generate_ml_data(
     }
     return (
         canonical_visibility_grid(day),
-        predictions["dir_10s"],
-        predictions["vol_10s"],
-        predictions["ret_10s"],
-        predictions["tox_bid_10s"],
-        predictions["tox_ask_10s"],
+        predictions["touch_conditioned_up_probability_10000ms"],
+        predictions["absolute_price_variance_rate_10000ms"],
+        predictions["touch_conditioned_price_change_fraction_10000ms"],
+        predictions["touch_side_adverse_probability_bid_10000ms"],
+        predictions["touch_side_adverse_probability_ask_10000ms"],
         *xmarket,
         feature_mapping,
     )

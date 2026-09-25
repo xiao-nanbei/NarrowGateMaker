@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -22,8 +21,6 @@ from typing import Any
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from models import backtest_tick as bt  # noqa: E402
 from models.backtest_config import (  # noqa: E402
@@ -560,7 +557,7 @@ def _write_markdown(
     path.write_text("\n".join(lines) + "\n")
 
 
-def main() -> None:
+def run_cli(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbol", default=DEFAULT_SYMBOL)
     parser.add_argument(
@@ -724,7 +721,7 @@ def main() -> None:
         default=None,
         help="Near-book L2 levels used for refill/cancel trace fields (default: replay default 5).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.strict_calibration and not args.require_formal_l2:
         raise SystemExit(
             "--strict-calibration order-level evidence also requires --require-formal-l2"
@@ -905,4 +902,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use the installed narrowgate quote-diagnostics command")

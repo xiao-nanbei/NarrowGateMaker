@@ -102,8 +102,8 @@ def _fake_environment(monkeypatch, *, arm):
 
     class Base:
         def compute_feature_frames(self, frames):
-            return [Prediction(dir_10s=.5, vol_10s=3., ret_10s=.01,
-                               tox_bid_10s=.2, tox_ask_10s=.3) for _ in frames]
+            return [Prediction(touch_conditioned_up_probability_10000ms=.5, absolute_price_variance_rate_10000ms=3., touch_conditioned_price_change_fraction_10000ms=.01,
+                               touch_side_adverse_probability_bid_10000ms=.2, touch_side_adverse_probability_ask_10000ms=.3) for _ in frames]
 
     monkeypatch.setattr(SignalEngine, "from_public_models", classmethod(
         lambda _cls, *_args, **_kwargs: Base()))
@@ -123,10 +123,10 @@ def test_f04_real_signal_entry_replaces_only_direction(monkeypatch, arm):
     frames = [SimpleNamespace(cutoff_ns=100, local=1),
               SimpleNamespace(cutoff_ns=200, local=0)]
     predictions = engine.compute_feature_frames(frames)
-    assert [row.dir_10s for row in predictions] == [.75, .25]
-    assert [row.vol_10s for row in predictions] == [3., 3.]
-    assert [row.ret_10s for row in predictions] == [.01, .01]
-    assert [row.tox_bid_10s for row in predictions] == [.2, .2]
+    assert [row.touch_conditioned_up_probability_10000ms for row in predictions] == [.75, .25]
+    assert [row.absolute_price_variance_rate_10000ms for row in predictions] == [3., 3.]
+    assert [row.touch_conditioned_price_change_fraction_10000ms for row in predictions] == [.01, .01]
+    assert [row.touch_side_adverse_probability_bid_10000ms for row in predictions] == [.2, .2]
     assert engine.report()["decisions"] == 2
     assert engine.report()["reference_market"] == (
         direction.REFERENCE_MARKET if arm == "M1" else None)
@@ -192,7 +192,7 @@ def test_f04_real_panel_entry_preserves_actual_end_and_denominator(tmp_path):
     contract_path = Path(spec["contract_path"])
     contract = json.loads(contract_path.read_text())
     contract["status"] = "frozen_before_reference_production_and_evaluation_outcome_read"
-    contract["prediction"] = {"target": "existing F03 label_dir_10s, binary",
+    contract["prediction"] = {"target": "existing F03 label_touch_conditioned_up_probability_10000ms, binary",
                               "reference_columns": ["spread_bps"]}
     contract["observation"]["reference_asof_max_age_ns"] = 10_000_000_000
     contract["bound_existing_fit_inputs"][day]["execution_consumer_manifest_sha256"] = digest(
@@ -230,7 +230,7 @@ def test_f04_fixed_pair_fits_real_lightgbm_and_reloads_without_selection(tmp_pat
                 "fit_days_utc": [day], "bound_existing_fit_inputs": {day: {
                     "execution_consumer_manifest_sha256": execution_sha,
                     "label_manifest_sha256": label_sha}},
-                "prediction": {"target": "existing F03 label_dir_10s, binary",
+                "prediction": {"target": "existing F03 label_touch_conditioned_up_probability_10000ms, binary",
                                "reference_columns": ["spread_bps"],
                                "frozen_F03_inf_model_manifest_sha256": "a" * 64},
                 "budget": {"new_fit_calls": 2, "inner_selection_calls": 0, "refits": 0,
@@ -477,7 +477,7 @@ def test_f04_eval_locator_rebinding_needs_exact_two_step_parent(tmp_path, monkey
                     "reference_currency_conversion":
                     "none; only currency-invariant reference features admitted"},
         "fit_days_utc": [DAY], "bound_existing_fit_inputs": {DAY: {}},
-        "prediction": {"target": "existing F03 label_dir_10s, binary"},
+        "prediction": {"target": "existing F03 label_touch_conditioned_up_probability_10000ms, binary"},
         "evaluation": {"execution_consumer_manifest_sha256": frozen_sha,
                        "account_start_utc": pd.Timestamp(START_NS + 1_000_000_000,
                                                          unit="ns", tz="UTC").isoformat(),

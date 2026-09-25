@@ -342,7 +342,7 @@ def test_missing_model_features_fail_unless_exploratory_opt_in(tmp_path):
         ensure_model_feature_columns(
             features,
             ["present", "missing"],
-            model_name="dir_10s",
+            model_name="touch_conditioned_up_probability_10000ms",
             feature_dir=tmp_path,
             allow_missing_features=False,
         )
@@ -350,7 +350,7 @@ def test_missing_model_features_fail_unless_exploratory_opt_in(tmp_path):
     exploratory = ensure_model_feature_columns(
         features,
         ["present", "missing"],
-        model_name="dir_10s",
+        model_name="touch_conditioned_up_probability_10000ms",
         feature_dir=tmp_path,
         allow_missing_features=True,
     )
@@ -381,7 +381,7 @@ def test_strict_calibration_rejects_legacy_ml_timestamp_contract(tmp_path):
     config.write_text("project_name: NarrowGate\n", encoding="utf-8")
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    (model_dir / "dir_10s_meta.json").write_text(
+    (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps({"feature_cols": ["vol_regime_zscore"]}),
         encoding="utf-8",
     )
@@ -396,7 +396,7 @@ def test_strict_calibration_accepts_causal_ml_contract(tmp_path):
     config.write_text("project_name: NarrowGate\n", encoding="utf-8")
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    (model_dir / "dir_10s_meta.json").write_text(
+    (model_dir / "touch_conditioned_up_probability_10000ms_meta.json").write_text(
         json.dumps(
             {
                 "feature_cols": ["return_1"],

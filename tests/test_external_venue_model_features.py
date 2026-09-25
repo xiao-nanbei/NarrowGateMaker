@@ -249,11 +249,14 @@ def test_fast_target_specs_accept_dense_nonlegacy_horizons() -> None:
 
 
 def test_target_identity_is_cadence_aware_at_ten_seconds() -> None:
+    # Fixed-time price direction is not the touch-conditioned F03 target.
     assert target_spec("dir_10s", cadence="fast1s") == (
         "label_fast_dir_10s",
         "binary",
     )
-    assert target_spec("dir_10s", cadence="10s") == ("label_dir_10s", "binary")
+    assert target_spec("touch_conditioned_up_probability_10000ms", cadence="10s") == ("label_touch_conditioned_up_probability_10000ms", "binary")
+    with pytest.raises(ValueError, match="unsupported external target"):
+        target_spec("touch_conditioned_up_probability_10000ms", cadence="fast1s")
 
 
 def test_missing_source_age_is_imputed_as_stale() -> None:

@@ -15,16 +15,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from data_paths import (  # noqa: E402
+from data_paths import (
     cache_root,
     data_root,
     marketdata_root,
     window_cache_root,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 REDACTED_PATH = "<redacted; run `narrowgate paths`>"
 
@@ -99,7 +97,9 @@ def cmd_quote_demo(_args: argparse.Namespace) -> int:
             trade_intensity=100.0,
         ),
         QuoteCoreConfig(
-            gamma=0.01,
+            eta_inventory=0.01,
+            a_spread=0.01,
+            risk_per_order=0.01,
             kappa=1.0,
             tick_size=0.1,
             lot_size=0.001,
@@ -108,7 +108,7 @@ def cmd_quote_demo(_args: argparse.Namespace) -> int:
             max_inventory=0.01,
             max_spread_bps=20.0,
         ),
-        QuotePrediction(dir_10s=0.5, vol_10s=2.0, ret_10s=0.0, tox_bid=0.5, tox_ask=0.5),
+        QuotePrediction(touch_conditioned_up_probability_10000ms=0.5, absolute_price_variance_rate_10000ms=2.0, touch_conditioned_price_change_fraction_10000ms=0.0, tox_bid=0.5, tox_ask=0.5),
         DepthSnapshot(
             bids=((59_999.9, 1.2), (59_999.8, 2.0)),
             asks=((60_000.1, 1.1), (60_000.2, 2.2)),
@@ -202,11 +202,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_demo.set_defaults(func=cmd_replay_demo)
 
+    audit = sub.add_parser("fill-depth-audit", help="F10 fill/depth diagnostics")
+    audit.add_argument("--symbol", required=True)
+    audit.add_argument("--days", nargs="+", required=True)
+    audit.add_argument("--tag", required=True)
+    audit.add_argument("--trace-fills-max", type=int, default=200_000)
+    audit.set_defaults(func=cmd_fill_depth_audit)
+
+    replay = sub.add_parser("replay", help="configured offline tick replay", add_help=False)
+    replay.add_argument("replay_args", nargs=argparse.REMAINDER)
+    replay.set_defaults(func=cmd_replay)
+
+    for command in ("tick-ab", "quote-diagnostics"):
+        child = sub.add_parser(command, add_help=False)
+        child.add_argument("replay_args", nargs=argparse.REMAINDER)
+        child.set_defaults(func=cmd_research_replay, replay_kind=command)
+
     studio = sub.add_parser("studio", help="remote replay control service and worker")
     studio.add_argument("studio_args", nargs=argparse.REMAINDER)
     studio.set_defaults(func=cmd_studio)
 
     return parser
+
+
+def cmd_fill_depth_audit(args: argparse.Namespace) -> int:
+    from research.families.f10_live_replay_attribution.fill_depth_diagnostics import run_fill_depth_audit
+
+    run_fill_depth_audit(args.symbol.upper(), args.days, args.tag, args.trace_fills_max)
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    from models.backtest_tick import run_cli
+
+    run_cli(args.replay_args)
+    return 0
+
+
+def cmd_research_replay(args: argparse.Namespace) -> int:
+    if args.replay_kind == "tick-ab":
+        from models.tick_ab import run_cli
+    else:
+        from models.quote_decomposition_tick import run_cli
+    run_cli(args.replay_args)
+    return 0
 
 
 def cmd_data(args: argparse.Namespace) -> int:
@@ -223,6 +262,11 @@ def cmd_studio(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     selected = list(sys.argv[1:] if argv is None else argv)
+    if selected and selected[0] == "replay":
+        return cmd_replay(argparse.Namespace(replay_args=selected[1:]))
+    if selected and selected[0] in {"tick-ab", "quote-diagnostics"}:
+        return cmd_research_replay(argparse.Namespace(
+            replay_kind=selected[0], replay_args=selected[1:]))
     if selected and selected[0] == "data":
         from data.__main__ import main as data_main
         return int(data_main(selected[1:]))

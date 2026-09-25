@@ -25,9 +25,9 @@ def identity(meaning):
 def test_actual_train_one_keeps_panel_clock(monkeypatch, meaning):
     monkeypatch.setattr(trainer, "_feature_panel_identity", lambda: identity(meaning))
     frame = pd.DataFrame({"close": np.arange(80, dtype=float),
-                          "label_ret_10s": np.arange(80, dtype=float) / 1000})
+                          "label_touch_conditioned_price_change_fraction_10000ms": np.arange(80, dtype=float) / 1000})
     frame.attrs["decision_time_semantics"] = meaning
-    model, metadata = trainer.train_one("ret_10s", frame.iloc[:60], frame.iloc[60:],
+    model, metadata = trainer.train_one("touch_conditioned_price_change_fraction_10000ms", frame.iloc[:60], frame.iloc[60:],
         params_override={"n_estimators": 2, "num_threads": 1, "verbosity": -1,
                          "min_child_samples": 2})
     assert model.booster_.num_feature() == 1
@@ -48,7 +48,7 @@ def test_train_one_rejects_conflict_before_fitting(monkeypatch, mutation):
         frame.attrs["decision_time_semantics"] = "left_label_bucket_end"
     monkeypatch.setattr(trainer, "_feature_panel_identity", lambda: panel)
     with pytest.raises(ValueError, match="clock declarations"):
-        trainer.train_one("ret_10s", frame, frame)
+        trainer.train_one("touch_conditioned_price_change_fraction_10000ms", frame, frame)
 
 
 @pytest.mark.parametrize("unit", ["ms", "us", "ns"])
@@ -84,4 +84,4 @@ def test_actual_train_rejects_legacy_weights_on_ready_panel(monkeypatch):
     contract = SimpleNamespace(sample_weight_policy={
         "schema_version": "narrowgate.f03.time_half_life_daily.v1"})
     with pytest.raises(ValueError, match="weighting and panel"):
-        trainer.train_one("ret_10s", pd.DataFrame(), pd.DataFrame(), selection_contract=contract)
+        trainer.train_one("touch_conditioned_price_change_fraction_10000ms", pd.DataFrame(), pd.DataFrame(), selection_contract=contract)

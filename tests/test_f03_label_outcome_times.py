@@ -37,7 +37,7 @@ def test_explicit_frame_decision_does_not_add_legacy_period_or_use_unclosed_bar(
     expected = fe._prepare_1s_label_context(bars)[-1][39:239:10]
     np.testing.assert_array_equal(captured[0], expected)
     # First complete outcome Bar starts at41, markout starts51 and closes52.
-    assert result.iloc[0]["label_outcome_end_ret_10s"] == seconds[52]
+    assert result.iloc[0]["label_outcome_end_touch_conditioned_price_change_fraction_10000ms"] == seconds[52]
     with pytest.raises(ValueError, match="timezone-aware"):
         fe.add_labels(features, bars, decision_times=decisions.tz_localize(None))
 
@@ -107,8 +107,8 @@ def test_add_labels_outcome_helpers_are_opt_in_and_masked_with_labels(monkeypatc
         assert actual[col].isna().equals(actual[label].isna())
         valid = actual[col].notna()
         assert (actual.loc[valid, col] >= actual.index[valid] + pd.Timedelta(seconds=10)).all()
-    assert actual.iloc[0]["label_outcome_end_ret_10s"] == seconds[21]
-    assert actual.iloc[0]["label_outcome_end_vol_10s"] == seconds[20]
+    assert actual.iloc[0]["label_outcome_end_touch_conditioned_price_change_fraction_10000ms"] == seconds[21]
+    assert actual.iloc[0]["label_outcome_end_absolute_price_variance_rate_10000ms"] == seconds[20]
 
 
 def test_sparse_traded_seconds_use_same_dense_label_grid_as_feature_pipeline(monkeypatch):
@@ -133,5 +133,5 @@ def test_sparse_traded_seconds_use_same_dense_label_grid_as_feature_pipeline(mon
     actual = fe.add_labels(features.copy(), dense, include_outcome_times=True)
     reference = fe.add_labels(features.copy(), expected, include_outcome_times=True)
     pd.testing.assert_frame_equal(actual, reference)
-    assert actual.iloc[0]["label_outcome_end_vol_10s"] == seconds[22]
-    assert actual.iloc[0]["label_outcome_end_ret_10s"] == seconds[24]
+    assert actual.iloc[0]["label_outcome_end_absolute_price_variance_rate_10000ms"] == seconds[22]
+    assert actual.iloc[0]["label_outcome_end_touch_conditioned_price_change_fraction_10000ms"] == seconds[24]

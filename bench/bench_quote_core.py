@@ -61,12 +61,12 @@ def _data(n: int):
     trade_intensity = 80.0 + (np.sin(idx / 37.0) + 1.0) * 80.0
     best_bid = mid - 0.1
     best_ask = mid + 0.1
-    dir_10s = 0.5 + np.sin(idx / 29.0) * 0.08
-    vol_10s = 0.5 + (np.cos(idx / 43.0) + 1.0) * 0.5
-    ret_10s = np.sin(idx / 97.0) * 2e-5
+    touch_conditioned_up_probability_10000ms = 0.5 + np.sin(idx / 29.0) * 0.08
+    absolute_price_variance_rate_10000ms = 0.5 + (np.cos(idx / 43.0) + 1.0) * 0.5
+    touch_conditioned_price_change_fraction_10000ms = np.sin(idx / 97.0) * 2e-5
     tox_bid = 0.5 + np.maximum(0.0, np.sin(idx / 31.0)) * 0.2
     tox_ask = 0.5 + np.maximum(0.0, np.cos(idx / 31.0)) * 0.2
-    return mid, inventory, sigma_sq, trade_intensity, best_bid, best_ask, dir_10s, vol_10s, ret_10s, tox_bid, tox_ask
+    return mid, inventory, sigma_sq, trade_intensity, best_bid, best_ask, touch_conditioned_up_probability_10000ms, absolute_price_variance_rate_10000ms, touch_conditioned_price_change_fraction_10000ms, tox_bid, tox_ask
 
 
 def _timeit(label: str, fn, n: int):
@@ -87,7 +87,7 @@ def main() -> None:
     cfg = _cfg()
     cpp_cfg = _cpp_cfg(cfg)
     arrays = _data(n)
-    mid, inventory, sigma_sq, trade_intensity, best_bid, best_ask, dir_10s, vol_10s, ret_10s, tox_bid, tox_ask = arrays
+    mid, inventory, sigma_sq, trade_intensity, best_bid, best_ask, touch_conditioned_up_probability_10000ms, absolute_price_variance_rate_10000ms, touch_conditioned_price_change_fraction_10000ms, tox_bid, tox_ask = arrays
 
     def python_loop():
         total = 0.0
@@ -105,9 +105,9 @@ def main() -> None:
                 ),
                 cfg,
                 qc.QuotePrediction(
-                    dir_10s=float(dir_10s[i]),
-                    vol_10s=float(vol_10s[i]),
-                    ret_10s=float(ret_10s[i]),
+                    touch_conditioned_up_probability_10000ms=float(touch_conditioned_up_probability_10000ms[i]),
+                    absolute_price_variance_rate_10000ms=float(absolute_price_variance_rate_10000ms[i]),
+                    touch_conditioned_price_change_fraction_10000ms=float(touch_conditioned_price_change_fraction_10000ms[i]),
                     tox_bid=float(tox_bid[i]),
                     tox_ask=float(tox_ask[i]),
                 ),
@@ -128,9 +128,9 @@ def main() -> None:
             state.mo_ema_bid = -1.0
             state.mo_ema_ask = -1.0
             pred = narrowgate_cpp.QuotePrediction()
-            pred.dir_10s = float(dir_10s[i])
-            pred.vol_10s = float(vol_10s[i])
-            pred.ret_10s = float(ret_10s[i])
+            pred.touch_conditioned_up_probability_10000ms = float(touch_conditioned_up_probability_10000ms[i])
+            pred.absolute_price_variance_rate_10000ms = float(absolute_price_variance_rate_10000ms[i])
+            pred.touch_conditioned_price_change_fraction_10000ms = float(touch_conditioned_price_change_fraction_10000ms[i])
             pred.tox_bid = float(tox_bid[i])
             pred.tox_ask = float(tox_ask[i])
             result = narrowgate_cpp.compute_quote_core(state, cpp_cfg, pred)
@@ -145,9 +145,9 @@ def main() -> None:
             trade_intensity,
             best_bid,
             best_ask,
-            dir_10s,
-            vol_10s,
-            ret_10s,
+            touch_conditioned_up_probability_10000ms,
+            absolute_price_variance_rate_10000ms,
+            touch_conditioned_price_change_fraction_10000ms,
             tox_bid,
             tox_ask,
             cpp_cfg,

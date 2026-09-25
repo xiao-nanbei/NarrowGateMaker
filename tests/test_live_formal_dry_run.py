@@ -157,7 +157,7 @@ def test_formal_dry_run_rejects_invalid_model_contract_without_leaking_secrets(
 ) -> None:
     bundle = tmp_path / "bundle"
     shutil.copytree(PUBLIC_BUNDLE, bundle)
-    metadata_path = bundle / "dir_10s_meta.json"
+    metadata_path = bundle / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["feature_semantics_version"] = -1
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -187,7 +187,7 @@ def test_formal_dry_run_rejects_synthetic_model_byte_tampering(
 ) -> None:
     bundle = tmp_path / "bundle"
     shutil.copytree(PUBLIC_BUNDLE, bundle)
-    model_path = bundle / "dir_10s.txt"
+    model_path = bundle / "touch_conditioned_up_probability_10000ms.txt"
     model_path.write_bytes(model_path.read_bytes() + b"\n")
     config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
     config["ml"]["enabled"] = True
@@ -201,7 +201,7 @@ def test_formal_dry_run_rejects_synthetic_model_byte_tampering(
     result = _summary(output.getvalue())
     assert exit_code == 1
     assert result["status"] == "failed"
-    assert "public synthetic bundle byte count mismatch for dir_10s.txt" in result[
+    assert "public synthetic bundle byte count mismatch for touch_conditioned_up_probability_10000ms.txt" in result[
         "error"
     ]["message"]
 

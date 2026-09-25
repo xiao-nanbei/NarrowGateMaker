@@ -25,9 +25,9 @@ def _cfg() -> QuoteCoreConfig:
 
 def _pred() -> QuotePrediction:
     return QuotePrediction(
-        dir_10s=0.5,
-        vol_10s=1.0,
-        ret_10s=0.0,
+        touch_conditioned_up_probability_10000ms=0.5,
+        absolute_price_variance_rate_10000ms=1.0,
+        touch_conditioned_price_change_fraction_10000ms=0.0,
         tox_bid=0.0,
         tox_ask=0.0,
     )

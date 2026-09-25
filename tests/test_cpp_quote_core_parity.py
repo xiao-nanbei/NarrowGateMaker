@@ -671,7 +671,9 @@ def test_native_order_gateway_refuses_nonexistent_usdm_fix_backend():
 
 def _cfg(**overrides):
     values = dict(
-        gamma=0.01,
+        eta_inventory=0.01,
+        a_spread=0.01,
+        risk_per_order=0.01,
         kappa=1.0,
         tick_size=0.1,
         lot_size=0.001,
@@ -709,7 +711,10 @@ def test_spread_cap_missing_field_defaults_fail_closed_in_python_and_cpp():
     )
     assert qc.quote_core_config_from_params(
         {
-            "gamma": 0.01,
+            "eta_inventory": 0.01,
+            "a_spread": 0.01,
+            "risk_per_order": 0.01,
+            "inventory_reference_qty": 1.0,
             "kappa": 1.0,
             "maker_fee": 0.0,
             "order_size": 0.001,
@@ -822,9 +827,9 @@ def _state(i=0, **overrides):
 
 def _pred(i=0):
     return qc.QuotePrediction(
-        dir_10s=0.45 + i * 0.02,
-        vol_10s=1.5,
-        ret_10s=(i - 2) * 1e-5,
+        touch_conditioned_up_probability_10000ms=0.45 + i * 0.02,
+        absolute_price_variance_rate_10000ms=1.5,
+        touch_conditioned_price_change_fraction_10000ms=(i - 2) * 1e-5,
         tox_bid=0.55,
         tox_ask=0.52,
     )
@@ -924,7 +929,7 @@ def test_cpp_p3_side_floor_constraint_flags_are_side_specific(monkeypatch):
 
 
 def test_cpp_direct_missing_inventory_coefficient_is_rejected():
-    cfg = _cfg(gamma=0.02)
+    cfg = _cfg(eta_inventory=0.02, a_spread=0.02, risk_per_order=0.02)
     state = _state(1)
     pred = _pred(1)
     depth = qc.DepthSnapshot()
@@ -1384,9 +1389,9 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
         defense_emergency_loss=20.0,
     )
     pred = qc.QuotePrediction(
-        dir_10s=0.56,
-        vol_10s=1.8,
-        ret_10s=2e-5,
+        touch_conditioned_up_probability_10000ms=0.56,
+        absolute_price_variance_rate_10000ms=1.8,
+        touch_conditioned_price_change_fraction_10000ms=2e-5,
         tox_bid=0.8,
         tox_ask=0.4,
     )
@@ -1568,9 +1573,9 @@ def test_cpp_quote_core_batch_parity(monkeypatch):
     trade_intensity = np.full(n, 100.0, dtype=np.float64)
     best_bid = mid - 0.1
     best_ask = mid + 0.1
-    dir_10s = np.linspace(0.45, 0.55, n, dtype=np.float64)
-    vol_10s = np.full(n, 1.0, dtype=np.float64)
-    ret_10s = np.linspace(-2e-5, 2e-5, n, dtype=np.float64)
+    touch_conditioned_up_probability_10000ms = np.linspace(0.45, 0.55, n, dtype=np.float64)
+    absolute_price_variance_rate_10000ms = np.full(n, 1.0, dtype=np.float64)
+    touch_conditioned_price_change_fraction_10000ms = np.linspace(-2e-5, 2e-5, n, dtype=np.float64)
     tox_bid = np.full(n, 0.5, dtype=np.float64)
     tox_ask = np.full(n, 0.5, dtype=np.float64)
 
@@ -1581,9 +1586,9 @@ def test_cpp_quote_core_batch_parity(monkeypatch):
         trade_intensity,
         best_bid,
         best_ask,
-        dir_10s,
-        vol_10s,
-        ret_10s,
+        touch_conditioned_up_probability_10000ms,
+        absolute_price_variance_rate_10000ms,
+        touch_conditioned_price_change_fraction_10000ms,
         tox_bid,
         tox_ask,
         cpp_cfg,
@@ -1602,9 +1607,9 @@ def test_cpp_quote_core_batch_parity(monkeypatch):
             ),
             cfg,
             qc.QuotePrediction(
-                dir_10s=float(dir_10s[i]),
-                vol_10s=float(vol_10s[i]),
-                ret_10s=float(ret_10s[i]),
+                touch_conditioned_up_probability_10000ms=float(touch_conditioned_up_probability_10000ms[i]),
+                absolute_price_variance_rate_10000ms=float(absolute_price_variance_rate_10000ms[i]),
+                touch_conditioned_price_change_fraction_10000ms=float(touch_conditioned_price_change_fraction_10000ms[i]),
                 tox_bid=float(tox_bid[i]),
                 tox_ask=float(tox_ask[i]),
             ),
@@ -1631,9 +1636,9 @@ def test_cpp_quote_core_batch_depth_parity(monkeypatch):
     trade_intensity = np.full(n, 100.0, dtype=np.float64)
     best_bid = mid - 0.1
     best_ask = mid + 0.1
-    dir_10s = np.linspace(0.45, 0.55, n, dtype=np.float64)
-    vol_10s = np.full(n, 1.0, dtype=np.float64)
-    ret_10s = np.linspace(-2e-5, 2e-5, n, dtype=np.float64)
+    touch_conditioned_up_probability_10000ms = np.linspace(0.45, 0.55, n, dtype=np.float64)
+    absolute_price_variance_rate_10000ms = np.full(n, 1.0, dtype=np.float64)
+    touch_conditioned_price_change_fraction_10000ms = np.linspace(-2e-5, 2e-5, n, dtype=np.float64)
     tox_bid = np.full(n, 0.55, dtype=np.float64)
     tox_ask = np.full(n, 0.52, dtype=np.float64)
 
@@ -1659,9 +1664,9 @@ def test_cpp_quote_core_batch_depth_parity(monkeypatch):
         trade_intensity=trade_intensity,
         best_bid=best_bid,
         best_ask=best_ask,
-        dir_10s=dir_10s,
-        vol_10s=vol_10s,
-        ret_10s=ret_10s,
+        touch_conditioned_up_probability_10000ms=touch_conditioned_up_probability_10000ms,
+        absolute_price_variance_rate_10000ms=absolute_price_variance_rate_10000ms,
+        touch_conditioned_price_change_fraction_10000ms=touch_conditioned_price_change_fraction_10000ms,
         tox_bid=tox_bid,
         tox_ask=tox_ask,
         cfg=cfg,
@@ -1680,9 +1685,9 @@ def test_cpp_quote_core_batch_depth_parity(monkeypatch):
         trade_intensity=trade_intensity,
         best_bid=best_bid,
         best_ask=best_ask,
-        dir_10s=dir_10s,
-        vol_10s=vol_10s,
-        ret_10s=ret_10s,
+        touch_conditioned_up_probability_10000ms=touch_conditioned_up_probability_10000ms,
+        absolute_price_variance_rate_10000ms=absolute_price_variance_rate_10000ms,
+        touch_conditioned_price_change_fraction_10000ms=touch_conditioned_price_change_fraction_10000ms,
         tox_bid=tox_bid,
         tox_ask=tox_ask,
         cfg=cfg,
@@ -1719,9 +1724,9 @@ def test_cpp_quote_core_batch_depth_parity(monkeypatch):
             ),
             cfg,
             qc.QuotePrediction(
-                dir_10s=float(dir_10s[i]),
-                vol_10s=float(vol_10s[i]),
-                ret_10s=float(ret_10s[i]),
+                touch_conditioned_up_probability_10000ms=float(touch_conditioned_up_probability_10000ms[i]),
+                absolute_price_variance_rate_10000ms=float(absolute_price_variance_rate_10000ms[i]),
+                touch_conditioned_price_change_fraction_10000ms=float(touch_conditioned_price_change_fraction_10000ms[i]),
                 tox_bid=float(tox_bid[i]),
                 tox_ask=float(tox_ask[i]),
             ),
@@ -1843,9 +1848,9 @@ def _native_runtime_with_valid_input():
         ("quote_state", "mo_ref"),
         ("quote_state", "hold_time_s"),
         ("quote_state", "unrealized_pnl"),
-        ("prediction", "dir_10s"),
-        ("prediction", "vol_10s"),
-        ("prediction", "ret_10s"),
+        ("prediction", "touch_conditioned_up_probability_10000ms"),
+        ("prediction", "absolute_price_variance_rate_10000ms"),
+        ("prediction", "touch_conditioned_price_change_fraction_10000ms"),
         ("prediction", "tox_bid"),
         ("prediction", "tox_ask"),
         ("buy_policy", "inventory_ratio"),
@@ -1898,8 +1903,8 @@ def test_fused_native_live_runtime_rejects_nonfinite_dynamic_abi(
         ("quote_state", "trade_intensity", -1.0),
         ("quote_state", "mo_ref", 0.0),
         ("quote_state", "hold_time_s", -1.0),
-        ("prediction", "dir_10s", 1.01),
-        ("prediction", "vol_10s", -1.0),
+        ("prediction", "touch_conditioned_up_probability_10000ms", 1.01),
+        ("prediction", "absolute_price_variance_rate_10000ms", -1.0),
         ("prediction", "tox_bid", -0.01),
         ("prediction", "tox_ask", 1.01),
         ("buy_policy", "l2_quote_flip_rate", 1.01),
@@ -2277,9 +2282,9 @@ def test_fused_native_quote_hot_plan_is_bitwise_identical_to_public_core(cfg):
         unrealized_pnl=-0.125,
     )
     prediction = qc.QuotePrediction(
-        dir_10s=0.57,
-        vol_10s=1.75,
-        ret_10s=1.25e-5,
+        touch_conditioned_up_probability_10000ms=0.57,
+        absolute_price_variance_rate_10000ms=1.75,
+        touch_conditioned_price_change_fraction_10000ms=1.25e-5,
         tox_bid=0.61,
         tox_ask=0.43,
     )
@@ -2560,7 +2565,7 @@ def test_native_quote_policy_stage_matches_separate_quote_and_policy_bits():
         mo_ema_ask=1.0,
     )
     prediction = qc.QuotePrediction(
-        dir_10s=0.61, vol_10s=0.2, ret_10s=0.0, tox_bid=0.7, tox_ask=0.2
+        touch_conditioned_up_probability_10000ms=0.61, absolute_price_variance_rate_10000ms=0.2, touch_conditioned_price_change_fraction_10000ms=0.0, tox_bid=0.7, tox_ask=0.2
     )
     depth = qc.DepthSnapshot(
         bids=((99.9, 2.0), (99.8, 3.0)),

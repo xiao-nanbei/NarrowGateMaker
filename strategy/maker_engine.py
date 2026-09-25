@@ -7602,7 +7602,7 @@ class MakerEngine:
                 f"REQUOTE #{self._requote_count} mid={mid:.1f} "
                 f"bid={bid_price:.1f}[{bid_status}] ask={ask_price:.1f}[{ask_status}] "
                 f"spread={spread:.1f}({spread/mid*10000:.1f}bps) pos={q:+.4f} "
-                f"dir={pred.dir_10s:.3f} vol={pred.vol_10s:.6f}"
+                f"dir={pred.touch_conditioned_up_probability_10000ms:.3f} vol={pred.absolute_price_variance_rate_10000ms:.6f}"
             )
         else:
             logger.debug(
@@ -7729,7 +7729,7 @@ class MakerEngine:
                 "nonzero p3_kappa_eff_override has no independently bound "
                 "touch-curve identity and is forbidden"
             )
-        ret_metadata = getattr(self.signal, "_model_metadata", {}).get("ret_10s", {})
+        ret_metadata = getattr(self.signal, "_model_metadata", {}).get("touch_conditioned_price_change_fraction_10000ms", {})
         f03_action_contract = (
             f03_direct_quote_action_contract(ret_metadata)
             if bool(getattr(cfg.ml, "enabled", False))
@@ -7854,9 +7854,9 @@ class MakerEngine:
             unrealized_pnl=float(getattr(snap, "unrealized_pnl", 0.0)),
         )
         quote_pred = QuotePrediction(
-            dir_10s=pred.dir_10s,
-            vol_10s=pred.vol_10s,
-            ret_10s=getattr(pred, "ret_10s", 0.0),
+            touch_conditioned_up_probability_10000ms=pred.touch_conditioned_up_probability_10000ms,
+            absolute_price_variance_rate_10000ms=pred.absolute_price_variance_rate_10000ms,
+            touch_conditioned_price_change_fraction_10000ms=getattr(pred, "touch_conditioned_price_change_fraction_10000ms", 0.0),
             tox_bid=tox_bid,
             tox_ask=tox_ask,
         )
@@ -8008,7 +8008,7 @@ class MakerEngine:
             logger.info(
                 f"QUOTE_DBG mid={mid:.1f} fair={diag.get('fair', mid):.1f} "
                 f"r={diag.get('reservation_price', mid):.1f} "
-                f"dir={diag.get('dir_signal', 0.0):+.3f} ret10={getattr(pred, 'ret_10s', 0.0):+.7f} "
+                f"dir={diag.get('dir_signal', 0.0):+.3f} ret10={getattr(pred, 'touch_conditioned_price_change_fraction_10000ms', 0.0):+.7f} "
                 f"r_shift={diag.get('r_shift', 0.0):+.2f} clamp=±{diag.get('rs_clamp', 0.0):.2f} "
                 f"sigma_sq_raw={diag.get('sigma_sq_raw', 0.0):.4f} "
                 f"sigma_sq_blended={diag.get('sigma_sq_blended', 0.0):.4f} "
@@ -8177,10 +8177,10 @@ class MakerEngine:
     def _toxicity_probs(self, pred: Prediction) -> tuple[float, float]:
         horizon = int(getattr(self.cfg.ml, 'toxicity_horizon_s', 10))
         horizon = 5 if horizon == 5 else 10
-        bid_attr = f"tox_bid_{horizon}s"
-        ask_attr = f"tox_ask_{horizon}s"
-        tox_bid = getattr(pred, bid_attr, 1.0 - pred.dir_10s)
-        tox_ask = getattr(pred, ask_attr, pred.dir_10s)
+        bid_attr = f"touch_side_adverse_probability_bid_{horizon * 1000}ms"
+        ask_attr = f"touch_side_adverse_probability_ask_{horizon * 1000}ms"
+        tox_bid = getattr(pred, bid_attr, 1.0 - pred.touch_conditioned_up_probability_10000ms)
+        tox_ask = getattr(pred, ask_attr, pred.touch_conditioned_up_probability_10000ms)
         tox_bid = max(0.0, min(1.0, float(tox_bid)))
         tox_ask = max(0.0, min(1.0, float(tox_ask)))
         return tox_bid, tox_ask
@@ -8191,7 +8191,7 @@ class MakerEngine:
         if ref <= 0.0:
             return 1.0
         pred = getattr(self, "_last_prediction", None)
-        vol = float(getattr(pred, "vol_10s", 0.0) or 0.0) if pred is not None else 0.0
+        vol = float(getattr(pred, "absolute_price_variance_rate_10000ms", 0.0) or 0.0) if pred is not None else 0.0
         if not math.isfinite(vol) or vol <= 0.0:
             return 1.0
         lo = float(getattr(self.cfg.strategy, "fill_cooldown_reducing_vol_min_mult", 0.5) or 0.5)
@@ -8275,8 +8275,8 @@ class MakerEngine:
         )
 
         pred = getattr(self, "_last_prediction", None)
-        ret_10s = float(getattr(pred, "ret_10s", 0.0) or 0.0) if pred is not None else 0.0
-        side_adverse_ret = max(0.0, -ret_10s) if side == "BUY" else max(0.0, ret_10s)
+        touch_conditioned_price_change_fraction_10000ms = float(getattr(pred, "touch_conditioned_price_change_fraction_10000ms", 0.0) or 0.0) if pred is not None else 0.0
+        side_adverse_ret = max(0.0, -touch_conditioned_price_change_fraction_10000ms) if side == "BUY" else max(0.0, touch_conditioned_price_change_fraction_10000ms)
 
         markout_ema = self._mo_ema_bid if side == "BUY" else self._mo_ema_ask
         campaign_age_s = 0.0
@@ -10912,7 +10912,7 @@ class MakerEngine:
                 best_ask=float(best_ask),
                 volatility_bps=(
                     math.sqrt(
-                        max(float(getattr(pred, "vol_10s", 0.0) or 0.0), 0.0)
+                        max(float(getattr(pred, "absolute_price_variance_rate_10000ms", 0.0) or 0.0), 0.0)
                     )
                     / max(0.5 * (float(bid_price) + float(ask_price)), 1e-12)
                     * 10_000.0

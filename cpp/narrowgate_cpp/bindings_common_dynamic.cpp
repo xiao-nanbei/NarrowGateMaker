@@ -810,9 +810,9 @@ void bind_common(py::module_& m) {
 
     py::class_<QuotePrediction>(m, "QuotePrediction")
         .def(py::init<>())
-        .def_readwrite("dir_10s", &QuotePrediction::dir_10s)
-        .def_readwrite("vol_10s", &QuotePrediction::vol_10s)
-        .def_readwrite("ret_10s", &QuotePrediction::ret_10s)
+        .def_readwrite("touch_conditioned_up_probability_10000ms", &QuotePrediction::touch_conditioned_up_probability_10000ms)
+        .def_readwrite("absolute_price_variance_rate_10000ms", &QuotePrediction::absolute_price_variance_rate_10000ms)
+        .def_readwrite("touch_conditioned_price_change_fraction_10000ms", &QuotePrediction::touch_conditioned_price_change_fraction_10000ms)
         .def_readwrite("tox_bid", &QuotePrediction::tox_bid)
         .def_readwrite("tox_ask", &QuotePrediction::tox_ask);
 

@@ -175,7 +175,7 @@ def test_configured_actions_reach_real_executor(bundle):
     from research.families.f06_placement_fill_cif.public_input import replay_placement_strategy
     from research.families.f07_active_order_continuation.public_input import replay_continuation_strategy
 
-    params = dict(gamma=.01, kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
         requote_interval=.2, rq_min=.2, rq_max=.2, requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",
@@ -362,7 +362,7 @@ def test_fixed_parameter_runner_rejects_different_execution_assumptions(bundle):
 @pytest.mark.parametrize("with_funding", [False, True])
 def test_fixed_parameter_runner_repeats_independent_synthetic_accounts(bundle, economic, with_funding):
     from research.families.f01_fixed_parameter_racing.public_input import replay_parameter_candidates
-    params = dict(gamma=.01, kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
         requote_interval=1., rq_min=1., rq_max=1., requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",
@@ -370,7 +370,8 @@ def test_fixed_parameter_runner_repeats_independent_synthetic_accounts(bundle, e
         public_fill_volume_policy="all_public_volume_eligible", max_exec_book_age_s=1.,
         collect_curves=False, position_timeout=0., markout_ema_span_fills=0,
         account_start_ns=1_200_000_000)
-    candidates = {"first": {"gamma": .01}, "repeat": {"gamma": .01}}
+    candidates = {"first": {"eta_inventory": .01, "risk_per_order": .01},
+                  "repeat": {"eta_inventory": .01, "risk_per_order": .01}}
     if economic:
         from research.families.f01_fixed_parameter_racing.public_input import replay_economic_candidates
         settled = replay_economic_candidates(bundle, candidates, common_params=params,
@@ -396,7 +397,7 @@ def test_fixed_parameter_runner_repeats_independent_synthetic_accounts(bundle, e
 def test_economic_parameter_runner_rejects_account_restore_before_replay(bundle):
     from research.families.f01_fixed_parameter_racing.public_input import replay_economic_candidates
     with pytest.raises(ValueError, match="fresh independent"):
-        replay_economic_candidates(bundle, {"candidate": {"gamma": .01}},
+        replay_economic_candidates(bundle, {"candidate": {"eta_inventory": .01, "risk_per_order": .01}},
             common_params={"initial_live_state": {"inventory": 1}},
             initial_capital=10000., max_mark_age_ns=1000, trace_limit=10)
 
@@ -470,15 +471,15 @@ def test_reference_prediction_adapter_does_not_read_future_reference(bundle, tmp
 
         def predict(self, *, execution, references, decision_ns):
             value = references[reference_market]["mid"]
-            return SimpleNamespace(dir_10s=.5, vol_10s=1., ret_10s=value,
-                                   tox_bid_10s=0., tox_ask_10s=0.)
+            return SimpleNamespace(touch_conditioned_up_probability_10000ms=.5, absolute_price_variance_rate_10000ms=1., touch_conditioned_price_change_fraction_10000ms=value,
+                                   touch_side_adverse_probability_bid_10000ms=0., touch_side_adverse_probability_ask_10000ms=0.)
 
     adapter = ReferenceSignalAdapter(bundle, {reference_market: reference}, Predictor(), contract=contract)
     cursor = FeatureCursor(bundle)
     with pytest.raises(ValueError, match="nonfinite"):
         adapter.compute_signal(feature_frame=cursor.at(SECOND, max_age_ns=SECOND), decision_ns=SECOND)
     later = adapter.compute_signal(feature_frame=cursor.at(2 * SECOND, max_age_ns=SECOND), decision_ns=2 * SECOND)
-    assert later.ret_10s == 101
+    assert later.touch_conditioned_price_change_fraction_10000ms == 101
     assert adapter.observations[-1]["reference_cutoffs"][reference_market] <= 2 * SECOND
     with pytest.raises(ValueError, match="binding"):
         bad = {**contract, "input_manifest_ids": {}}
@@ -490,11 +491,11 @@ def test_reference_prediction_adapter_does_not_read_future_reference(bundle, tmp
     # that silently fills missing production features with zero.
     class WarmupPredictor(Predictor):
         def predict(self, **kwargs):
-            return SimpleNamespace(dir_10s=.5, vol_10s=.001, ret_10s=.0001,
-                                   tox_bid_10s=.1, tox_ask_10s=.1)
+            return SimpleNamespace(touch_conditioned_up_probability_10000ms=.5, absolute_price_variance_rate_10000ms=.001, touch_conditioned_price_change_fraction_10000ms=.0001,
+                                   touch_side_adverse_probability_bid_10000ms=.1, touch_side_adverse_probability_ask_10000ms=.1)
 
     from research.families.f04_external_market_alpha.public_input import replay_reference_strategy
-    params = dict(gamma=.01, kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
         requote_interval=1., rq_min=1., rq_max=1., requote_clock="fixed", maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock="merged",

@@ -106,11 +106,11 @@ class ReferenceSignalAdapter:
             cutoffs[market] = cursor.at(decision_ns, max_age_ns=contract["max_age_ns"]).cutoff_ns
         prediction = self.predictor.predict(execution=execution, references=references,
                                             decision_ns=decision_ns)
-        names = ("dir_10s", "vol_10s", "ret_10s", "tox_bid_10s", "tox_ask_10s")
+        names = ("touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms")
         if not all(math.isfinite(float(getattr(prediction, name))) for name in names):
             raise ValueError("reference predictor returned nonfinite quote output")
-        if prediction.vol_10s < 0 or any(not 0 <= getattr(prediction, name) <= 1
-                for name in ("dir_10s", "tox_bid_10s", "tox_ask_10s")):
+        if prediction.absolute_price_variance_rate_10000ms < 0 or any(not 0 <= getattr(prediction, name) <= 1
+                for name in ("touch_conditioned_up_probability_10000ms", "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms")):
             raise ValueError("reference predictor returned invalid probability or volatility")
         self.observations.append({"decision_ns": decision_ns, "reference_cutoffs": cutoffs})
         return prediction

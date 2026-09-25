@@ -114,9 +114,9 @@ def _write_fixture(
                 "BTCUSDC"
             ),
         }
-        if head.startswith("vol_"):
+        if head.startswith("absolute_price_variance_rate_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
-        if head == "ret_10s" and direct_ret_action_horizon_s is not None:
+        if head == "touch_conditioned_price_change_fraction_10000ms" and direct_ret_action_horizon_s is not None:
             metadata["direct_quote_action"] = {
                 "schema_version": "narrowgate.f03.direct_quote_action.v1",
                 "compatible": True,
@@ -630,8 +630,8 @@ def test_preflight_rejects_bundle_manifest_live_false(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("relative_path", "message"),
     [
-        ("dir_10s.txt", "model hash mismatch"),
-        ("dir_10s_meta.json", "metadata hash mismatch"),
+        ("touch_conditioned_up_probability_10000ms.txt", "model hash mismatch"),
+        ("touch_conditioned_up_probability_10000ms_meta.json", "metadata hash mismatch"),
         ("fill_prob_params.json", "P3 hash mismatch"),
     ],
 )
@@ -731,7 +731,7 @@ def test_preflight_requires_explicit_quote_snapshot_clock_limits(
 
 def test_preflight_rejects_invalid_bundle_while_ml_is_disabled(tmp_path: Path) -> None:
     config_path = _write_fixture(tmp_path)
-    meta_path = tmp_path / "models" / "bundle" / "dir_10s_meta.json"
+    meta_path = tmp_path / "models" / "bundle" / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["feature_semantics_version"] = 4
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -742,7 +742,7 @@ def test_preflight_rejects_invalid_bundle_while_ml_is_disabled(tmp_path: Path) -
 
 def test_preflight_rejects_pre_cutoff_feature_dag_identity(tmp_path: Path) -> None:
     config_path = _write_fixture(tmp_path)
-    meta_path = tmp_path / "models" / "bundle" / "dir_10s_meta.json"
+    meta_path = tmp_path / "models" / "bundle" / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["feature_dag_sha256"] = "legacy-pre-cutoff-dag"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")

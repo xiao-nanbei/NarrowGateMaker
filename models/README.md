@@ -1,10 +1,10 @@
 # Models
 
-Last materially modified: 2026-09-21
+Last materially modified: 2026-09-25
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially synchronized: 2026-09-21
+Last materially synchronized: 2026-09-25
 
 This is a transitional replay/analysis package, not a directory containing only machine-learning models. The maintained tick executor, replay loaders, cache utilities and historical analysis entrypoints still live here. Do not add unrelated production contracts merely because this package already exists. See the [module ownership map](../docs/architecture.md) for actual owners and remaining migration work. Research-family implementations live in `research.families.*`; removed `research_*` roots are historical paths, not import aliases.
 
@@ -17,6 +17,10 @@ Generated model bundles are ignored by Git. A local research checkout should nor
 Do not promote a bundle merely because its files exist. Formal replay requires model metadata with bucket-end feature visibility, causal warmup and label semantics, plus independently identified P3, queue and latency artifacts. Superseded bundles must not enter the parameter-search candidate list. Record them as retention candidates first; remove them only after a reference audit and explicit approval preserve every required frozen identity.
 
 ## Current Runtime Boundary
+
+Use `narrowgate replay --help` for maintained tick replay, `narrowgate tick-ab --help` for registered A/B execution, `narrowgate quote-diagnostics --help` for quote diagnostics and `narrowgate fill-depth-audit --help` for F10 fill/depth diagnostics. The independent bar, ML-bar, tick, A/B and quote-diagnostic module CLI commands are retired; `models.experiment_runner` no longer exists. Bar diagnostic functions remain library functions, not alternate economic replay commands. Quote configuration supplies `eta_inventory`, `a_spread`, `risk_per_order` and `inventory_reference_qty` explicitly; it does not inherit them from `gamma`.
+
+Current Tardis model bundles require `narrowgate.semantic_model_bundle.v1` and semantic head names for touch-conditioned direction/price change, absolute-price variance rate and touch-side adverse probability. Old bundle schemas are rejected. Conversion preserves learned model values but produces a new artifact identity; frozen originals remain separate and are not changed by loading. Python and the native extension must have matching application-interface versions. This is a source migration, not a live deployment.
 
 This document does not declare a currently deployed model or ML enablement. Resolve those from the authorized deployment configuration and verified runtime identity. Empirical P3 is a separate calibration component even when stored beside model files.
 

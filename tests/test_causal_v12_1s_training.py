@@ -674,7 +674,7 @@ def test_head_target_load_rechecks_overlay_hash_after_day_admission(
     )
 
     with pytest.raises(training.OneSecondTrainingError, match="changed after admission"):
-        training._load_head_targets(days, "ret_10s")
+        training._load_head_targets(days, "touch_conditioned_price_change_fraction_10000ms")
 
 
 def test_feature_matrix_reuse_is_independent_of_label_overlay_identity(

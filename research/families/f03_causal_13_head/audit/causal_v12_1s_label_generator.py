@@ -36,19 +36,19 @@ BASE_WEIGHT_REFERENCE_DATE = "2026-07-23"
 LABEL_SOURCE_MAX_GAP_S = 1.5
 
 LABEL_COLUMN_BY_HEAD = {
-    "dir_10s": "label_dir_10s",
-    "ret_10s": "label_ret_10s",
-    "vol_10s": "label_vol_10s",
-    "dir_30s": "label_dir_30s",
-    "ret_30s": "label_ret_30s",
-    "vol_30s": "label_vol_30s",
-    "dir_60s": "label_dir_60s",
-    "ret_60s": "label_ret_60s",
-    "vol_60s": "label_vol_60s",
-    "tox_bid_5s": "label_tox_bid_5s",
-    "tox_ask_5s": "label_tox_ask_5s",
-    "tox_bid_10s": "label_tox_bid_10s",
-    "tox_ask_10s": "label_tox_ask_10s",
+    "touch_conditioned_up_probability_10000ms": "label_touch_conditioned_up_probability_10000ms",
+    "touch_conditioned_price_change_fraction_10000ms": "label_touch_conditioned_price_change_fraction_10000ms",
+    "absolute_price_variance_rate_10000ms": "label_absolute_price_variance_rate_10000ms",
+    "touch_conditioned_up_probability_30000ms": "label_touch_conditioned_up_probability_30000ms",
+    "touch_conditioned_price_change_fraction_30000ms": "label_touch_conditioned_price_change_fraction_30000ms",
+    "absolute_price_variance_rate_30000ms": "label_absolute_price_variance_rate_30000ms",
+    "touch_conditioned_up_probability_60000ms": "label_touch_conditioned_up_probability_60000ms",
+    "touch_conditioned_price_change_fraction_60000ms": "label_touch_conditioned_price_change_fraction_60000ms",
+    "absolute_price_variance_rate_60000ms": "label_absolute_price_variance_rate_60000ms",
+    "touch_side_adverse_probability_bid_5000ms": "label_touch_side_adverse_probability_bid_5000ms",
+    "touch_side_adverse_probability_ask_5000ms": "label_touch_side_adverse_probability_ask_5000ms",
+    "touch_side_adverse_probability_bid_10000ms": "label_touch_side_adverse_probability_bid_10000ms",
+    "touch_side_adverse_probability_ask_10000ms": "label_touch_side_adverse_probability_ask_10000ms",
 }
 
 
@@ -280,9 +280,9 @@ def generate_daily_1s_labels(
             close_ref,
             horizon_s * NS_PER_SECOND,
         )
-        computed[f"ret_{horizon_s}s"] = ret_label
-        computed[f"dir_{horizon_s}s"] = dir_label
-        computed[f"vol_{horizon_s}s"] = vol_label
+        computed[f"touch_conditioned_price_change_fraction_{horizon_s * 1000}ms"] = ret_label
+        computed[f"touch_conditioned_up_probability_{horizon_s * 1000}ms"] = dir_label
+        computed[f"absolute_price_variance_rate_{horizon_s * 1000}ms"] = vol_label
 
     for horizon_s in legacy_labels.TOXICITY_HORIZONS:
         tox_bid, tox_ask = legacy_labels._compute_toxicity_pair(
@@ -296,8 +296,8 @@ def generate_daily_1s_labels(
             ask_quote,
             horizon_s * NS_PER_SECOND,
         )
-        computed[f"tox_bid_{horizon_s}s"] = tox_bid
-        computed[f"tox_ask_{horizon_s}s"] = tox_ask
+        computed[f"touch_side_adverse_probability_bid_{horizon_s * 1000}ms"] = tox_bid
+        computed[f"touch_side_adverse_probability_ask_{horizon_s * 1000}ms"] = tox_ask
 
     base_weight = inherited_base_sample_weights(decision_index)
     for head, dependency_s in HEAD_MAXIMUM_FUTURE_DEPENDENCY_S.items():

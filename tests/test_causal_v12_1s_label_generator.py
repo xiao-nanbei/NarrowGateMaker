@@ -47,7 +47,8 @@ def daily_inputs() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def _quote_params() -> dict[str, float | bool]:
     return {
-        "gamma": 1.0,
+        "inventory_reference_qty": 1.0,
+        "eta_inventory": 1.0, "a_spread": 1.0, "risk_per_order": 1.0,
         "kappa_ratio": 1.0,
         "p3_kappa_eff": 100.0,
         "quote_horizon_s": 1.0,
@@ -120,8 +121,8 @@ def test_exact_1s_decision_origin_and_head_specific_censoring(
         assert np.all(weight[valid] > 0.0)
         assert np.isclose(weight.sum(), base_weight[valid].sum(), rtol=1e-12)
 
-    assert result["label_valid__ret_60s"].sum() == labels.SECONDS_PER_DAY - 120
-    assert result["label_valid__vol_60s"].sum() == labels.SECONDS_PER_DAY - 60
+    assert result["label_valid__touch_conditioned_price_change_fraction_60000ms"].sum() == labels.SECONDS_PER_DAY - 120
+    assert result["label_valid__absolute_price_variance_rate_60000ms"].sum() == labels.SECONDS_PER_DAY - 60
 
 
 def test_rejects_shifted_daily_decision_grid(
@@ -145,7 +146,7 @@ def test_rejects_preexisting_label_namespace(
 ) -> None:
     panel, bars = daily_inputs
     contaminated = panel.copy(deep=False)
-    contaminated = contaminated.assign(label_ret_10s=0.0)
+    contaminated = contaminated.assign(label_touch_conditioned_price_change_fraction_10000ms=0.0)
     with pytest.raises(labels.LabelGenerationError, match="already contains label"):
         labels.generate_daily_1s_labels(
             contaminated,

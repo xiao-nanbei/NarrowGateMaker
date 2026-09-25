@@ -758,8 +758,8 @@ QuoteCoreResult compute_quote_core(
     const double inventory_units = q / q_ref;
     out.sigma_sq_raw = std::max(state.sigma_sq, 0.0);
     double sigma_sq = std::max(state.sigma_sq, 1e-6);
-    if (cfg.ml_enabled && cfg.vol_blend > 0.0 && pred.vol_10s > 1e-8) {
-        sigma_sq = (1.0 - cfg.vol_blend) * sigma_sq + cfg.vol_blend * std::max(pred.vol_10s, 0.0);
+    if (cfg.ml_enabled && cfg.vol_blend > 0.0 && pred.absolute_price_variance_rate_10000ms > 1e-8) {
+        sigma_sq = (1.0 - cfg.vol_blend) * sigma_sq + cfg.vol_blend * std::max(pred.absolute_price_variance_rate_10000ms, 0.0);
     }
     sigma_sq = std::max(sigma_sq, 1e-6);
     out.sigma_sq_blended = sigma_sq;
@@ -807,7 +807,7 @@ QuoteCoreResult compute_quote_core(
         g_base *= 1.0 + inv_ratio * inv_ratio;
     }
 
-    const double dir_signal = cfg.ml_enabled ? pred.dir_10s - 0.5 : 0.0;
+    const double dir_signal = cfg.ml_enabled ? pred.touch_conditioned_up_probability_10000ms - 0.5 : 0.0;
     const bool active_dir = std::abs(dir_signal) > cfg.dir_threshold;
     double g_eff = g_base;
     if (active_dir && cfg.inventory_direction_alignment_strength > 0.0) {
@@ -919,7 +919,7 @@ QuoteCoreResult compute_quote_core(
     }
 
     if (cfg.ml_enabled && cfg.ret_skew > 0.0) {
-        double shift = pred.ret_10s * cfg.ret_skew * mid;
+        double shift = pred.touch_conditioned_price_change_fraction_10000ms * cfg.ret_skew * mid;
         const double max_shift = cfg.ret_shift_max_pct * half_d;
         shift = clamp(shift, -max_shift, max_shift);
         if (cfg.max_inventory > 1e-10 && std::abs(q) > 1e-10) {
@@ -1073,19 +1073,19 @@ QuoteCoreResult compute_quote_core(
     out.final_cap_excess = cap_excess;
 
     const auto bid_adverse = side_adverse_state<Side::Buy>(
-        q, cfg.order_size, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_bid, state.mo_ema_bid,
+        q, cfg.order_size, cfg.lot_size, dir_signal, pred.touch_conditioned_price_change_fraction_10000ms, pred.tox_bid, state.mo_ema_bid,
         state.bid_adverse_markout_pause_latch, micro_shift_bps, near_depth, cfg
     );
     const auto ask_adverse = side_adverse_state<Side::Sell>(
-        q, cfg.order_size, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_ask, state.mo_ema_ask,
+        q, cfg.order_size, cfg.lot_size, dir_signal, pred.touch_conditioned_price_change_fraction_10000ms, pred.tox_ask, state.mo_ema_ask,
         state.ask_adverse_markout_pause_latch, micro_shift_bps, near_depth, cfg
     );
     const auto bid_defense = side_defense_state<Side::Buy>(
-        q, cfg.max_inventory, dir_signal, pred.ret_10s, state.mo_ema_bid,
+        q, cfg.max_inventory, dir_signal, pred.touch_conditioned_price_change_fraction_10000ms, state.mo_ema_bid,
         micro_shift_bps, state.unrealized_pnl, cfg
     );
     const auto ask_defense = side_defense_state<Side::Sell>(
-        q, cfg.max_inventory, dir_signal, pred.ret_10s, state.mo_ema_ask,
+        q, cfg.max_inventory, dir_signal, pred.touch_conditioned_price_change_fraction_10000ms, state.mo_ema_ask,
         micro_shift_bps, state.unrealized_pnl, cfg
     );
 

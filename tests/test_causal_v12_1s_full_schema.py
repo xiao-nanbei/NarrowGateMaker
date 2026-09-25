@@ -112,19 +112,19 @@ def test_all_13_heads_retain_original_label_estimands() -> None:
     assert payload["label_estimand_changed"] is False
     assert payload["label_contract_identity"] == ("causal_v12_13_head_label_contract_v3_preserved")
     assert [row["head"] for row in payload["heads"]] == [
-        "dir_10s",
-        "ret_10s",
-        "vol_10s",
-        "dir_30s",
-        "ret_30s",
-        "vol_30s",
-        "dir_60s",
-        "ret_60s",
-        "vol_60s",
-        "tox_bid_5s",
-        "tox_ask_5s",
-        "tox_bid_10s",
-        "tox_ask_10s",
+        "touch_conditioned_up_probability_10000ms",
+        "touch_conditioned_price_change_fraction_10000ms",
+        "absolute_price_variance_rate_10000ms",
+        "touch_conditioned_up_probability_30000ms",
+        "touch_conditioned_price_change_fraction_30000ms",
+        "absolute_price_variance_rate_30000ms",
+        "touch_conditioned_up_probability_60000ms",
+        "touch_conditioned_price_change_fraction_60000ms",
+        "absolute_price_variance_rate_60000ms",
+        "touch_side_adverse_probability_bid_5000ms",
+        "touch_side_adverse_probability_ask_5000ms",
+        "touch_side_adverse_probability_bid_10000ms",
+        "touch_side_adverse_probability_ask_10000ms",
     ]
 
 
@@ -309,16 +309,18 @@ def test_catchup_emits_each_cutoff_once_and_is_atomic_on_failure() -> None:
     assert generator.last_emitted_cutoff_ms == BASE_TS_MS + 14_000
 
 
-def test_frozen_design_and_source_manifest_bind_generated_contracts() -> None:
+def test_frozen_design_is_not_misrepresented_as_current_head_contract() -> None:
     design = json.loads(DESIGN_PATH.read_text(encoding="utf-8"))
     source_manifest = json.loads(SOURCE_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert design["feature_schema"]["feature_count"] == 173
     assert design["feature_schema"]["feature_order_sha256"] == (schema.feature_order_sha256())
-    assert design["feature_schema"]["full_feature_contract_sha256"] == (
+    # Source values/order remain unchanged; the head linkage now has a new
+    # identity. Frozen old declarations must not be accepted as current bytes.
+    assert design["feature_schema"]["full_feature_contract_sha256"] != (
         full.full_feature_contract_fingerprint()
     )
-    assert design["label_contract"]["head_linkage_sha256"] == (
+    assert design["label_contract"]["head_linkage_sha256"] != (
         schema.canonical_sha256(schema.head_linkage_payload())
     )
     assert source_manifest["source_manifest_sha256"] == (

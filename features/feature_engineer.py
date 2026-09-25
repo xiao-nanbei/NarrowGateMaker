@@ -448,21 +448,10 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
     if p3_delta_star <= 0.0 or p3_kappa_eff <= 0.0:
         raise ValueError(f"invalid P3 calibration values in {fill_prob_path}")
 
-    gamma = finite_positive_quote_coefficient("strategy.gamma", strat.get("gamma", 0.01))
-    raw_a_spread = strat.get("a_spread")
-    a_spread = (
-        gamma
-        if raw_a_spread is None
-        else finite_positive_quote_coefficient("strategy.a_spread", raw_a_spread)
-    )
-    raw_risk_per_order = strat.get("risk_per_order")
-    risk_per_order = (
-        a_spread
-        if raw_risk_per_order is None
-        else finite_positive_quote_coefficient(
-            "strategy.risk_per_order", raw_risk_per_order
-        )
-    )
+    if "gamma" in strat:
+        raise ValueError("gamma is not a current quote parameter")
+    a_spread = finite_positive_quote_coefficient("strategy.a_spread", strat["a_spread"])
+    risk_per_order = finite_positive_quote_coefficient("strategy.risk_per_order", strat["risk_per_order"])
     raw_execution_slope = strat.get("execution_intensity_slope")
     execution_intensity_slope = (
         finite_positive_quote_coefficient(
@@ -488,7 +477,6 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         )
     p3_identity = fill_model.semantic_identity(require_artifact_hash=True)
     return {
-        "gamma": gamma,
         "a_spread": a_spread,
         "risk_per_order": risk_per_order,
         "execution_intensity_slope": execution_intensity_slope,
@@ -597,11 +585,7 @@ def _prepare_1s_label_context(bars_1s: pd.DataFrame) -> tuple[np.ndarray, ...]:
 
 def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
                        sigma_sq: np.ndarray, quote_params: dict) -> np.ndarray:
-    raw_risk_per_order = quote_params.get("risk_per_order")
-    if raw_risk_per_order is None:
-        raw_risk_per_order = quote_params.get(
-            "a_spread", quote_params["gamma"]
-        )
+    raw_risk_per_order = quote_params["risk_per_order"]
     risk_per_order = max(
         finite_positive_quote_coefficient(
             "risk_per_order", raw_risk_per_order
@@ -1944,16 +1928,16 @@ def add_labels(df: pd.DataFrame, bars_1s: pd.DataFrame,
         dir_label[~valid_horizon] = np.nan
         vol_label[~valid_horizon] = np.nan
 
-        df[f"label_ret_{h}s"] = ret_label
-        df[f"label_dir_{h}s"] = dir_label
-        df[f"label_vol_{h}s"] = vol_label
+        df[f"label_touch_conditioned_price_change_fraction_{h * 1000}ms"] = ret_label
+        df[f"label_touch_conditioned_up_probability_{h * 1000}ms"] = dir_label
+        df[f"label_absolute_price_variance_rate_{h * 1000}ms"] = vol_label
         if include_outcome_times:
-            for name, label, end in (("ret", ret_label, ret_end),
-                                     ("dir", dir_label, ret_end),
-                                     ("vol", vol_label, vol_end)):
+            for name, label, end in (("touch_conditioned_price_change_fraction", ret_label, ret_end),
+                                     ("touch_conditioned_up_probability", dir_label, ret_end),
+                                     ("absolute_price_variance_rate", vol_label, vol_end)):
                 masked = end.copy()
                 masked[~np.isfinite(label)] = np.iinfo(np.int64).min
-                df[f"label_outcome_end_{name}_{h}s"] = pd.to_datetime(masked, utc=True, unit="ns")
+                df[f"label_outcome_end_{name}_{h * 1000}ms"] = pd.to_datetime(masked, utc=True, unit="ns")
 
         coverage = float(np.mean(~np.isnan(ret_label))) if len(ret_label) else 0.0
         print(
@@ -1985,12 +1969,12 @@ def add_labels(df: pd.DataFrame, bars_1s: pd.DataFrame,
         tox_bid[~valid_horizon] = np.nan
         tox_ask[~valid_horizon] = np.nan
 
-        df[f"label_tox_bid_{h}s"] = tox_bid
-        df[f"label_tox_ask_{h}s"] = tox_ask
+        df[f"label_touch_side_adverse_probability_bid_{h * 1000}ms"] = tox_bid
+        df[f"label_touch_side_adverse_probability_ask_{h * 1000}ms"] = tox_ask
         if include_outcome_times:
             for side, label, end in (("bid", tox_bid, bid_end), ("ask", tox_ask, ask_end)):
                 end[~np.isfinite(label)] = np.iinfo(np.int64).min
-                df[f"label_outcome_end_tox_{side}_{h}s"] = pd.to_datetime(end, utc=True, unit="ns")
+                df[f"label_outcome_end_touch_side_adverse_probability_{side}_{h * 1000}ms"] = pd.to_datetime(end, utc=True, unit="ns")
 
         bid_cov = float(np.mean(~np.isnan(tox_bid))) if len(tox_bid) else 0.0
         ask_cov = float(np.mean(~np.isnan(tox_ask))) if len(tox_ask) else 0.0

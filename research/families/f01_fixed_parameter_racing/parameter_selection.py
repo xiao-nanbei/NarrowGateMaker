@@ -90,7 +90,11 @@ class PairedSelectionLimits:
 
 PARAMETER_SPECS: tuple[ParameterSpec, ...] = (
     # Quote/spread shape: active and replayable.
-    ParameterSpec("strategy.gamma", "gamma", "active", "spread", True, True, search_values=(0.01, 0.025, 0.035, 0.05, 0.07), note="AS inventory risk aversion."),
+    ParameterSpec("strategy.eta_inventory", "quote_coefficients", "active", "spread", True, True,
+                  search_values=((.01, .01, .01), (.025, .025, .025), (.035, .035, .035), (.05, .05, .05), (.07, .07, .07)),
+                  note="Joint (eta_inventory, a_spread, risk_per_order) points; inventory_reference_qty=1 BTC. Not independent axes."),
+    ParameterSpec("strategy.a_spread", "a_spread", "active", "spread", True, True, note="Declared coefficient; varied only in the joint quote points."),
+    ParameterSpec("strategy.risk_per_order", "risk_per_order", "active", "spread", True, True, note="Explicit spread coefficient; varied only in the joint quote points."),
     ParameterSpec("strategy.kappa", "kappa", "fallback", "spread", True, True, search_values=(), note="Fallback inverse-price distance-decay coefficient. Current live/tick quote path uses the local P3 log-touch slope when available; it is not an event arrival rate."),
     ParameterSpec("strategy.order_size", "order_size", "active", "sizing", True, True, search_values=(0.001, 0.002), note="Per-order size; compare with risk-normalized campaign metrics, not raw PnL alone."),
     ParameterSpec("strategy.max_inventory", "max_inventory", "active", "sizing", True, True, search_values=(0.01, 0.016, 0.02, 0.026, 0.03), note="Inventory hard budget."),
@@ -150,7 +154,7 @@ LIVE_ACTIVE_SOBOL_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
     # it normally comes from fill_prob_params.json.  We still sample it here
     # because the live quote path uses it ahead of the fallback `strategy.kappa`.
     ("p3_kappa_eff", (0.040, 0.045, 0.049923, 0.055, 0.060, 0.065)),
-    ("gamma", (0.040, 0.046, 0.050, 0.056, 0.062, 0.068)),
+    ("quote_coefficients", ((.040, .040, .040), (.046, .046, .046), (.050, .050, .050), (.056, .056, .056), (.062, .062, .062), (.068, .068, .068))),
     ("kappa_ratio", (1.10, 1.25, 1.50, 1.65, 1.75)),
     ("depth_kappa_ratio", (0.50, 0.75, 1.00)),
     ("vol_power", (1.5, 2.0, 2.5)),
@@ -197,7 +201,7 @@ LIVE_ACTIVE_SOBOL_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
 # search only the closest quote/guard neighborhood before any retained run.
 LOCAL_MECHANISM_AXES: tuple[tuple[str, tuple[Any, ...]], ...] = (
     ("p3_kappa_eff", (0.0475, 0.049923, 0.0525)),
-    ("gamma", (0.047, 0.050, 0.053)),
+    ("quote_coefficients", ((.047, .047, .047), (.050, .050, .050), (.053, .053, .053))),
     ("kappa_ratio", (1.40, 1.50, 1.60)),
     ("depth_kappa_ratio", (0.75,)),
     ("vol_power", (2.0,)),
@@ -618,6 +622,15 @@ def _format_value_token(value: Any) -> str:
     return str(value).replace("/", "_").replace(".", "p")
 
 
+def _axis_overrides(key: str, value: Any) -> dict[str, Any]:
+    """Compile a registered research tuple to explicit runtime parameters."""
+    if key == "quote_coefficients":
+        if not isinstance(value, tuple) or len(value) != 3:
+            raise ValueError("quote coefficient axis requires an explicit three-value tuple")
+        return dict(zip(("eta_inventory", "a_spread", "risk_per_order"), value, strict=True))
+    return {key: value}
+
+
 def single_factor_arms(*, groups: Iterable[str] | None = None) -> list[ArmSpec]:
     group_set = set(groups or [])
     arms: list[ArmSpec] = [ArmSpec("baseline", "baseline", {}, "Current live config baseline.")]
@@ -632,7 +645,7 @@ def single_factor_arms(*, groups: Iterable[str] | None = None) -> list[ArmSpec]:
                 ArmSpec(
                     name=name,
                     group=f"one_factor_{spec.group}",
-                    overrides={spec.flat_key: value},
+                    overrides=_axis_overrides(spec.flat_key, value),
                     note=f"One-factor sensitivity: {spec.key}={value}. {spec.note}",
                 )
             )
@@ -715,7 +728,7 @@ def sampled_arms(
                     value = float(math.exp(math.log(spec.low) + u * (math.log(spec.high) - math.log(spec.low))))
                 else:
                     value = float(spec.low + u * (spec.high - spec.low))
-            overrides[spec.flat_key] = value
+            overrides.update(_axis_overrides(spec.flat_key, value))
             tokens.append(f"{spec.flat_key}={_format_value_token(value)}")
         arms.append(
             ArmSpec(
@@ -787,7 +800,7 @@ def live_active_sobol_arms(
                 overrides["resolved_model_dir"] = str(path.resolve())
                 tokens.append(f"model={path.name}")
                 continue
-            overrides[key] = value
+            overrides.update(_axis_overrides(key, value))
             tokens.append(f"{key}={_format_value_token(value)}")
 
         reducing_cd = float(overrides.get("fill_cooldown_reducing", 0.0) or 0.0)
@@ -885,6 +898,8 @@ def _selected_parent_names_for_local_search(
 
 
 def _nearest_axis_values(axis_values: tuple[Any, ...], center: Any, *, max_neighbors: int = 3) -> list[Any]:
+    if isinstance(center, tuple):
+        return sorted(axis_values, key=lambda value: sum((a-b)**2 for a,b in zip(value, center, strict=True)))[:max_neighbors]
     if isinstance(center, str):
         values = [v for v in axis_values if isinstance(v, str)]
         if center in values:
@@ -935,9 +950,13 @@ def _local_mechanism_axis_values(
         if center <= 0.0:
             return (0.0, 0.025, 0.05)
         return _local_numeric_triplet(center, rel=0.10, abs_step=0.0025, floor=0.0)
-    if key == "gamma":
-        center = float(baseline_hints.get(key, fallback_values[0]) or fallback_values[0])
-        return _local_numeric_triplet(center, rel=0.15, abs_step=0.003, floor=0.0)
+    if key == "quote_coefficients":
+        fields = ("eta_inventory", "a_spread", "risk_per_order")
+        center = tuple(float(baseline_hints.get(k, fallback_values[0][i])) for i, k in enumerate(fields))
+        if len(set(center)) != 1 or float(baseline_hints.get("inventory_reference_qty", 1.0)) != 1.0:
+            raise ValueError("registered joint coefficient surface requires equal coefficients and q_ref=1 BTC")
+        return tuple((value, value, value) for value in
+                     _local_numeric_triplet(center[0], rel=0.15, abs_step=0.003, floor=0.0))
     if key == "kappa_ratio":
         center = float(baseline_hints.get(key, fallback_values[0]) or fallback_values[0])
         return _local_numeric_triplet(center, rel=0.0, abs_step=0.10, floor=0.05)
@@ -1008,6 +1027,13 @@ def mechanism_local_sobol_arms(
             # No previous failed arm was close enough to the current mechanism,
             # so sample the deliberately small baseline-neighborhood grid.
             values = list(base_values)
+        elif key == "quote_coefficients":
+            fields = ("eta_inventory", "a_spread", "risk_per_order")
+            center = tuple(hints.get(field, base_values[0][i]) for i, field in enumerate(fields))
+            values.extend(_nearest_axis_values(base_values, center, max_neighbors=2))
+            for parent in parents:
+                point = tuple(parent.overrides.get(field, center[i]) for i, field in enumerate(fields))
+                values.extend(_nearest_axis_values(base_values, point, max_neighbors=2))
         elif key == "paired_cap_bps":
             baseline_cap = float(hints.get("dynamic_cap_base_bps") or hints.get("max_spread_bps") or base_values[0])
             values.extend(_nearest_axis_values(base_values, baseline_cap, max_neighbors=2))
@@ -1072,8 +1098,10 @@ def mechanism_local_sobol_arms(
                 noop_overrides["resolved_model_dir"] = str(path.resolve())
                 noop_tokens.append(f"model={path.name}")
             continue
-        value = hints.get(key, base_values[0])
-        noop_overrides[key] = value
+        value = (tuple(hints.get(field, base_values[0][i]) for i, field in enumerate(
+            ("eta_inventory", "a_spread", "risk_per_order"))) if key == "quote_coefficients"
+            else hints.get(key, base_values[0]))
+        noop_overrides.update(_axis_overrides(key, value))
         noop_tokens.append(f"{key}={_format_value_token(value)}")
     noop_overrides["fill_cooldown_reducing_campaign_only"] = False
     noop_overrides["fill_cooldown_reducing_inv_ratio"] = 0.0
@@ -1112,7 +1140,7 @@ def mechanism_local_sobol_arms(
                 overrides["resolved_model_dir"] = str(path.resolve())
                 tokens.append(f"model={path.name}")
                 continue
-            overrides[key] = value
+            overrides.update(_axis_overrides(key, value))
             tokens.append(f"{key}={_format_value_token(value)}")
 
         reducing_cd = float(overrides.get("fill_cooldown_reducing", 0.0) or 0.0)

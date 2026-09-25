@@ -598,19 +598,19 @@ class QuoteDecisionSnapshot:
 class Prediction:
     """ML prediction output."""
     ts: float = 0.0
-    dir_10s: float = 0.5
-    dir_30s: float = 0.5
-    dir_60s: float = 0.5
-    vol_10s: float = 0.0
-    vol_30s: float = 0.0
-    vol_60s: float = 0.0
-    ret_10s: float = 0.0
-    ret_30s: float = 0.0
-    ret_60s: float = 0.0
-    tox_bid_5s: float = 0.5
-    tox_ask_5s: float = 0.5
-    tox_bid_10s: float = 0.5
-    tox_ask_10s: float = 0.5
+    touch_conditioned_up_probability_10000ms: float = 0.5
+    touch_conditioned_up_probability_30000ms: float = 0.5
+    touch_conditioned_up_probability_60000ms: float = 0.5
+    absolute_price_variance_rate_10000ms: float = 0.0
+    absolute_price_variance_rate_30000ms: float = 0.0
+    absolute_price_variance_rate_60000ms: float = 0.0
+    touch_conditioned_price_change_fraction_10000ms: float = 0.0
+    touch_conditioned_price_change_fraction_30000ms: float = 0.0
+    touch_conditioned_price_change_fraction_60000ms: float = 0.0
+    touch_side_adverse_probability_bid_5000ms: float = 0.5
+    touch_side_adverse_probability_ask_5000ms: float = 0.5
+    touch_side_adverse_probability_bid_10000ms: float = 0.5
+    touch_side_adverse_probability_ask_10000ms: float = 0.5
     features: Optional[np.ndarray] = None
     feature_dict: Optional[Mapping[str, float]] = None
 
@@ -4625,19 +4625,19 @@ class SignalEngine:
                 "symbol": self._symbol,
                 "reference_symbol": self._reference_symbol,
                 "model_dir": str(self._model_dir),
-                "pred_dir_10s": float(pred.dir_10s),
-                "pred_dir_30s": float(pred.dir_30s),
-                "pred_dir_60s": float(pred.dir_60s),
-                "pred_vol_10s": float(pred.vol_10s),
-                "pred_vol_30s": float(pred.vol_30s),
-                "pred_vol_60s": float(pred.vol_60s),
-                "pred_ret_10s": float(pred.ret_10s),
-                "pred_ret_30s": float(pred.ret_30s),
-                "pred_ret_60s": float(pred.ret_60s),
-                "pred_tox_bid_5s": float(pred.tox_bid_5s),
-                "pred_tox_ask_5s": float(pred.tox_ask_5s),
-                "pred_tox_bid_10s": float(pred.tox_bid_10s),
-                "pred_tox_ask_10s": float(pred.tox_ask_10s),
+                "pred_touch_conditioned_up_probability_10000ms": float(pred.touch_conditioned_up_probability_10000ms),
+                "pred_touch_conditioned_up_probability_30000ms": float(pred.touch_conditioned_up_probability_30000ms),
+                "pred_touch_conditioned_up_probability_60000ms": float(pred.touch_conditioned_up_probability_60000ms),
+                "pred_absolute_price_variance_rate_10000ms": float(pred.absolute_price_variance_rate_10000ms),
+                "pred_absolute_price_variance_rate_30000ms": float(pred.absolute_price_variance_rate_30000ms),
+                "pred_absolute_price_variance_rate_60000ms": float(pred.absolute_price_variance_rate_60000ms),
+                "pred_touch_conditioned_price_change_fraction_10000ms": float(pred.touch_conditioned_price_change_fraction_10000ms),
+                "pred_touch_conditioned_price_change_fraction_30000ms": float(pred.touch_conditioned_price_change_fraction_30000ms),
+                "pred_touch_conditioned_price_change_fraction_60000ms": float(pred.touch_conditioned_price_change_fraction_60000ms),
+                "pred_touch_side_adverse_probability_bid_5000ms": float(pred.touch_side_adverse_probability_bid_5000ms),
+                "pred_touch_side_adverse_probability_ask_5000ms": float(pred.touch_side_adverse_probability_ask_5000ms),
+                "pred_touch_side_adverse_probability_bid_10000ms": float(pred.touch_side_adverse_probability_bid_10000ms),
+                "pred_touch_side_adverse_probability_ask_10000ms": float(pred.touch_side_adverse_probability_ask_10000ms),
             }
             for key, value in features.items():
                 if isinstance(value, (int, float, np.integer, np.floating)):
@@ -4768,7 +4768,7 @@ class SignalEngine:
                 native_values,
                 strict=True,
             ):
-                setattr(pred, name, max(value, 0.0) if name.startswith("vol_") else value)
+                setattr(pred, name, max(value, 0.0) if name.startswith("absolute_price_variance_rate_") else value)
         else:
             if X_model is None:
                 X_model = np.asarray(
@@ -4776,52 +4776,52 @@ class SignalEngine:
                     dtype=np.float64,
                 ).reshape(1, -1)
             for h in [10, 30, 60]:
-                name = f"ret_{h}s"
+                name = f"touch_conditioned_price_change_fraction_{h * 1000}ms"
                 try:
                     val = float(models[name].predict(X_model)[0])
                     if h == 10:
-                        pred.ret_10s = val
+                        pred.touch_conditioned_price_change_fraction_10000ms = val
                     elif h == 30:
-                        pred.ret_30s = val
+                        pred.touch_conditioned_price_change_fraction_30000ms = val
                     elif h == 60:
-                        pred.ret_60s = val
+                        pred.touch_conditioned_price_change_fraction_60000ms = val
                 except Exception as exc:
                     raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
             # Run dir/vol/tox models after return heads, preserving the B0
             # evaluation order for the selected Python backend.
             for name, model in models.items():
-                if name.startswith("ret_"):
+                if name.startswith("touch_conditioned_price_change_fraction_"):
                     continue  # already processed in stage 1
                 try:
                     val = model.predict(X_model)[0]
-                    if name == "dir_10s":
-                        pred.dir_10s = float(val)
-                    elif name == "dir_30s":
-                        pred.dir_30s = float(val)
-                    elif name == "dir_60s":
-                        pred.dir_60s = float(val)
-                    elif name == "vol_10s":
-                        pred.vol_10s = max(float(val), 0.0)
-                    elif name == "vol_30s":
-                        pred.vol_30s = max(float(val), 0.0)
-                    elif name == "vol_60s":
-                        pred.vol_60s = max(float(val), 0.0)
-                    elif name == "tox_bid_5s":
-                        pred.tox_bid_5s = float(val)
-                    elif name == "tox_ask_5s":
-                        pred.tox_ask_5s = float(val)
-                    elif name == "tox_bid_10s":
-                        pred.tox_bid_10s = float(val)
-                    elif name == "tox_ask_10s":
-                        pred.tox_ask_10s = float(val)
+                    if name == "touch_conditioned_up_probability_10000ms":
+                        pred.touch_conditioned_up_probability_10000ms = float(val)
+                    elif name == "touch_conditioned_up_probability_30000ms":
+                        pred.touch_conditioned_up_probability_30000ms = float(val)
+                    elif name == "touch_conditioned_up_probability_60000ms":
+                        pred.touch_conditioned_up_probability_60000ms = float(val)
+                    elif name == "absolute_price_variance_rate_10000ms":
+                        pred.absolute_price_variance_rate_10000ms = max(float(val), 0.0)
+                    elif name == "absolute_price_variance_rate_30000ms":
+                        pred.absolute_price_variance_rate_30000ms = max(float(val), 0.0)
+                    elif name == "absolute_price_variance_rate_60000ms":
+                        pred.absolute_price_variance_rate_60000ms = max(float(val), 0.0)
+                    elif name == "touch_side_adverse_probability_bid_5000ms":
+                        pred.touch_side_adverse_probability_bid_5000ms = float(val)
+                    elif name == "touch_side_adverse_probability_ask_5000ms":
+                        pred.touch_side_adverse_probability_ask_5000ms = float(val)
+                    elif name == "touch_side_adverse_probability_bid_10000ms":
+                        pred.touch_side_adverse_probability_bid_10000ms = float(val)
+                    elif name == "touch_side_adverse_probability_ask_10000ms":
+                        pred.touch_side_adverse_probability_ask_10000ms = float(val)
                 except Exception as exc:
                     raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
-        pred.tox_bid_5s = float(np.clip(pred.tox_bid_5s, 0.0, 1.0))
-        pred.tox_ask_5s = float(np.clip(pred.tox_ask_5s, 0.0, 1.0))
-        pred.tox_bid_10s = float(np.clip(pred.tox_bid_10s, 0.0, 1.0))
-        pred.tox_ask_10s = float(np.clip(pred.tox_ask_10s, 0.0, 1.0))
+        pred.touch_side_adverse_probability_bid_5000ms = float(np.clip(pred.touch_side_adverse_probability_bid_5000ms, 0.0, 1.0))
+        pred.touch_side_adverse_probability_ask_5000ms = float(np.clip(pred.touch_side_adverse_probability_ask_5000ms, 0.0, 1.0))
+        pred.touch_side_adverse_probability_bid_10000ms = float(np.clip(pred.touch_side_adverse_probability_bid_10000ms, 0.0, 1.0))
+        pred.touch_side_adverse_probability_ask_10000ms = float(np.clip(pred.touch_side_adverse_probability_ask_10000ms, 0.0, 1.0))
 
         pred.features = X_base[0] if X_base.ndim == 2 else X_base
         pred.feature_dict = (
@@ -4834,7 +4834,7 @@ class SignalEngine:
         if self._ret_demean_halflife > 0:
             alpha = 2.0 / (self._ret_demean_halflife + 1.0)
             raw_rets = [0.0, 0.0, 0.0]
-            for idx, attr in enumerate(['ret_10s', 'ret_30s', 'ret_60s']):
+            for idx, attr in enumerate(['touch_conditioned_price_change_fraction_10000ms', 'touch_conditioned_price_change_fraction_30000ms', 'touch_conditioned_price_change_fraction_60000ms']):
                 raw = getattr(pred, attr)
                 raw_rets[idx] = raw
                 self._pred_ret_ema[idx] = alpha * raw + (1.0 - alpha) * self._pred_ret_ema[idx]
@@ -4845,7 +4845,7 @@ class SignalEngine:
                 logger.info(
                     f"DEMEAN raw=[{raw_rets[0]:+.7f},{raw_rets[1]:+.7f},{raw_rets[2]:+.7f}] "
                     f"ema=[{self._pred_ret_ema[0]:+.7f},{self._pred_ret_ema[1]:+.7f},{self._pred_ret_ema[2]:+.7f}] "
-                    f"out=[{pred.ret_10s:+.7f},{pred.ret_30s:+.7f},{pred.ret_60s:+.7f}] "
+                    f"out=[{pred.touch_conditioned_price_change_fraction_10000ms:+.7f},{pred.touch_conditioned_price_change_fraction_30000ms:+.7f},{pred.touch_conditioned_price_change_fraction_60000ms:+.7f}] "
                     f"hl={self._ret_demean_halflife}"
                 )
 

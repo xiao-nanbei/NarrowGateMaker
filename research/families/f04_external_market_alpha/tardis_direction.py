@@ -28,8 +28,8 @@ REFERENCE_MARKET = "binance_futures:perpetual:BTCUSDT"
 REFERENCE_FEATURE_PREFIX = "binance_futures_perpetual_BTCUSDT__"
 PANEL_SCHEMA = "narrowgate.f04.tardis_direction_panel.v1"
 MODEL_SCHEMA = "narrowgate.f04.tardis_direction_pair.v1"
-LABEL = "label_dir_10s"
-END = "label_outcome_end_dir_10s"
+LABEL = "label_touch_conditioned_up_probability_10000ms"
+END = "label_outcome_end_touch_conditioned_up_probability_10000ms"
 
 
 def _sha(path: Path) -> str:
@@ -47,7 +47,7 @@ def _plan(path: str | Path) -> tuple[dict, str]:
                 "reference_currency_conversion": "none; only currency-invariant reference features admitted",
             }
             or plan.get("prediction", {}).get("target", "").split(",", 1)[0]
-            != "existing F03 label_dir_10s"):
+            != "existing F03 label_touch_conditioned_up_probability_10000ms"):
         raise ValueError("unsupported or unfrozen F04 first-batch contract")
     days = plan.get("fit_days_utc", [])
     if len(days) != len(set(days)) or sorted(days) != days or not days:
@@ -456,7 +456,7 @@ class TardisDirectionSignalEngine:
             rows.append([row[name] for name in self.model.feature_cols])
         predicted = self.model.predict(np.asarray(rows, dtype=float))
         for original, direction in zip(base, predicted, strict=True):
-            original.dir_10s = float(direction)
+            original.touch_conditioned_up_probability_10000ms = float(direction)
         self.decisions += len(frames)
         return base
 

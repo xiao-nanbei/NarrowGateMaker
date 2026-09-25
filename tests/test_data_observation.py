@@ -64,7 +64,7 @@ def test_new_model_loader_and_inference_honor_mask_without_fitting(tmp_path, mon
                          (("mid", D(101)),), (("execution", 1),), (("mid", False),))
     prediction = engine.compute_signal(feature_frame=frame, decision_ns=1000)
     assert len(seen) == 13 and all(np.isnan(row).all() for row in seen)
-    assert prediction.ret_10s == .25 and np.isnan(prediction.features).all()
+    assert prediction.touch_conditioned_price_change_fraction_10000ms == .25 and np.isnan(prediction.features).all()
     with pytest.raises(ValueError, match="future"):
         engine.compute_signal(feature_frame=frame, decision_ns=998)
     head = REQUIRED_MODEL_HEADS[0]

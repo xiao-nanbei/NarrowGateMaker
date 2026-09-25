@@ -40,9 +40,9 @@ EXPECTED_BASELINE_ID = (
     "buy_fill_selection_retired_baseline_20260804"
 )
 ARMS = ("ml_off", "ml_on")
-REPLAY_HEADS = ("dir_10s", "vol_10s", "ret_10s", "tox_bid_10s", "tox_ask_10s")
+REPLAY_HEADS = ("touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", "touch_side_adverse_probability_bid_10000ms", "touch_side_adverse_probability_ask_10000ms")
 CLASSIFICATION_HEADS = frozenset(head for head, spec in training.HEAD_SPECS.items() if spec[3])
-VOLATILITY_HEADS = frozenset(head for head in training.HEAD_SPECS if head.startswith("vol_"))
+VOLATILITY_HEADS = frozenset(head for head in training.HEAD_SPECS if head.startswith("absolute_price_variance_rate_"))
 
 
 class OneSecondReplayABIError(ValueError):
@@ -75,11 +75,11 @@ class OneSecondPredictionSchedule:
 
         return (
             self.decision_ts_ms,
-            self.predictions["dir_10s"],
-            self.predictions["vol_10s"],
-            self.predictions["ret_10s"],
-            self.predictions["tox_bid_10s"],
-            self.predictions["tox_ask_10s"],
+            self.predictions["touch_conditioned_up_probability_10000ms"],
+            self.predictions["absolute_price_variance_rate_10000ms"],
+            self.predictions["touch_conditioned_price_change_fraction_10000ms"],
+            self.predictions["touch_side_adverse_probability_bid_10000ms"],
+            self.predictions["touch_side_adverse_probability_ask_10000ms"],
         )
 
 

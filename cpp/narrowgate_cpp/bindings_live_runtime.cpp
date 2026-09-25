@@ -892,9 +892,9 @@ void bind_live_runtime_core(py::module_& m) {
                 READ_STAGE_STATE(15, unrealized_pnl);
 #undef READ_STAGE_STATE
                 QuotePrediction prediction;
-                prediction.dir_10s = py::cast<double>(pred_values[0]);
-                prediction.vol_10s = py::cast<double>(pred_values[1]);
-                prediction.ret_10s = py::cast<double>(pred_values[2]);
+                prediction.touch_conditioned_up_probability_10000ms = py::cast<double>(pred_values[0]);
+                prediction.absolute_price_variance_rate_10000ms = py::cast<double>(pred_values[1]);
+                prediction.touch_conditioned_price_change_fraction_10000ms = py::cast<double>(pred_values[2]);
                 prediction.tox_bid = py::cast<double>(pred_values[3]);
                 prediction.tox_ask = py::cast<double>(pred_values[4]);
                 const auto read_policy = [](const py::sequence& values) {

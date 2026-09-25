@@ -3855,7 +3855,7 @@ def main():
         logger.info("  Mode:      live")
         logger.info(f"  ML:        {cfg.ml.enabled}")
         logger.info(
-            f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} "
+            f"  inventory_coefficient={cfg.strategy.eta_inventory} spread_coefficient={cfg.strategy.risk_per_order} fallback_κ={cfg.strategy.kappa} "
             "(P3 κ_eff used when available)"
         )
         logger.info(f"  Order size: {cfg.strategy.order_size} BTC")

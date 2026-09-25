@@ -764,9 +764,9 @@ def test_pre_split_b0_final_quote_golden_vectors_remain_exact() -> None:
                 unrealized_pnl=-3.0,
             ),
             QuotePrediction(
-                dir_10s=0.62,
-                vol_10s=4.0,
-                ret_10s=0.0002,
+                touch_conditioned_up_probability_10000ms=0.62,
+                absolute_price_variance_rate_10000ms=4.0,
+                touch_conditioned_price_change_fraction_10000ms=0.0002,
                 tox_bid=0.7,
                 tox_ask=0.3,
             ),
@@ -787,9 +787,9 @@ def test_pre_split_b0_final_quote_golden_vectors_remain_exact() -> None:
                 unrealized_pnl=4.0,
             ),
             QuotePrediction(
-                dir_10s=0.4,
-                vol_10s=1.2,
-                ret_10s=-0.0001,
+                touch_conditioned_up_probability_10000ms=0.4,
+                absolute_price_variance_rate_10000ms=1.2,
+                touch_conditioned_price_change_fraction_10000ms=-0.0001,
                 tox_bid=0.2,
                 tox_ask=0.8,
             ),
@@ -880,7 +880,7 @@ def test_p3_side_bbo_floor_reassertion_is_idempotent_and_b0_is_noop() -> None:
 
 def test_f03_ret_action_requires_matching_consumer_horizon_but_ml_off_is_noop() -> None:
     state = QuoteState(mid=100.0, inventory=0.0, sigma_sq=1.0)
-    pred = QuotePrediction(ret_10s=0.01)
+    pred = QuotePrediction(touch_conditioned_price_change_fraction_10000ms=0.01)
     disabled = compute_quote_core(
         state,
         _cfg(ml_enabled=False, ret_skew=1.0),

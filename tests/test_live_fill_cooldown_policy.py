@@ -493,13 +493,13 @@ def test_reducing_fill_cooldown_vol_multiplier_clamps() -> None:
     engine.cfg.strategy.fill_cooldown_reducing_vol_min_mult = 0.5
     engine.cfg.strategy.fill_cooldown_reducing_vol_max_mult = 2.0
 
-    engine._last_prediction = Prediction(vol_10s=30.0)
+    engine._last_prediction = Prediction(absolute_price_variance_rate_10000ms=30.0)
     assert engine._reducing_cooldown_vol_mult() == 2.0
 
-    engine._last_prediction = Prediction(vol_10s=2.0)
+    engine._last_prediction = Prediction(absolute_price_variance_rate_10000ms=2.0)
     assert engine._reducing_cooldown_vol_mult() == 0.5
 
-    engine._last_prediction = Prediction(vol_10s=10.0)
+    engine._last_prediction = Prediction(absolute_price_variance_rate_10000ms=10.0)
     assert engine._reducing_cooldown_vol_mult() == 1.0
 
 

@@ -70,7 +70,7 @@ def test_explicit_trade_manifest_survives_spawn(tmp_path):
 
 
 @pytest.mark.parametrize("entrypoint", ("backtest_tick", "tick_ab", "quote_decomposition_tick"))
-def test_offline_help_accepts_a_symlinked_checkout(tmp_path: Path, entrypoint: str) -> None:
+def test_retired_script_does_not_bootstrap_a_symlinked_checkout(tmp_path: Path, entrypoint: str) -> None:
     root = Path(__file__).resolve().parents[1]
     checkout = tmp_path / "checkout-alias"
     checkout.symlink_to(root, target_is_directory=True)
@@ -85,8 +85,8 @@ def test_offline_help_accepts_a_symlinked_checkout(tmp_path: Path, entrypoint: s
         timeout=30,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
-    assert "usage:" in result.stdout.lower()
+    assert result.returncode != 0
+    assert "usage:" not in result.stdout.lower()
 
 
 def _normalized_v12_binding(
@@ -211,7 +211,8 @@ def test_flat_pointer_consumers_accept_only_normalized_v12_binding(
 
 def _local_replay_projection(tmp_path):
     config = tmp_path / "original.yaml"
-    config.write_text("strategy:\n  gamma: 0.023\nml:\n  model_dir: /remote/model\n")
+    config.write_text("strategy:\n  eta_inventory: 0.023\n  a_spread: 0.023\n"
+                      "  risk_per_order: 0.023\nml:\n  model_dir: /remote/model\n")
     model = tmp_path / "model"
     model.mkdir()
     policy = tmp_path / "policy.json"
@@ -242,7 +243,8 @@ def test_replay_locators_preserve_original_config_and_strategy(tmp_path, monkeyp
         include_fill_probability=False, include_queue_calibration=False,
     )
     assert config.read_bytes() == before
-    assert params["gamma"] == 0.023
+    assert params["eta_inventory"] == params["a_spread"] == params["risk_per_order"] == 0.023
+    assert "gamma" not in params
     assert params["model_dir"] == payload["locator_overrides"]["ml.model_dir"]
     assert params["boolean_cooldown_policy_path"] == str(tmp_path / "policy.json")
     assert params["_config_path"] == str(config)

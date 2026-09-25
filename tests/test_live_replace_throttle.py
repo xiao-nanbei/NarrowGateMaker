@@ -393,7 +393,7 @@ def test_side_policy_reuses_immutable_l2_summary_without_changing_decisions() ->
 
     engine._current_l2_policy_metrics = current_metrics
     engine._toxicity_probs = toxicity_probs
-    pred = SimpleNamespace(dir_10s=0.5)
+    pred = SimpleNamespace(touch_conditioned_up_probability_10000ms=0.5)
     snapshot = SimpleNamespace()
 
     independent = tuple(

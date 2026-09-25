@@ -63,9 +63,9 @@ def test_legacy_ml_bar_backtest_aligns_on_epoch_milliseconds(monkeypatch) -> Non
     )
     predictions = pd.DataFrame(
         {
-            "pred_dir_10s": [0.7],
-            "pred_vol_10s": [2.0],
-            "pred_ret_10s": [0.001],
+            "pred_touch_conditioned_up_probability_10000ms": [0.7],
+            "pred_absolute_price_variance_rate_10000ms": [2.0],
+            "pred_touch_conditioned_price_change_fraction_10000ms": [0.001],
         },
         index=pd.DatetimeIndex([index[0]]),
     )
@@ -243,7 +243,7 @@ def _write_contract_bundle(root: Path, *, vol_semantics: str) -> None:
                 "BTCUSDC"
             ),
         }
-        if head.startswith("vol_"):
+        if head.startswith("absolute_price_variance_rate_"):
             metadata["label_semantics"] = vol_semantics
         (root / f"{head}_meta.json").write_text(json.dumps(metadata), encoding="utf-8")
 
@@ -265,7 +265,7 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
         invalid_units,
         vol_semantics="fixed_forward_h_absolute_price_variance",
     )
-    meta_path = invalid_units / "vol_10s_meta.json"
+    meta_path = invalid_units / "absolute_price_variance_rate_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["volatility_unit_contract"]["base_asset"] = "ETH"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -274,7 +274,7 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
 
     mixed = tmp_path / "mixed"
     _write_contract_bundle(mixed, vol_semantics="fixed_forward_h_absolute_price_variance")
-    meta_path = mixed / "dir_10s_meta.json"
+    meta_path = mixed / "touch_conditioned_up_probability_10000ms_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["feature_manifest_sha256"] = "different-feature-manifest"
     meta_path.write_text(json.dumps(metadata), encoding="utf-8")
@@ -288,7 +288,7 @@ def test_ml_off_prediction_does_not_reuse_dimensionless_realized_volatility() ->
         "BTCUSDC"
     )
     prediction = engine._predict({"volatility_30s": 0.123})
-    assert prediction.vol_10s == 0.0
+    assert prediction.absolute_price_variance_rate_10000ms == 0.0
 
 
 def test_maker_signed_markout_has_same_favorable_direction_for_buy_and_sell() -> None:

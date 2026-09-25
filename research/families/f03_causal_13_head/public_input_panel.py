@@ -129,7 +129,7 @@ def publish_model_contract(model_dir, identity, targets, *, selection_contract):
     root = Path(model_dir)
     result = {k: identity[k] for k in ("input_contract_id", "observation_contract_id", "feature_contract_id",
                                       "label_contract_id", "split_manifest_id")}
-    result.update(symbol="BTCUSDC", heads={}, reference_market=None, promotion_authority="research_only")
+    result.update(schema="narrowgate.semantic_model_bundle.v1", symbol="BTCUSDC", heads={}, reference_market=None, promotion_authority="research_only")
     if identity.get("feature_manifest_sha256"):
         result["feature_manifest_sha256"] = identity["feature_manifest_sha256"]
     expected_selection = dict(selection_contract)

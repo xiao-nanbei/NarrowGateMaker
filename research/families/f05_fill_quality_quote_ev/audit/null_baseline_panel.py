@@ -228,8 +228,7 @@ def main() -> int:
                 continue
         else:
             quote_cmd = [
-                "python3",
-                "models/quote_decomposition_tick.py",
+                sys.executable, "-m", "narrowgate", "quote-diagnostics",
                 "--symbol",
                 args.symbol,
                 "--days",

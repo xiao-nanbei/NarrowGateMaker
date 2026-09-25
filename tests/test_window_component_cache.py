@@ -571,10 +571,10 @@ def test_reusing_cached_inference_checks_current_input_abi_once(
         ),
         "market_stage": "minimal", "reference_symbol": "BTCUSDT",
     }
-    (model / "dir_10s_meta.json").write_text(json.dumps({**interface, "feature_cols": ["a"]}))
+    (model / "touch_conditioned_up_probability_10000ms_meta.json").write_text(json.dumps({**interface, "feature_cols": ["a"]}))
     # The cache already contains predictions; the model file is a locator,
     # not something this cache-hit interface check loads for inference.
-    (model / "dir_10s.txt").write_text("synthetic previously-cached model\n")
+    (model / "touch_conditioned_up_probability_10000ms.txt").write_text("synthetic previously-cached model\n")
     if not compatible:
         interface["feature_cutoff_semantics"] = "inclusive"
     (panel / "causal_feature_manifest.json").write_text(json.dumps(interface))

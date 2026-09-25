@@ -17,10 +17,10 @@ Adding a new arm-sweep is now a registry edit, not a new file:
     )
 
 Usage:
-    python3 models/tick_ab.py --list
-    python3 models/tick_ab.py spread_cap   --days 2026-05-01 2026-05-02 --workers 6
-    python3 models/tick_ab.py spread_cap   --days 2026-05-15 --engine cpp
-    python3 models/tick_ab.py noise_guard  --symbol BTCUSDC --days 2026-05-15
+    narrowgate tick-ab --list
+    narrowgate tick-ab spread_cap --days 2026-05-01 2026-05-02 --workers 6
+    narrowgate tick-ab spread_cap --days 2026-05-15 --engine cpp
+    narrowgate tick-ab noise_guard --symbol BTCUSDC --days 2026-05-15
 
 Research conclusions are day-only. Every retained UTC day is replayed from cold
 state. All arms hold the current live params fixed and change only the listed
@@ -44,8 +44,6 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from models import backtest_tick as bt  # noqa: E402
 from models.backtest_config import disable_ml_params, load_tick_base_params  # noqa: E402
@@ -1114,11 +1112,11 @@ _register(Experiment(
 ))
 
 
-def main(argv: list[str] | None = None) -> None:
+def run_cli(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help", "--list"}:
         print("Unified tick-replay A/B runner.\n")
-        print("Usage: python3 models/tick_ab.py <experiment> [--days YYYY-MM-DD ...] [--arms ...] [--tag ...]\n")
+        print("Usage: narrowgate tick-ab <experiment> [--days YYYY-MM-DD ...] [--arms ...] [--tag ...]\n")
         print("Available experiments:")
         for key, exp in EXPERIMENTS.items():
             arm_count = (
@@ -1133,4 +1131,4 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit("Use the installed narrowgate tick-ab command")

@@ -78,7 +78,7 @@ def test_f05_model_action_reaches_original_executor(bundle, tmp_path, monkeypatc
     from models.backtest_tick import simulate_public_inputs
 
     policy, _ = _policy(bundle, tmp_path, monkeypatch)
-    params = dict(gamma=.01, kappa=1., order_size=.001, max_inventory=.01,
+    params = dict(eta_inventory=.01, a_spread=.01, risk_per_order=.01, inventory_reference_qty=1., kappa=1., order_size=.001, max_inventory=.01,
         requote_interval=.2, rq_min=.2, rq_max=.2, requote_clock='fixed', maker_fee=0.,
         taker_fee=0., tick_size=.1, lot_size=.001, queue_base=0., queue_decay=0.,
         maker_fill_prob=1., use_bar_pricing=True, replay_event_clock='merged',

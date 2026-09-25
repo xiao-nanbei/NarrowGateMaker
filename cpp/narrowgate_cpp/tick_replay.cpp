@@ -1741,9 +1741,9 @@ TraceOrderRow make_trace_order_row(
     row.raw_asym_shift = quote.raw_asym_shift;
     row.asym = quote.asym;
     row.inventory = inventory;
-    row.dir_signal = pred.dir_10s - 0.5;
-    row.pred_dir = pred.dir_10s;
-    row.pred_ret = pred.ret_10s;
+    row.dir_signal = pred.touch_conditioned_up_probability_10000ms - 0.5;
+    row.pred_dir = pred.touch_conditioned_up_probability_10000ms;
+    row.pred_ret = pred.touch_conditioned_price_change_fraction_10000ms;
     row.tox_bid = pred.tox_bid;
     row.tox_ask = pred.tox_ask;
     row.book_imb = quote.book_imb;
@@ -7065,7 +7065,7 @@ TickReplayResult simulate_tick_arrays(
         if (params.fill_cooldown_reducing_vol_ref <= 0.0) {
             return 1.0;
         }
-        const double vol = pred.vol_10s;
+        const double vol = pred.absolute_price_variance_rate_10000ms;
         if (!std::isfinite(vol) || vol <= 0.0) {
             return 1.0;
         }
@@ -7103,7 +7103,7 @@ TickReplayResult simulate_tick_arrays(
                     params.max_inventory,
                     ts,
                     pos_open_ts,
-                    pred.ret_10s,
+                    pred.touch_conditioned_price_change_fraction_10000ms,
                     refill_edge,
                     micro_reversion_score
                 );
@@ -8841,14 +8841,14 @@ TickReplayResult simulate_tick_arrays(
             );
             if (input.ml_ts_ms.data()[ml_idx] <= prediction_cutoff_ts) {
                 ml_ready = true;
-                pred.dir_10s = input.ml_dir_10s.data()[ml_idx];
-                pred.vol_10s = input.ml_vol_10s.data()[ml_idx];
+                pred.touch_conditioned_up_probability_10000ms = input.ml_dir_10s.data()[ml_idx];
+                pred.absolute_price_variance_rate_10000ms = input.ml_vol_10s.data()[ml_idx];
                 const double raw_ret_10s = input.ml_ret_10s.data()[ml_idx];
                 if (params.quote.ret_skew > 0.0 && ret_demean_alpha > 0.0) {
                     pred_ret_ema = ret_demean_alpha * raw_ret_10s + (1.0 - ret_demean_alpha) * pred_ret_ema;
-                    pred.ret_10s = raw_ret_10s - pred_ret_ema;
+                    pred.touch_conditioned_price_change_fraction_10000ms = raw_ret_10s - pred_ret_ema;
                 } else {
-                    pred.ret_10s = raw_ret_10s;
+                    pred.touch_conditioned_price_change_fraction_10000ms = raw_ret_10s;
                 }
                 pred.tox_bid = input.ml_tox_bid.data()[ml_idx];
                 pred.tox_ask = input.ml_tox_ask.data()[ml_idx];
@@ -9479,11 +9479,11 @@ TickReplayResult simulate_tick_arrays(
             };
             const double bid_micro_reversion = micro_reversion_score(
                 bid_refill_edge,
-                side_adverse_ret_from_pred<Side::Buy>(pred.ret_10s)
+                side_adverse_ret_from_pred<Side::Buy>(pred.touch_conditioned_price_change_fraction_10000ms)
             );
             const double ask_micro_reversion = micro_reversion_score(
                 ask_refill_edge,
-                side_adverse_ret_from_pred<Side::Sell>(pred.ret_10s)
+                side_adverse_ret_from_pred<Side::Sell>(pred.touch_conditioned_price_change_fraction_10000ms)
             );
             const bool bid_campaign_soft =
                 campaign_exposure_risk_active<Side::Buy>(
@@ -9501,7 +9501,7 @@ TickReplayResult simulate_tick_arrays(
                     lot_size,
                     ts,
                     pos_open_ts,
-                    pred.ret_10s,
+                    pred.touch_conditioned_price_change_fraction_10000ms,
                     bid_refill_edge,
                     bid_micro_reversion
                 );
@@ -9521,7 +9521,7 @@ TickReplayResult simulate_tick_arrays(
                     lot_size,
                     ts,
                     pos_open_ts,
-                    pred.ret_10s,
+                    pred.touch_conditioned_price_change_fraction_10000ms,
                     ask_refill_edge,
                     ask_micro_reversion
                 );

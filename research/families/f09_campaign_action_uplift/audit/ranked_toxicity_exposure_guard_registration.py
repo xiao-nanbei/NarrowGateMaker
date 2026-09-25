@@ -63,7 +63,7 @@ def validate_registration(spec_path: Path) -> dict[str, Any]:
     side = str(spec.get("side", "")).upper()
     if side not in {"BUY", "SELL"}:
         raise ValueError("registration side must be BUY or SELL")
-    expected_head = "tox_bid_10s" if side == "BUY" else "tox_ask_10s"
+    expected_head = "touch_side_adverse_probability_bid_10000ms" if side == "BUY" else "touch_side_adverse_probability_ask_10000ms"
     if spec["prediction_contract"].get("head") != expected_head:
         raise ValueError("side-specific toxicity head is incorrect")
     if spec.get("scorecard_profile") != score_profile_contract(

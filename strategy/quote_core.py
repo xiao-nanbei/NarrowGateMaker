@@ -194,9 +194,9 @@ def spread_cap_mode_name(value: Any) -> str:
 
 @dataclass(frozen=True)
 class QuotePrediction:
-    dir_10s: float = 0.5
-    vol_10s: float = 0.0
-    ret_10s: float = 0.0
+    touch_conditioned_up_probability_10000ms: float = 0.5
+    absolute_price_variance_rate_10000ms: float = 0.0
+    touch_conditioned_price_change_fraction_10000ms: float = 0.0
     tox_bid: float = 0.5
     tox_ask: float = 0.5
 
@@ -232,9 +232,6 @@ class QuoteState:
 
 @dataclass(frozen=True)
 class QuoteCoreConfig:
-    # Compatibility input only.  When the two dimensioned coefficients below
-    # are omitted, both inherit this historical numeric value exactly.
-    gamma: float
     kappa: float
     tick_size: float
     lot_size: float
@@ -342,17 +339,13 @@ class QuoteCoreConfig:
     defense_emergency_inventory_ratio: float = 0.50
     defense_emergency_loss: float = 5.0
 
-    # Appended after every legacy field to preserve positional construction.
     # ``inventory_reference_qty`` is q_ref in base-asset units and
     # ``order_size`` is z in the same units.  The reservation term consumes
     # n=q/q_ref (dimensionless).  eta_inventory and a_spread have inverse-price
     # units (base/quote) and are independent empirical controller coefficients;
-    # the historical fallback below exists
-    # only to preserve B0 numerically.  In particular z is not present in the
-    # logarithmic spread term, so legacy gamma/a_spread must not be interpreted
-    # as a portable CARA coefficient derived for arbitrary order quantity.
-    # Changing q_ref with eta omitted rescales eta so the old q*gamma inventory
-    # shift remains unchanged.
+    # no coefficient is inferred from another. In particular z is not present
+    # in the logarithmic spread term; these are empirical controller values,
+    # not portable CARA coefficients for arbitrary order quantities.
     inventory_reference_qty: float = 1.0
     eta_inventory: float | None = None
     a_spread: float | None = None
@@ -376,8 +369,8 @@ class QuoteCoreConfig:
     f03_ret_action_compatible: bool = False
 
     # ``risk_per_order`` is the inverse-price (base/quote) coefficient consumed by the
-    # spread expression.  In a quantity-aware AS derivation it is gamma*z;
-    # legacy B0 instead inherits the empirical ``a_spread`` value exactly.
+    # spread expression. It must be explicitly supplied, including when its
+    # numerical value equals the registered inventory coefficient.
     # ``execution_intensity_slope`` is a distance-decay coefficient.  It must
     # not silently inherit the fixed-horizon P3 touch slope.
     risk_per_order: float | None = None
@@ -396,28 +389,12 @@ class QuoteCoreConfig:
     trade_intensity_acceleration_spread_mult: float | None = None
 
     def __post_init__(self) -> None:
-        legacy = finite_positive_quote_coefficient("gamma", self.gamma)
-        legacy_effective = max(legacy, 1e-12)
         inventory_reference_qty = finite_positive_quote_coefficient(
             "inventory_reference_qty", self.inventory_reference_qty
         )
-        eta_inventory = (
-            legacy_effective * inventory_reference_qty
-            if self.eta_inventory is None
-            else finite_positive_quote_coefficient("eta_inventory", self.eta_inventory)
-        )
-        a_spread = (
-            legacy_effective
-            if self.a_spread is None
-            else finite_positive_quote_coefficient("a_spread", self.a_spread)
-        )
-        risk_per_order = (
-            a_spread
-            if self.risk_per_order is None
-            else finite_positive_quote_coefficient(
-                "risk_per_order", self.risk_per_order
-            )
-        )
+        eta_inventory = finite_positive_quote_coefficient("eta_inventory", self.eta_inventory)
+        a_spread = finite_positive_quote_coefficient("a_spread", self.a_spread)
+        risk_per_order = finite_positive_quote_coefficient("risk_per_order", self.risk_per_order)
         execution_intensity_slope = (
             finite_positive_quote_coefficient("kappa", self.kappa)
             if self.execution_intensity_slope is None
@@ -442,7 +419,6 @@ class QuoteCoreConfig:
                 self.trade_intensity_acceleration_spread_mult,
             )
         )
-        object.__setattr__(self, "gamma", legacy)
         object.__setattr__(self, "inventory_reference_qty", inventory_reference_qty)
         object.__setattr__(self, "eta_inventory", eta_inventory)
         object.__setattr__(self, "a_spread", a_spread)
@@ -1425,7 +1401,6 @@ def quote_core_config_from_live_config(
         strategy, "trade_intensity_acceleration_spread_mult", None
     )
     return QuoteCoreConfig(
-        gamma=float(strategy.gamma),
         kappa=float(strategy.kappa),
         tick_size=float(cfg.tick_size),
         lot_size=float(cfg.lot_size),
@@ -1570,43 +1545,19 @@ def quote_core_config_from_params(
         not formal_replay
         or bool(params.get("f03_ret_action_contract_bound", False))
     )
-    quote_math_mode = str(
-        params.get("quote_math_mode", "legacy_v0") or "legacy_v0"
-    ).strip().lower()
-    if quote_math_mode not in {"legacy_v0", "quantity_aware_v1"}:
-        raise ValueError("quote_math_mode must be legacy_v0 or quantity_aware_v1")
     order_size = finite_positive_quote_coefficient("order_size", params["order_size"])
-    legacy_gamma = finite_positive_quote_coefficient("gamma", params["gamma"])
-    if quote_math_mode == "quantity_aware_v1":
-        cara_risk_aversion = finite_positive_quote_coefficient(
-            "cara_risk_aversion",
-            params.get("cara_risk_aversion", legacy_gamma),
-        )
-        default_risk_per_order = cara_risk_aversion * order_size
-        inventory_reference_qty = finite_positive_quote_coefficient(
-            "inventory_reference_qty",
-            params.get("inventory_reference_qty", order_size),
-        )
-        eta_inventory = params.get("eta_inventory")
-        if eta_inventory is None:
-            eta_inventory = default_risk_per_order
-        a_spread = params.get("a_spread")
-        if a_spread is None:
-            a_spread = default_risk_per_order
-    else:
-        default_risk_per_order = params.get("a_spread", legacy_gamma)
-        inventory_reference_qty = finite_positive_quote_coefficient(
-            "inventory_reference_qty",
-            params.get("inventory_reference_qty", 1.0),
-        )
-        eta_inventory = params.get("eta_inventory")
-        a_spread = params.get("a_spread")
+    if "gamma" in params:
+        raise ValueError("gamma is not a current quote parameter; migrate the configuration offline")
+    inventory_reference_qty = finite_positive_quote_coefficient(
+        "inventory_reference_qty", params["inventory_reference_qty"]
+    )
+    eta_inventory = params["eta_inventory"]
+    a_spread = params["a_spread"]
     return QuoteCoreConfig(
-        gamma=legacy_gamma,
         inventory_reference_qty=inventory_reference_qty,
         eta_inventory=eta_inventory,
         a_spread=a_spread,
-        risk_per_order=params.get("risk_per_order", default_risk_per_order),
+        risk_per_order=params["risk_per_order"],
         execution_intensity_slope=params.get(
             "execution_intensity_slope", params["kappa"]
         ),
@@ -1748,11 +1699,11 @@ def _compute_quote_core_py(
     eta_inventory = float(cfg.eta_inventory)
     risk_per_order = float(cfg.risk_per_order)
     sigma_sq_raw = max(float(state.sigma_sq), 0.0)
-    pred_dir = _float(_get(pred, "dir_10s", 0.5), 0.5)
-    pred_vol = _float(_get(pred, "vol_10s", 0.0), 0.0)
-    pred_ret = _float(_get(pred, "ret_10s", 0.0), 0.0)
-    tox_bid = _float(_get(pred, "tox_bid", _get(pred, "tox_bid_10s", 0.5)), 0.5)
-    tox_ask = _float(_get(pred, "tox_ask", _get(pred, "tox_ask_10s", 0.5)), 0.5)
+    pred_dir = _float(_get(pred, "touch_conditioned_up_probability_10000ms", 0.5), 0.5)
+    pred_vol = _float(_get(pred, "absolute_price_variance_rate_10000ms", 0.0), 0.0)
+    pred_ret = _float(_get(pred, "touch_conditioned_price_change_fraction_10000ms", 0.0), 0.0)
+    tox_bid = _float(_get(pred, "tox_bid", _get(pred, "touch_side_adverse_probability_bid_10000ms", 0.5)), 0.5)
+    tox_ask = _float(_get(pred, "tox_ask", _get(pred, "touch_side_adverse_probability_ask_10000ms", 0.5)), 0.5)
 
     distance_decay_source = "execution_intensity_slope"
     distance_decay_before_depth = float(cfg.execution_intensity_slope)
@@ -2626,7 +2577,7 @@ _CPP_STATE_FIELDS = (
     "mo_ref", "position_open", "hold_time_s", "unrealized_pnl",
 )
 
-_CPP_PRED_FIELDS = ("dir_10s", "vol_10s", "ret_10s", "tox_bid", "tox_ask")
+_CPP_PRED_FIELDS = ("touch_conditioned_up_probability_10000ms", "absolute_price_variance_rate_10000ms", "touch_conditioned_price_change_fraction_10000ms", "tox_bid", "tox_ask")
 
 QUOTE_CORE_CPP_ABI_FIELDS = {
     "QuoteCoreConfig": _CPP_CFG_FIELDS,
@@ -2803,11 +2754,11 @@ def _call_cpp_quote_core(
     if cpp is None:
         raise RuntimeError("narrowgate_cpp is not available")
 
-    pred_dir = _float(_get(pred, "dir_10s", 0.5), 0.5)
-    pred_vol = _float(_get(pred, "vol_10s", 0.0), 0.0)
-    pred_ret = _float(_get(pred, "ret_10s", 0.0), 0.0)
-    pred_tox_bid = _float(_get(pred, "tox_bid", _get(pred, "tox_bid_10s", 0.5)), 0.5)
-    pred_tox_ask = _float(_get(pred, "tox_ask", _get(pred, "tox_ask_10s", 0.5)), 0.5)
+    pred_dir = _float(_get(pred, "touch_conditioned_up_probability_10000ms", 0.5), 0.5)
+    pred_vol = _float(_get(pred, "absolute_price_variance_rate_10000ms", 0.0), 0.0)
+    pred_ret = _float(_get(pred, "touch_conditioned_price_change_fraction_10000ms", 0.0), 0.0)
+    pred_tox_bid = _float(_get(pred, "tox_bid", _get(pred, "touch_side_adverse_probability_bid_10000ms", 0.5)), 0.5)
+    pred_tox_ask = _float(_get(pred, "tox_ask", _get(pred, "touch_side_adverse_probability_ask_10000ms", 0.5)), 0.5)
     cpp_cfg = _cached_cpp_config(cpp, cfg)
     result = cpp.compute_quote_core_live(
         tuple(getattr(state, name) for name in _CPP_STATE_FIELDS),
@@ -3275,7 +3226,7 @@ def compute_native_quote_policy_stage_live(
     if cpp is None:
         raise RuntimeError("narrowgate_cpp is not available")
     pred_values = tuple(
-        _float(_get(pred, name, 0.5 if "tox" in name or name == "dir_10s" else 0.0))
+        _float(_get(pred, name, 0.5 if "tox" in name or name == "touch_conditioned_up_probability_10000ms" else 0.0))
         for name in _CPP_PRED_FIELDS
     )
 
@@ -3323,9 +3274,9 @@ def compute_quote_core_batch_depth_cpp(
     trade_intensity: Any,
     best_bid: Any,
     best_ask: Any,
-    dir_10s: Any,
-    vol_10s: Any,
-    ret_10s: Any,
+    touch_conditioned_up_probability_10000ms: Any,
+    absolute_price_variance_rate_10000ms: Any,
+    touch_conditioned_price_change_fraction_10000ms: Any,
     tox_bid: Any,
     tox_ask: Any,
     cfg: QuoteCoreConfig,
@@ -3395,9 +3346,9 @@ def compute_quote_core_batch_depth_cpp(
         arr(trade_intensity, "trade_intensity"),
         arr(best_bid, "best_bid"),
         arr(best_ask, "best_ask"),
-        arr(dir_10s, "dir_10s", 0.5),
-        arr(vol_10s, "vol_10s"),
-        arr(ret_10s, "ret_10s"),
+        arr(touch_conditioned_up_probability_10000ms, "touch_conditioned_up_probability_10000ms", 0.5),
+        arr(absolute_price_variance_rate_10000ms, "absolute_price_variance_rate_10000ms"),
+        arr(touch_conditioned_price_change_fraction_10000ms, "touch_conditioned_price_change_fraction_10000ms"),
         arr(tox_bid, "tox_bid", 0.5),
         arr(tox_ask, "tox_ask", 0.5),
         arr(mo_ema_bid, "mo_ema_bid", 0.0),

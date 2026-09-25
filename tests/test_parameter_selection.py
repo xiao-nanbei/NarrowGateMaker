@@ -1421,8 +1421,11 @@ def test_campaign_day_runtime_compute_shared_across_arms_and_resets_per_day(monk
 
     monkeypatch.setattr(campaign_audit.bt, "_simulate_tick_with_engine", simulate)
     arms = [
-        campaign_audit.smoke.SmokeArm(name=name, group="synthetic", overrides={"gamma": gamma})
-        for name, gamma in (("baseline", 0.01), ("candidate", 0.02))
+        campaign_audit.smoke.SmokeArm(name=name, group="synthetic", overrides={
+            "eta_inventory": coefficient, "a_spread": coefficient,
+            "risk_per_order": coefficient,
+        })
+        for name, coefficient in (("baseline", 0.01), ("candidate", 0.02))
     ]
     base = _runtime_fifo_params()
     if clock == "prediction_delivery":

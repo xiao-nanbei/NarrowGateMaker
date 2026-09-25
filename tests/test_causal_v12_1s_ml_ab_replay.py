@@ -47,7 +47,7 @@ def _write_test_overlay(tmp_path: Path, *, rows: int = 4) -> Path:
         pa.array([f"{index:064x}" for index in range(rows)]),
     ]
     for head in training.HEAD_SPECS:
-        value = 0.5 if training.HEAD_SPECS[head][3] else (0.1 if head.startswith("vol_") else 0.0)
+        value = 0.5 if training.HEAD_SPECS[head][3] else (0.1 if head.startswith("absolute_price_variance_rate_") else 0.0)
         arrays.append(pa.array(np.full(rows, value, dtype=np.float64)))
     table = pa.Table.from_arrays(arrays, schema=overlays.prediction_overlay_arrow_schema())
     overlay_path = output / overlays.OVERLAY_FILENAME
@@ -134,8 +134,8 @@ def test_loads_complete_13_head_overlay_and_projects_existing_quote_abi(tmp_path
     assert tuple(schedule.predictions) == tuple(training.HEAD_SPECS)
     assert len(schedule.ml_data) == 6
     assert schedule.ml_data[0] is schedule.decision_ts_ms
-    assert schedule.ml_data[1] is schedule.predictions["dir_10s"]
-    assert schedule.ml_data[4] is schedule.predictions["tox_bid_10s"]
+    assert schedule.ml_data[1] is schedule.predictions["touch_conditioned_up_probability_10000ms"]
+    assert schedule.ml_data[4] is schedule.predictions["touch_side_adverse_probability_bid_10000ms"]
     assert np.all(schedule.feature_ready_ts_ms <= schedule.decision_ts_ms)
 
 
@@ -300,7 +300,7 @@ def test_paired_runner_never_accepts_old_loader_window_and_only_injects_ml_on(
     assert calls[0]["kwargs"]["ml_data"] is None
     assert len(calls[1]["kwargs"]["ml_data"]) == 6
     assert calls[1]["kwargs"]["ml_data"][0] is schedule.decision_ts_ms
-    assert calls[1]["kwargs"]["ml_data"][1] is schedule.predictions["dir_10s"]
+    assert calls[1]["kwargs"]["ml_data"][1] is schedule.predictions["touch_conditioned_up_probability_10000ms"]
     assert result["identity"]["historical_10s_loader_called"] is False
     assert result["identity"]["full_path_ml_ab_run"] is True
 
