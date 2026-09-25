@@ -2,8 +2,8 @@
 
 [简体中文](replay_runtime_checkpoint.zh-CN.md)
 
-Last materially modified: 2026-09-08
-Last materially synchronized: 2026-09-08
+Last materially modified: 2026-09-26
+Last materially synchronized: 2026-09-26
 
 The Python tick loop can pause **before** an event and save its runtime graph,
 then resume that event once. A pause is not maintenance: it does not request
@@ -109,20 +109,7 @@ updates cooldown. Process locks are recreated; protected EMA, pending window,
 cooldown and counters are retained. Every undelivered callback must remain in the
 next input batch. Before discarding an old prefix, the adapter can fold lazy depth callbacks strictly before the saved next event into the existing EMA in source order, without evaluating a policy or creating a fill. Equal-time and future callbacks cannot be discarded. A real cross-midnight bounded comparison also matched the uninterrupted decision, quote, fill, campaign and funding tables exactly; no-fill intervals before the cut are covered by the regression tests.
 
-The optional native cooldown hot path exports a versioned value state containing
-the pending window, EMA/derivatives, crosses, clocks and audit counters. Restore
-checks exact configuration plus binary/source identity and recreates process
-locks; an incapable backend fails checkpoint preflight instead of selecting
-Python. SELL/BUY cross-process, independent-fork and synthetic tick-loop
-account-output comparisons pass. This does not yet qualify a complete real
-native-enabled account. The previously verified Python
-private B0 configuration has passed a representative one-hour comparison for
-both same-window file resume and actual input cropping. Decisions, quotes,
-fills, campaign accounting and funding matched the uninterrupted reference;
-wall time and loaded-input summary counts are not equality claims. This does
-not qualify every date, source-provider transition or optional policy.
-C++ tick-loop restore and arbitrary research emitter/native object serialization
-are not supplied by this interface.
+The optional native cooldown hot path exports a versioned value state containing pending windows, EMA/derivatives, crosses, clocks and counters. Restore checks exact configuration plus binary/source identity and recreates process locks; an incapable backend fails instead of selecting Python. Prepared replay binds the actual adapter's immutable depth/delivery inputs and policy/backend configuration, not its evolving cursor. SELL/BUY cross-process, independent-fork and synthetic comparisons pass. The separately authorized full development072 engineering account now also passes: a new uninterrupted run and a midnight save/exit/new-process restoration match all980 fills,419755 L2 events,490 cooldown decisions and complete accounting, with zero PnL difference. The cut includes nonzero inventory, an active order, an unexpired SELL cooldown and pending native windows; restored exported native states are exact before processing the next event. Original cooldown-off evidence remains unchanged. Policy wall-clock age and evaluation latency are recorded separately, not treated as simulated state. This is one engineering configuration, not evidence of cooldown profitability or every date/provider/policy. Earlier Python same-window and input-cropping evidence remains valid within its own scope. Full C++ tick-loop restoration and arbitrary research emitter/native object serialization are not supplied by this interface. Source-bound private receipts are indexed in the [existing work list](../research/recompute_407.json), not distributed with the public repository.
 
 ### Source-aware raw L2 restoration
 

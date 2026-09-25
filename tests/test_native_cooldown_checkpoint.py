@@ -158,6 +158,31 @@ def test_actual_tick_loop_restores_native_adapter_account_outputs(policy, tmp_pa
     assert_same(actual, expected)
 
 
+def test_public_checkpoint_binds_native_cooldown_inputs_not_progress(policy):
+    import numpy as np
+    from models.exchange_book_replay import ReceiveTimeCooldownReplayAdapter, HistoricalMessageDeliverySchedule
+    from models.tick_data_types import HistoricalL2Data
+    from models.replay.runtime_checkpoint_io import public_checkpoint_binding
+
+    ts = np.array([100, 200], dtype=np.int64)
+    bids = np.array([[99.], [100.]])
+    depth = HistoricalL2Data(ts, bids, np.ones_like(bids), bids + 2, np.ones_like(bids))
+    clocks = ts * 1_000_000
+    side = 'SELL' if type(policy) is LiveBooleanCooldownPolicy else 'BUY'
+    adapter = ReceiveTimeCooldownReplayAdapter(
+        depth, HistoricalMessageDeliverySchedule(clocks, clocks, clocks), policies={side: policy})
+    params = {'cooldown_duration_policy_evaluator': adapter, 'cooldown_v2_snapshot_emitter': adapter}
+    before = public_checkpoint_binding('input', params, None)
+    adapter._cursor = 1
+    observe(policy, 100_000_007)
+    assert public_checkpoint_binding('input', params, None) == before
+    policy.windows.max_feature_age_s += 1
+    assert public_checkpoint_binding('input', params, None) != before
+    policy.windows.max_feature_age_s -= 1
+    bids[0, 0] += .5
+    assert public_checkpoint_binding('input', params, None) != before
+
+
 def test_preflight_rejects_incapable_native_before_execution(policy, monkeypatch):
     from types import SimpleNamespace
     from models.replay.runtime_checkpoint_io import validate_native_cooldown_checkpoint

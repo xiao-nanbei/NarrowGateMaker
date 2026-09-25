@@ -33,8 +33,39 @@ def public_checkpoint_binding(input_manifest_id, params, predictions):
     import numpy as np
     from models import backtest_tick
     from models.replay import l2_journal, runtime_input_window
+    from models.exchange_book_replay import ReceiveTimeCooldownReplayAdapter
+
+    cooldown_bindings = {}
+
+    def bind_cooldown(adapter):
+        # Bind immutable inputs, not the cursor/EMA state that the checkpoint
+        # itself owns. The evaluator and snapshot emitter may be one object.
+        if id(adapter) in cooldown_bindings:
+            return cooldown_bindings[id(adapter)]
+        arrays = hashlib.sha256()
+        for value in (adapter._depth.ts_ms, adapter._depth.bid_px,
+                      adapter._depth.ask_px, adapter._depth.bid_qty,
+                      adapter._depth.ask_qty, adapter._receive, adapter._ready):
+            value = np.ascontiguousarray(value)
+            arrays.update(str((value.shape, value.dtype.str)).encode())
+            arrays.update(memoryview(value).cast('B'))
+        policies = {}
+        for side, policy in sorted(adapter._policies.items()):
+            policies[side] = {
+                'identity': dict(adapter.cpp_policy_bindings[side]),
+                'type': type(policy).__module__ + '.' + type(policy).__qualname__,
+                'warmup_s': policy.windows.warmup_s,
+                'max_feature_age_s': policy.windows.max_feature_age_s,
+                'native': (_native_cooldown_binding(policy._native_cpp)
+                           if policy._native_hot_path is not None else None),
+            }
+        binding = {'cooldown_depth_sha256': arrays.hexdigest(), 'policies': policies}
+        cooldown_bindings[id(adapter)] = binding
+        return binding
 
     def normalize(value):
+        if isinstance(value, ReceiveTimeCooldownReplayAdapter):
+            return bind_cooldown(value)
         if isinstance(value, dict):
             return {key: normalize(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
