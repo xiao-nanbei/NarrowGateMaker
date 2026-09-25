@@ -23,6 +23,8 @@ Load only the route needed for the request:
 
 ## Development and ownership
 
+For changes to an existing experiment's concurrency, arm order, execution location or log path, prefer existing entry-point arguments, scheduler configuration or direct commands. If a one-off launcher is necessary, scope it to that task and delete it after completion; do not automatically promote it to a research artifact or require long-term archival.
+
 Save authorized source changes by local commit/amend. Push only when the owner explicitly requests a push for the current task; previous automatic-publication instructions do not authorize future pushes.
 
 Use the project `.venv/bin/python`, checking Python >=3.11 before Python work. Use it for pytest, ruff and compilation. Run focused tests proportional to changed behavior, applicable lint and `git diff --check`; expand when shared consumers are affected. Do not claim unrun checks passed. Keep long local macOS jobs under `caffeinate`; remote jobs need their own durable runner.

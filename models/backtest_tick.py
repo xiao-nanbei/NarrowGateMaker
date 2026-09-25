@@ -8921,6 +8921,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     _tick_state.q = _tick_state.initial_inventory
     _tick_state.exchange_inventory = _tick_state.initial_inventory
     _tick_state.cash = -_tick_state.initial_inventory * _tick_state.initial_entry_price if _tick_state.initial_entry_price > 0.0 else 0.0
+    # Matching facts belong to the exchange simulation, not notification order.
+    _tick_state.economic_fill_facts = []
+    _tick_state.economic_match_cash = float(_tick_state.cash)
+    _tick_state.economic_match_inventory = float(_tick_state.q)
     _tick_state.hard_risk_clock_ts_ms = int(_tick_state.trade_ts[0])
     _tick_state.hard_risk_mark_price = float(_tick_state.trade_price[0])
     _tick_state.initial_risk_equity = _tick_state.cash + _tick_state.q * _tick_state.hard_risk_mark_price
@@ -25497,12 +25501,33 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             int(now_ts), _tick_state.hard_risk_mark_price, emergency_market=True,
         )
 
+    def _record_economic_match(side, order, timestamp, quantity, price, fee_rate):
+        """Capture once at matching; never advance strategy-visible state."""
+        sequence = _tick_state.private_fill_exchange_match_count - 1
+        row = {
+            "match_sequence": int(sequence), "order_id": int(order["trace_id"]),
+            "fill_ts": int(timestamp), "side": str(side),
+            "fill_qty": float(quantity), "quote_px": float(price),
+            "fill_fee_usdc": float(quantity) * float(price) * float(fee_rate),
+        }
+        previous = _tick_state.economic_fill_facts
+        if previous and row["fill_ts"] < previous[-1]["fill_ts"]:
+            raise ValueError("economic matching clock regressed at producer")
+        size = float(quantity) * (1 if side == "BUY" else -1)
+        _tick_state.economic_match_inventory += size
+        _tick_state.economic_match_cash -= size * float(price) + row["fill_fee_usdc"]
+        if len(previous) < _tick_state.trace_fills_max:
+            previous.append(row)
+        return int(sequence)
+
     def _append_fill_trace(side: str, idx: int, quote_px: float, fill_qty: float,
                            quote_ts: int, quote_mid: float, queue_init: float,
                            queue_before: float, rem_before: float,
                            inventory_before_fill: float, order=None,
                            fee_rate: Optional[float] = None,
-                           fill_ts_ms: Optional[int] = None):
+                           fill_ts_ms: Optional[int] = None,
+                           clock_context: Optional[dict] = None,
+                           economic_match_sequence: Optional[int] = None):
         _tick_state.trace_attempt_counts["fills"] += 1
         t_fill = _tick_state.trade_ts[idx] if fill_ts_ms is None else int(fill_ts_ms)
         production_event = _tick_state.l2_production.observe("fill", t_fill, side)
@@ -25549,9 +25574,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         else:
             window120_rank = 0.5
         row = {
-            # Result-local physical execution order.  Timestamp and order id
-            # are not tie-breakers because IOC and passive fills can share a
-            # replay tick while executing in the opposite id order.
+            # Local notification order, NOT matching order when latency reorders
+            # callbacks. Economic matching facts carry their own producer index.
             "fill_sequence": _tick_state.trace_attempt_counts["fills"] - 1,
             "side": side,
             "fill_ts": int(t_fill),
@@ -25595,6 +25619,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ))
         if order is not None:
             row.update(_order_trace_fields(order))
+        if clock_context is not None:
+            row["fill_clock_context"] = dict(
+                clock_context,
+                input_event_index=int(idx) + _tick_state.input_event_offset,
+                indexed_trade_ts_ms=int(_tick_state.trade_ts[idx]),
+                outer_loop_ts_ms=int(_tick_state.t),
+                exchange_inventory=float(_tick_state.exchange_inventory),
+                local_inventory=float(_tick_state.q),
+                time_source="indexed_trade" if fill_ts_ms is None else "explicit_match",
+            )
+        if economic_match_sequence is not None:
+            row["economic_match_sequence"] = int(economic_match_sequence)
         if _tick_state.l2_journal is not None:
             _tick_state.l2_journal.emit("fill", t_fill, side=side, payload=row, production_event=production_event)
         if _tick_state.trace_fills is not None and len(_tick_state.trace_fills) < _tick_state.trace_fills_max:
@@ -25651,6 +25687,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     market=bool(order.get("emergency_market", False)),
                 )
                 order["_ioc_match"] = (float(fill_qty), float(fill_price))
+                order["_ioc_first_match_processed_ts_ms"] = int(now_ts)
                 # An IOC never rests, including its unfilled remainder.
                 order["exchange_remaining"] = 0.0
                 order["exchange_fill_terminal"] = fill_qty >= float(order["remaining"])
@@ -25664,6 +25701,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     if _tick_state.private_fill_visibility_enabled:
                         _tick_state.exchange_inventory += fill_qty if side == "BUY" else -fill_qty
                         _tick_state.private_fill_exchange_match_count += 1
+                        order["_ioc_economic_match_sequence"] = _record_economic_match(
+                            side, order, exchange_ts, fill_qty, fill_price, _tick_state.taker_fee,
+                        )
                 else:
                     visible_ts = max(exchange_ts, int(order.get("new_ack_ts", exchange_ts)))
                     if _tick_state.async_rest_gateway:
@@ -25913,6 +25953,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order=trace_order,
                 fee_rate=_tick_state.taker_fee,
                 fill_ts_ms=exchange_ts,
+                economic_match_sequence=order.get("_ioc_economic_match_sequence"),
+                clock_context={
+                    "path": "ioc", "match_ts_ms": int(exchange_ts),
+                    "visible_ts_ms": int(order["ioc_terminal_visible_ts"]),
+                    "processed_ts_ms": int(now_ts),
+                    "match_processed_ts_ms": order["_ioc_first_match_processed_ts_ms"],
+                },
             )
             _append_order_outcome(
                 order,
@@ -26196,6 +26243,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         queue_before: float,
         remaining_before: float,
         exchange_reserved: bool = False,
+        economic_match_sequence: Optional[int] = None,
     ) -> tuple[float, bool, bool]:
         """Publish one already-matched passive fill to all local consumers."""
 
@@ -26382,6 +26430,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "BUY", i, order["price"], fill_qty,
                 order["quote_ts"], order["mid_at_quote"], order["queue_init"],
                 queue_before, rem_before, q_before_fill, order=order,
+                economic_match_sequence=economic_match_sequence,
+                clock_context={"path": "passive", "match_ts_ms": exchange_t,
+                               "visible_ts_ms": t, "processed_ts_ms": t,
+                               "exchange_reserved": bool(exchange_reserved)},
             )
             _append_order_outcome(order, t, "fill", "fill", fill_qty)
             previous_fill_ts = int(_tick_state.last_buy_fill_ts)
@@ -26612,6 +26664,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "SELL", i, order["price"], fill_qty,
                 order["quote_ts"], order["mid_at_quote"], order["queue_init"],
                 queue_before, rem_before, q_before_fill, order=order,
+                economic_match_sequence=economic_match_sequence,
+                clock_context={"path": "passive", "match_ts_ms": exchange_t,
+                               "visible_ts_ms": t, "processed_ts_ms": t,
+                               "exchange_reserved": bool(exchange_reserved)},
             )
             _append_order_outcome(order, t, "fill", "fill", fill_qty)
             previous_fill_ts = int(_tick_state.last_sell_fill_ts)
@@ -26799,6 +26855,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         order["exchange_remaining"] = exchange_remaining_after
         order["last_exchange_fill_ts_ms"] = int(exchange_ts_ms)
         _tick_state.private_fill_exchange_match_count += 1
+        economic_match_sequence = _record_economic_match(
+            side, order, exchange_ts_ms, fill_qty, order["price"], _tick_state.maker_fee,
+        )
         if exchange_remaining_after < _tick_state.LOT_SIZE:
             order["exchange_fill_terminal"] = True
         if side == "BUY":
@@ -26832,6 +26891,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         order["_last_private_fill_visible_ts"] = int(visible_ts_ms)
         payload = {
             "side": str(side),
+            "economic_match_sequence": economic_match_sequence,
             "order": order,
             "fill_qty": float(fill_qty),
             "exchange_ts_ms": int(exchange_ts_ms),
@@ -34211,7 +34271,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         else "incomplete_pending_private_fills"
                     ),
                     "pnl_clock_scope": "local_fill_visibility_at_window_end",
-                    "exchange_inventory_at_window_end": float(_tick_state.exchange_inventory),
                     "exchange_pending_quantity": float(_tick_state.exchange_inventory - _tick_state.q),
                 } if _tick_state.serial_rest_return_enabled else {}),
             }
@@ -35389,6 +35448,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "_inv_ts": _tick_state.inv_arr,
         "_ts": _tick_state.ts_arr,
         "_fill_trace": _tick_state.trace_fills if _tick_state.trace_fills is not None else [],
+        **({
+            "economic_fill_contract": "match_facts_and_local_notifications.v1",
+            "_economic_fill_trace": _tick_state.economic_fill_facts,
+            "economic_match_cash": float(_tick_state.economic_match_cash),
+            "economic_match_inventory": float(_tick_state.economic_match_inventory),
+            "exchange_inventory_at_window_end": float(_tick_state.exchange_inventory),
+        } if _tick_state.private_fill_visibility_enabled else {}),
         "_fill_diagnostic_counts": diagnostic_counts(_tick_state.trace_fills or []),
         "_trace_coverage": {
             "scope": "producer_calls_not_complete_lifecycle_journal",

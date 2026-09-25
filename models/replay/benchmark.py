@@ -60,16 +60,34 @@ def measure(
         if profiler:
             profiler.disable()
             profiler.dump_stats(profile)
-    account = timed("accounting", settle_public_replay)(
-        bundle, result, initial_capital=10000.0, max_mark_age_ns=1_000_000_000, funding=funding
-    )
-
     def convert(value):
         if isinstance(value, np.ndarray):
             return value.tolist()
         if isinstance(value, np.generic):
             return value.item()
         raise TypeError(type(value).__name__)
+
+    try:
+        account = timed("accounting", settle_public_replay)(
+            bundle, result, initial_capital=10000.0, max_mark_age_ns=1_000_000_000, funding=funding
+        )
+    except Exception as error:
+        # Keep the producer's original list order and unknown values.  A failed
+        # settlement must not destroy the only replay evidence or look complete.
+        if result_path is not None:
+            failed_path = Path(str(result_path) + ".accounting-failed.json")
+            try:
+                with failed_path.open("x") as output:
+                    json.dump(
+                        {"status": "accounting_failed", "replay": result,
+                         "error": {"type": type(error).__name__, "message": str(error)},
+                         "stages_before_failure_write": stages},
+                        output, default=convert, sort_keys=True, allow_nan=True,
+                    )
+                error.add_note(f"Unsettled replay preserved at {failed_path}")
+            except Exception as write_error:
+                error.add_note(f"Failed to preserve unsettled replay: {write_error!r}")
+        raise
 
     serialization_start = time.perf_counter()
     economic = json.dumps(

@@ -667,3 +667,82 @@ def test_public_accounting_keeps_unmarked_inventory_unknown(bundle):
     assert report["terminal_inventory"] == 1
     assert report["pnl_before_funding"] is None
     assert report["terminal_unrealized_pnl"] is None
+
+
+def _delayed_accounting_fixture(bundle):
+    facts = [dict(match_sequence=i, order_id=i+10, fill_ts=t, side=side,
+                  fill_qty=1., quote_px=px, fill_fee_usdc=1.)
+             for i, t, side, px in [(0, 2000, "BUY", 101.), (1, 3000, "SELL", 100.)]]
+    notifications = [dict(facts[i], fill_sequence=j, economic_match_sequence=i,
+        fill_clock_context=dict(match_ts_ms=facts[i]["fill_ts"], visible_ts_ms=v,
+                                processed_ts_ms=v))
+        for j, (i, v) in enumerate([(1, 3100), (0, 3500)])]
+    result = dict(public_input_contract={"account_start_ns": SECOND, **binding(bundle)},
+        private_fill_visibility_enabled=True,
+        economic_fill_contract="match_facts_and_local_notifications.v1",
+        _economic_fill_trace=facts, _fill_trace=notifications, fills_total=2,
+        private_fill_exchange_match_count=2, private_fill_visible_count=2,
+        private_fill_pending_visibility_count=0, final_inventory=0., cash_before_terminal=-3.,
+        economic_match_inventory=0., exchange_inventory_at_window_end=0., economic_match_cash=-3.)
+    funding = dict(market_id=MARKET, source_identity="controlled-accounting-fixture",
+        coverage_start_ns=SECOND, coverage_end_ns=4*SECOND,
+        expected_settlements_ns=[2_500_000_000],
+        events=[dict(settlement_ns=2_500_000_000, mark_price=100., rate=.01)])
+    return result, funding
+
+
+def test_delayed_accounting_funding_uses_match_not_notification_order(bundle):
+    from models.replay.public_accounting import settle_public_replay
+    result, funding = _delayed_accounting_fixture(bundle)
+    report = settle_public_replay(bundle, result, initial_capital=100.,
+                                  max_mark_age_ns=SECOND, funding=funding)
+    assert report["funding_cashflow"] == -1.
+    assert report["all_in_net_pnl"] == -4.
+    assert [r["fill_ts"] for r in result["_fill_trace"]] == [3000, 2000]
+    assert report["economic_complete"]
+
+
+def test_delayed_accounting_keeps_matched_but_unnotified_terminal_inventory(bundle):
+    from models.replay.public_accounting import settle_public_replay
+    result, funding = _delayed_accounting_fixture(bundle)
+    result.update(_fill_trace=[], fills_total=0, private_fill_visible_count=0,
+        _economic_fill_trace=result["_economic_fill_trace"][:1],
+        private_fill_exchange_match_count=1, private_fill_pending_visibility_count=1,
+        final_inventory=0., cash_before_terminal=0., economic_match_inventory=1.,
+        exchange_inventory_at_window_end=1., economic_match_cash=-102.)
+    report = settle_public_replay(bundle, result, initial_capital=100.,
+                                  max_mark_age_ns=4*SECOND, funding=funding)
+    assert report["terminal_inventory"] == 1.
+    assert report["funding_cashflow"] == -1.
+    # This fixture's terminal book is stale. Preserving the pending match must
+    # not turn a missing valuation into a fictitious complete PnL.
+    assert not report["economic_complete"]
+    assert report["all_in_net_pnl"] is None
+    assert result["final_inventory"] == 0.  # No invented strategy notification.
+
+
+@pytest.mark.parametrize("fault", ["missing", "duplicate", "binding", "order", "backwards", "cutoff", "old"])
+def test_delayed_accounting_rejects_invalid_matching_evidence(bundle, fault):
+    from models.replay.public_accounting import settle_public_replay
+    result, funding = _delayed_accounting_fixture(bundle)
+    if fault == "missing":
+        result["_economic_fill_trace"].pop()
+    elif fault == "duplicate":
+        result["_fill_trace"][1]["economic_match_sequence"] = 1
+    elif fault == "binding":
+        result["_fill_trace"][1]["fill_ts"] += 1
+    elif fault == "order":
+        result["_economic_fill_trace"][1]["match_sequence"] = 0
+    elif fault == "backwards":
+        result["_economic_fill_trace"][1]["fill_ts"] = 1999
+        result["_fill_trace"][0]["fill_ts"] = 1999
+        result["_fill_trace"][0]["fill_clock_context"]["match_ts_ms"] = 1999
+    elif fault == "cutoff":
+        result["_economic_fill_trace"][1]["fill_ts"] = 4000
+        result["_fill_trace"][0].update(fill_ts=4000,
+            fill_clock_context=dict(match_ts_ms=4000, visible_ts_ms=4000, processed_ts_ms=4000))
+        result["_fill_trace"][1]["fill_clock_context"].update(visible_ts_ms=4001, processed_ts_ms=4001)
+    else:
+        result.pop("economic_fill_contract")
+    with pytest.raises(ValueError):
+        settle_public_replay(bundle, result, initial_capital=100., max_mark_age_ns=SECOND, funding=funding)

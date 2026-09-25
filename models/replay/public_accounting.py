@@ -30,7 +30,49 @@ def settle_public_replay(root, result, *, initial_capital, max_mark_age_ns, fund
     if len(fills) != result["fills_total"]:
         raise ValueError("incomplete fill trace cannot establish economics")
     if [r["fill_sequence"] for r in fills] != list(range(len(fills))):
-        raise ValueError("fill trace must preserve physical execution sequence")
+        raise ValueError("fill trace must preserve producer notification sequence")
+    delayed = result.get("private_fill_visibility_enabled", False)
+    if delayed:
+        if result.get("economic_fill_contract") != "match_facts_and_local_notifications.v1":
+            raise ValueError("delayed fills require producer matching facts; notification sorting is not a migration")
+        facts = result["_economic_fill_trace"]
+        if len(facts) != result["private_fill_exchange_match_count"]:
+            raise ValueError("incomplete economic matching facts")
+        if (any(type(r["match_sequence"]) is not int for r in facts)
+                or [r["match_sequence"] for r in facts] != list(range(len(facts)))):
+            raise ValueError("economic matching identities must be unique and contiguous")
+        notified = set()
+        local_cash = local_q = 0.0
+        last_visible = None
+        for row in fills:
+            seq = row["economic_match_sequence"]
+            if type(seq) is not int or not 0 <= seq < len(facts) or seq in notified:
+                raise ValueError("duplicate or missing economic notification reference")
+            fact = facts[seq]
+            for name in ("order_id", "fill_ts", "side", "fill_qty", "quote_px", "fill_fee_usdc"):
+                if row[name] != fact[name]:
+                    raise ValueError(f"notification differs from matching fact: {name}")
+            clock = row["fill_clock_context"]
+            if not (clock["match_ts_ms"] == fact["fill_ts"]
+                    <= clock["visible_ts_ms"] <= clock["processed_ts_ms"]):
+                raise ValueError("invalid matching/notification clock binding")
+            if last_visible is not None and clock["processed_ts_ms"] < last_visible:
+                raise ValueError("local notification processing clock regressed")
+            last_visible = clock["processed_ts_ms"]
+            notified.add(seq)
+            signed = fact["fill_qty"] * (1 if fact["side"] == "BUY" else -1)
+            local_q += signed
+            local_cash -= signed * fact["quote_px"] + fact["fill_fee_usdc"]
+        if (len(notified) != result["private_fill_visible_count"]
+                or len(facts) - len(notified) != result["private_fill_pending_visibility_count"]):
+            raise ValueError("matching and notification counts do not reconcile")
+        if not math.isclose(local_q, result["final_inventory"], abs_tol=1e-10):
+            raise ValueError("local notification inventory does not reconcile")
+        if not math.isclose(local_cash, result["cash_before_terminal"], abs_tol=1e-8):
+            raise ValueError("local notification cash ledger does not reconcile")
+        # No sort: this list was captured at the matching sites, including facts
+        # whose notification has not arrived by the account cutoff.
+        fills = facts
     events = []
     for row in fills:
         ts = row["fill_ts"] * 1_000_000
@@ -77,9 +119,13 @@ def settle_public_replay(root, result, *, initial_capital, max_mark_age_ns, fund
             elif abs(new_q) < 1e-12:
                 new_q, entry = 0., 0.
         q = new_q
-    if not math.isclose(q, result["final_inventory"], abs_tol=1e-10):
+    terminal_inventory = result["economic_match_inventory"] if delayed else result["final_inventory"]
+    terminal_cash = result["economic_match_cash"] if delayed else result["cash_before_terminal"]
+    if delayed and not math.isclose(q, result["exchange_inventory_at_window_end"], abs_tol=1e-10):
+        raise ValueError("economic matching facts do not reconcile with exchange inventory")
+    if not math.isclose(q, terminal_inventory, abs_tol=1e-10):
         raise ValueError("terminal inventory does not reconcile")
-    if not math.isclose(cash, result["cash_before_terminal"], abs_tol=1e-8):
+    if not math.isclose(cash, terminal_cash, abs_tol=1e-8):
         raise ValueError("cash ledger does not reconcile; unsupported non-fill cashflow")
     # Only materialize the selected terminal observation, never a Python
     # object graph for the complete multi-day Top20 tape.
@@ -97,6 +143,8 @@ def settle_public_replay(root, result, *, initial_capital, max_mark_age_ns, fund
     before = cash if q == 0 else None if mark is None else cash + q * mark
     complete = before is not None and funding is not None
     return {"accounting_contract": "public_independent_mtm.v1", "initial_capital": initial_capital,
+            "fill_clock_basis": "producer_matching_facts" if delayed else "immediate_execution_trace",
+            "economic_fills_total": len(fills),
             "account_start_ns": start, "account_end_ns": end,
             "terminal_inventory": q, "realized_trading_pnl": realized,
             "terminal_unrealized_pnl": 0. if q == 0 else None if mark is None else q * (mark - entry),

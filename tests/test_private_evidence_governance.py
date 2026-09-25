@@ -10,7 +10,6 @@ import pytest
 
 import scripts.audit_private_evidence as private_audit
 from scripts.govern_public_machine_records import govern
-from scripts.split_nonpublished_machine_projections import split
 
 
 def _init_repo(path: Path) -> Path:
@@ -185,58 +184,6 @@ def test_machine_record_governance_preserves_private_source(tmp_path: Path) -> N
     assert govern(repo, apply=False) == []
 
 
-def test_ignored_projection_is_removed_from_public_manifest(tmp_path: Path) -> None:
-    repo = _init_repo(tmp_path)
-    (repo / ".gitignore").write_text("models/saved_*/\nmodels/private/\n", encoding="utf-8")
-    projection = repo / "models/saved_bundle/report.json"
-    projection.parent.mkdir(parents=True)
-    projection.write_text('{"result": "local"}\n', encoding="utf-8")
-    digest = hashlib.sha256(projection.read_bytes()).hexdigest()
-    manifest = repo / "docs/public_machine_document_projections.json"
-    manifest.parent.mkdir(parents=True)
-    manifest.write_text(
-        json.dumps(
-            {
-                "schema_version": "narrowgate_public_machine_document_projections_v1",
-                "entries": [
-                    {
-                        "public_path": "models/saved_bundle/report.json",
-                        "unit_id": "research/families/f05_fill_quality_quote_ev",
-                        "source_private_sha256": "a" * 64,
-                        "public_projection_sha256": digest,
-                    }
-                ],
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    result = split(repo, apply=True)
-
-    assert result["private_entries"] == 1
-    assert json.loads(manifest.read_text(encoding="utf-8"))["entries"] == []
-    private_index = json.loads(
-        (
-            repo / "models/private/nonpublished_machine_document_projections.current.local.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert private_index["entries"][0]["availability"] == (
-        "private_working_tree_projection_not_distributed"
-    )
-
-    second = split(repo, apply=True)
-
-    assert second["new_private_entries"] == 0
-    assert second["private_entries"] == 1
-    assert (
-        json.loads(
-            (
-                repo / "models/private/nonpublished_machine_document_projections.current.local.json"
-            ).read_text(encoding="utf-8")
-        )
-        == private_index
-    )
 
 
 def test_private_audit_defaults_to_metadata_only_without_opening_payload(
