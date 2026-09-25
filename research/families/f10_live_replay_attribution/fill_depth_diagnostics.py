@@ -294,14 +294,3 @@ def run_fill_depth_audit(symbol: str, days: list[str], tag: str, trace_fills_max
     }, indent=2))
     for name, path in outputs.items():
         print(f"Saved {name}: {path}")
-
-
-
-
-
-
-
-
-
-
-
