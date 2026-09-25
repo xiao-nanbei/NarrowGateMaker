@@ -1,4 +1,8 @@
-"""Live-only execution-v1 consumer of unchanged, hash-verified model weights."""
+"""Execution-v1 market transport consumer, usable in offline assembly.
+
+Deployment authority belongs to live startup, not a network-free model object.
+Constructing this consumer does not grant permission to connect or trade.
+"""
 
 import json
 from pathlib import Path
@@ -29,9 +33,9 @@ class LivePublicSignalEngine(SignalEngine):
         )
         self._live_features.connection(connected=True, now_ns=time.time_ns())
 
-    def _load_models(self, *, model_dir=None):
+    def _initialize_current_models(self, *, model_dir=None):
         root = Path(model_dir or self._model_dir)
-        metadata = validate_public_bundle(root, expected_symbol=self._symbol, live=True)
+        metadata = validate_public_bundle(root, expected_symbol=self._symbol, live=False)
         manifest = json.loads((root / "public_input_model.json").read_text())
         validate_live_feature_support(manifest, trade_source="individual")
         models = {name: lgb.Booster(model_file=str(root / f"{name}.txt")) for name in metadata}
@@ -49,9 +53,6 @@ class LivePublicSignalEngine(SignalEngine):
             self._model_feature_schema = tuple(next(iter(self._model_feature_cols.values())))
             self._native_model_bundle = None
             self._native_inference_requested = False
-
-    def reload_models(self, model_dir=None):
-        raise ValueError("execution-v1 model changes require a new verified deployment")
 
     def prefill_from_agg_trades(self, trades):
         # REST aggregate prefill cannot seed this model's individual history.

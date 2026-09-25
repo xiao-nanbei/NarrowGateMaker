@@ -1266,6 +1266,77 @@ void bind_live_cooldown(py::module_& m) {
             py::arg("campaign_age_s"),
             py::arg("baseline_duration_ms")
         )
+        .def("export_state", [](const NativeLiveCooldownHotPath& self) {
+            const auto s = self.export_state();
+            py::dict result, audit;
+            result["version"] = py::cast(s.version);
+            result["configuration"] = py::cast(s.configuration);
+            result["pending"] = py::cast(s.pending);
+            result["pending_left_ns"] = py::cast(s.pending_left_ns);
+            result["pending_mid"] = py::cast(s.pending_mid);
+            result["feature_ready_ts_ns"] = py::cast(s.feature_ready_ts_ns);
+            result["warmup_start_right_ns"] = py::cast(s.warmup_start_right_ns);
+            result["last_window_right_ns"] = py::cast(s.last_window_right_ns);
+            result["ema_initialized"] = py::cast(s.ema_initialized);
+            result["current_window_observed"] = py::cast(s.current_window_observed);
+            result["last_observed_ts_ns"] = py::cast(s.last_observed_ts_ns);
+            result["ema"] = py::cast(s.ema);
+            result["velocity"] = py::cast(s.velocity);
+            result["acceleration"] = py::cast(s.acceleration);
+            result["effective_sign"] = py::cast(s.effective_sign);
+            result["last_cross_direction"] = py::cast(s.last_cross_direction);
+            result["arrangement_start_ts_ns"] = py::cast(s.arrangement_start_ts_ns);
+            result["last_cross_ts_ns"] = py::cast(s.last_cross_ts_ns);
+            audit["updates"] = py::cast(s.audit.updates);
+            audit["completed_windows"] = py::cast(s.audit.completed_windows);
+            audit["gap_windows"] = py::cast(s.audit.gap_windows);
+            audit["resets"] = py::cast(s.audit.resets);
+            audit["invalid_updates"] = py::cast(s.audit.invalid_updates);
+            audit["out_of_order_updates"] = py::cast(s.audit.out_of_order_updates);
+            audit["gap_resets"] = py::cast(s.audit.gap_resets);
+            audit["warmup_admitted"] = py::cast(s.audit.warmup_admitted);
+            audit["feature_ready_ts_ns"] = py::cast(s.audit.feature_ready_ts_ns);
+            audit["warmup_start_right_ts_ns"] = py::cast(s.audit.warmup_start_right_ts_ns);
+            audit["last_window_right_ts_ns"] = py::cast(s.audit.last_window_right_ts_ns);
+            result["audit"] = audit;
+            return result;
+        })
+        .def("restore_state", [](NativeLiveCooldownHotPath& self, const py::dict& data) {
+            if (data.size() != 19) throw py::value_error("cooldown state fields mismatch");
+            LiveCooldownRuntimeState s;
+            s.version = data["version"].cast<decltype(s.version)>();
+            s.configuration = data["configuration"].cast<decltype(s.configuration)>();
+            s.pending = data["pending"].cast<decltype(s.pending)>();
+            s.pending_left_ns = data["pending_left_ns"].cast<decltype(s.pending_left_ns)>();
+            s.pending_mid = data["pending_mid"].cast<decltype(s.pending_mid)>();
+            s.feature_ready_ts_ns = data["feature_ready_ts_ns"].cast<decltype(s.feature_ready_ts_ns)>();
+            s.warmup_start_right_ns = data["warmup_start_right_ns"].cast<decltype(s.warmup_start_right_ns)>();
+            s.last_window_right_ns = data["last_window_right_ns"].cast<decltype(s.last_window_right_ns)>();
+            s.ema_initialized = data["ema_initialized"].cast<decltype(s.ema_initialized)>();
+            s.current_window_observed = data["current_window_observed"].cast<decltype(s.current_window_observed)>();
+            s.last_observed_ts_ns = data["last_observed_ts_ns"].cast<decltype(s.last_observed_ts_ns)>();
+            s.ema = data["ema"].cast<decltype(s.ema)>();
+            s.velocity = data["velocity"].cast<decltype(s.velocity)>();
+            s.acceleration = data["acceleration"].cast<decltype(s.acceleration)>();
+            s.effective_sign = data["effective_sign"].cast<decltype(s.effective_sign)>();
+            s.last_cross_direction = data["last_cross_direction"].cast<decltype(s.last_cross_direction)>();
+            s.arrangement_start_ts_ns = data["arrangement_start_ts_ns"].cast<decltype(s.arrangement_start_ts_ns)>();
+            s.last_cross_ts_ns = data["last_cross_ts_ns"].cast<decltype(s.last_cross_ts_ns)>();
+            const auto audit = data["audit"].cast<py::dict>();
+            if (audit.size() != 11) throw py::value_error("cooldown audit fields mismatch");
+            s.audit.updates = audit["updates"].cast<decltype(s.audit.updates)>();
+            s.audit.completed_windows = audit["completed_windows"].cast<decltype(s.audit.completed_windows)>();
+            s.audit.gap_windows = audit["gap_windows"].cast<decltype(s.audit.gap_windows)>();
+            s.audit.resets = audit["resets"].cast<decltype(s.audit.resets)>();
+            s.audit.invalid_updates = audit["invalid_updates"].cast<decltype(s.audit.invalid_updates)>();
+            s.audit.out_of_order_updates = audit["out_of_order_updates"].cast<decltype(s.audit.out_of_order_updates)>();
+            s.audit.gap_resets = audit["gap_resets"].cast<decltype(s.audit.gap_resets)>();
+            s.audit.warmup_admitted = audit["warmup_admitted"].cast<decltype(s.audit.warmup_admitted)>();
+            s.audit.feature_ready_ts_ns = audit["feature_ready_ts_ns"].cast<decltype(s.audit.feature_ready_ts_ns)>();
+            s.audit.warmup_start_right_ts_ns = audit["warmup_start_right_ts_ns"].cast<decltype(s.audit.warmup_start_right_ts_ns)>();
+            s.audit.last_window_right_ts_ns = audit["last_window_right_ts_ns"].cast<decltype(s.audit.last_window_right_ts_ns)>();
+            self.restore_state(s);
+        })
         .def("reset", &NativeLiveCooldownHotPath::reset)
         .def("audit", &NativeLiveCooldownHotPath::audit)
         .def("feature_snapshot", &NativeLiveCooldownHotPath::feature_snapshot)

@@ -1,5 +1,4 @@
 import math
-import sys
 import threading
 from collections import deque
 from dataclasses import asdict
@@ -21,6 +20,12 @@ from strategy.signal import (
     FeatureCutoff,
     SignalEngine,
 )
+import test_live_public_signal as current_model_fixtures
+
+
+@pytest.fixture
+def model_bundle(tmp_path):
+    return current_model_fixtures.model_bundle.__wrapped__(tmp_path)
 
 BASE_MS = 1_000_000
 
@@ -155,22 +160,6 @@ def _count_model_metadata(unit=None):
         for head in signal_module.REQUIRED_MODEL_HEADS}
 
 
-@pytest.fixture
-def count_model_loader(monkeypatch, count_engine):
-    holder = {"metadata": _count_model_metadata(), "on_load": lambda: None}
-
-    class Booster:
-        def __init__(self, **kwargs):
-            holder["on_load"]()
-
-        def num_feature(self):
-            return 1
-
-    monkeypatch.setattr(signal_module, "validate_model_bundle", lambda *a, **kw: holder["metadata"])
-    monkeypatch.setitem(sys.modules, "lightgbm", SimpleNamespace(Booster=Booster))
-    return holder
-
-
 @pytest.mark.parametrize("bad", [None, "individual", "", 1, []])
 def test_model_metadata_rejects_explicit_invalid_count_unit(bad):
     metadata = _count_model_metadata()
@@ -186,62 +175,67 @@ def test_model_metadata_requires_every_head_to_opt_in():
         signal_module.execution_trade_count_unit(metadata)
 
 
-def test_metadata_selects_unit_and_same_unit_reload_preserves_counts(count_model_loader):
-    count_model_loader["metadata"] = _count_model_metadata("individual_execution")
-    engine = SignalEngine(enable_ml=True)
+def test_new_candidate_keeps_existing_counts(model_bundle, count_engine):
+    engine = count_engine
     engine.on_agg_trade(_count_packet())
     old_models = engine._models
-    engine.reload_models()
-    assert engine._models is not old_models
+    candidate = SignalEngine.from_public_models(model_bundle)
+    assert candidate._models is not old_models
+    assert engine._models is old_models
     assert engine._execution_trade_count_unit == "individual_execution"
     assert engine._current_bar.trade_count == 3 and engine._execution_trade_last_id == 12
 
 
-def test_constructor_cannot_override_legacy_model_count_contract(count_model_loader):
-    with pytest.raises(RuntimeError, match="declared by every model head"):
+def test_constructor_cannot_override_retired_model_count_contract():
+    with pytest.raises(ValueError, match="direct model startup is retired"):
         SignalEngine(enable_ml=True, execution_trade_count_unit="individual_execution")
 
 
-def test_count_semantics_reload_rejects_used_engine_without_changing_model(count_model_loader):
-    engine = SignalEngine(enable_ml=True)
+def test_retired_reload_rejects_used_engine_without_changing_model(model_bundle):
+    engine = SignalEngine.from_public_models(model_bundle)
     old_models, old_metadata = engine._models, engine._model_metadata
     engine.on_agg_trade(_count_packet())
     engine._current_bar = None  # Empty current buffers do not erase prior use.
-    count_model_loader["metadata"] = _count_model_metadata("individual_execution")
-    with pytest.raises(RuntimeError, match="fresh SignalEngine"):
+    with pytest.raises(AttributeError):
         engine.reload_models()
     assert engine._models is old_models and engine._model_metadata is old_metadata
     assert engine._execution_trade_count_unit == "native_aggregate_packet"
 
 
-def test_count_semantics_commit_rechecks_event_arriving_during_model_load(count_model_loader):
-    engine = SignalEngine(enable_ml=True)
-    count_model_loader["metadata"] = _count_model_metadata("individual_execution")
-    count_model_loader["on_load"] = lambda: engine.on_agg_trade(_count_packet())
-    with pytest.raises(RuntimeError, match="fresh SignalEngine"):
-        engine.reload_models()
+def test_event_arriving_during_candidate_load_keeps_existing_contract(model_bundle, monkeypatch):
+    import lightgbm as lgb
+    engine = SignalEngine(enable_ml=False)
+    original = lgb.Booster
+    def load(**kwargs):
+        engine.on_agg_trade(_count_packet())
+        return original(**kwargs)
+    monkeypatch.setattr(lgb, "Booster", load)
+    candidate = SignalEngine.from_public_models(model_bundle)
+    assert candidate._current_bar is None
     assert engine._execution_trade_count_unit == "native_aggregate_packet"
     assert engine._current_bar.trade_count == len(signal_module.REQUIRED_MODEL_HEADS)
 
 
-def test_count_semantics_concurrent_reload_and_trade_are_serialized(count_model_loader):
-    engine = SignalEngine(enable_ml=True)
+def test_concurrent_candidate_load_and_trade_are_isolated(model_bundle, monkeypatch):
+    import lightgbm as lgb
+    engine = SignalEngine.from_public_models(model_bundle)
     old_models = engine._models
-    count_model_loader["metadata"] = _count_model_metadata("individual_execution")
     loading, continue_load = threading.Event(), threading.Event()
     failures = []
 
-    def loading_pause():
+    original = lgb.Booster
+    def loading_pause(**kwargs):
         loading.set()
         assert continue_load.wait(5)
+        return original(**kwargs)
 
     def reload():
         try:
-            engine.reload_models()
+            SignalEngine.from_public_models(model_bundle)
         except Exception as exc:
             failures.append(exc)
 
-    count_model_loader["on_load"] = loading_pause
+    monkeypatch.setattr(lgb, "Booster", loading_pause)
     worker = threading.Thread(target=reload)
     worker.start()
     try:
@@ -251,17 +245,17 @@ def test_count_semantics_concurrent_reload_and_trade_are_serialized(count_model_
         continue_load.set()
         worker.join(5)
     assert not worker.is_alive()
-    assert len(failures) == 1 and "fresh SignalEngine" in str(failures[0])
+    assert failures == []
     assert engine._models is old_models and engine._current_bar.trade_count == 1
 
 
-def test_prefill_rechecks_semantics_if_reload_occurs_during_bar_construction(count_model_loader, monkeypatch):
-    engine = SignalEngine(enable_ml=True)
+def test_prefill_rechecks_semantics_on_invalid_concurrent_state_change(count_engine, monkeypatch):
+    engine = count_engine
     original = engine._apply_trade_to_bar
 
     def with_reload(*args, **kwargs):
-        count_model_loader["metadata"] = _count_model_metadata("individual_execution")
-        engine.reload_models()
+        # Fault injection, not a supported mutation or a model loader.
+        engine._execution_trade_count_unit = "native_aggregate_packet"
         original(*args, **kwargs)
 
     monkeypatch.setattr(engine, "_apply_trade_to_bar", with_reload)

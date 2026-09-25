@@ -4316,6 +4316,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 f"{_tick_state.missing_methods}"
             )
     _tick_state.cooldown_duration_policy_evaluator = _configured_cooldown_evaluator(params)
+    if checkpoint_at_ts_ms is not None or resume_checkpoint is not None:
+        from models.replay.runtime_checkpoint_io import validate_native_cooldown_checkpoint
+        validate_native_cooldown_checkpoint(_tick_state.cooldown_duration_policy_evaluator)
     _tick_state.cooldown_duration_fork_baseline_policy_enabled = bool(
         params.get("cooldown_duration_fork_baseline_policy_enabled", False)
     )

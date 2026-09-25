@@ -21,11 +21,27 @@
     "net_pnl_delta_usdc": 0.0,
     "synthetic_independent_forks": "persisted F06 widen and F07 keep/cancel; exact result and L2 comparison",
     "remaining_limits": [
-      "native cooldown hot-path state export not implemented",
+      "native cooldown state export/import and separate-process synthetic restoration tested; full native-enabled account comparison still lacks a selected existing account/config binding",
       "deferred mutable variance output checkpointing not supported",
       "cross-version and arbitrary cross-host recovery not admitted",
       "F06/F07 scientific tasks still require their own bounded contracts and workload validation"
     ]
+  },
+  "loader_native_closure": {
+    "as_of": "2026-09-25",
+    "retired_signal_loader_and_reload_removed": true,
+    "original_ten_fixture_failures": "migrated to current admission rejection and native component invariance tests; all pass",
+    "offline_component_requires_live_authorization": false,
+    "live_startup_deployment_authority_unchanged": true,
+    "current_targeted_suite_passed": 535,
+    "native_state_schema_version": 1,
+    "native_checkpoint_scope": "SELL/BUY full value state, exact configuration and binary/source binding, process-local locks, cross-process continuation and independent forks; synthetic tick-loop account outputs equal",
+    "aws_prepared_release": "unchanged; example config remains ML-off and no selected new-model live config; complete target assembly not accepted",
+    "local_real_assembly": "unchanged F03/inf and P3, actual shared features/postprocessing/quote with controlled events, zero network or orders",
+    "new_real_full_account_runs": 0,
+    "new_research_fits": 0,
+    "new_strategy_candidates": 0,
+    "deployment_or_current_switch": false
   },
   "f03": {
     "existing_frozen_run_preserved": true,

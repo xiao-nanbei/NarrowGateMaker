@@ -6,14 +6,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <string>
 
 namespace narrowgate_cpp {
 
 // The production policies are deliberately bounded.  The current BUY E3
 // artifact has 126 predicates, 95 clauses and fewer than 512 literals; the
 // SELL policy has three predicates.  Configuration is compiled into these
-// arrays once at startup.  No policy string, vector or map is retained by the
-// decision-time object.
+// arrays once at startup. The exact configuration string is cold checkpoint
+// identity only; decision-time evaluation reads fixed compiled arrays.
 inline constexpr std::size_t kLiveCooldownMaxEma = 10;
 inline constexpr std::size_t kLiveCooldownMaxPairs = 45;
 inline constexpr std::size_t kLiveCooldownMaxPredicates = 128;
@@ -87,6 +88,25 @@ struct LiveCooldownFeatureSnapshotPod {
     std::array<std::int64_t, kLiveCooldownMaxPairs> last_cross_ts_ns{};
 };
 
+// Cold-path value state. No mutex, pointers, addresses or object memory dumps.
+struct LiveCooldownRuntimeState {
+    std::uint32_t version = 1;
+    std::string configuration;
+    bool pending = false;
+    std::int64_t pending_left_ns = 0;
+    double pending_mid = 0.0;
+    std::int64_t feature_ready_ts_ns = 0;
+    std::int64_t warmup_start_right_ns = 0;
+    std::int64_t last_window_right_ns = 0;
+    bool ema_initialized = false;
+    bool current_window_observed = false;
+    std::int64_t last_observed_ts_ns = 0;
+    std::array<double, kLiveCooldownMaxEma> ema{}, velocity{}, acceleration{};
+    std::array<std::int8_t, kLiveCooldownMaxPairs> effective_sign{}, last_cross_direction{};
+    std::array<std::int64_t, kLiveCooldownMaxPairs> arrangement_start_ts_ns{}, last_cross_ts_ns{};
+    LiveCooldownAuditPod audit{};
+};
+
 class alignas(64) NativeLiveCooldownHotPath {
 public:
     NativeLiveCooldownHotPath(
@@ -109,6 +129,8 @@ public:
     ) noexcept;
 
     void reset() noexcept;
+    [[nodiscard]] LiveCooldownRuntimeState export_state() const;
+    void restore_state(const LiveCooldownRuntimeState& state);
 
     [[nodiscard]] LiveCooldownAuditPod audit() const noexcept;
     [[nodiscard]] LiveCooldownFeatureSnapshotPod feature_snapshot() const noexcept;
@@ -182,6 +204,7 @@ private:
         std::int64_t timestamp_ns
     ) noexcept;
     mutable std::mutex mutex_;
+    std::string configuration_identity_;
     LiveCooldownProfile profile_ = LiveCooldownProfile::SellSelected;
     double warmup_s_ = 0.0;
     double max_feature_age_s_ = 0.0;

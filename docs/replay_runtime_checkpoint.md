@@ -107,8 +107,15 @@ fresh starts. The configured Python receive-time BUY/SELL adapter now has
 stateful save/restore and rotation tests, including an actual replay fill that
 updates cooldown. Process locks are recreated; protected EMA, pending window,
 cooldown and counters are retained. Every undelivered callback must remain in the
-next input batch. Before discarding an old prefix, the adapter can fold lazy depth callbacks strictly before the saved next event into the existing EMA in source order, without evaluating a policy or creating a fill. Equal-time and future callbacks cannot be discarded. A real cross-midnight bounded comparison also matched the uninterrupted decision, quote, fill, campaign and funding tables exactly; no-fill intervals before the cut are covered by the regression tests. The optional native cooldown hot-path object still needs state
-export; it is rejected rather than replaced with fresh Python state. The full
+next input batch. Before discarding an old prefix, the adapter can fold lazy depth callbacks strictly before the saved next event into the existing EMA in source order, without evaluating a policy or creating a fill. Equal-time and future callbacks cannot be discarded. A real cross-midnight bounded comparison also matched the uninterrupted decision, quote, fill, campaign and funding tables exactly; no-fill intervals before the cut are covered by the regression tests.
+
+The optional native cooldown hot path exports a versioned value state containing
+the pending window, EMA/derivatives, crosses, clocks and audit counters. Restore
+checks exact configuration plus binary/source identity and recreates process
+locks; an incapable backend fails checkpoint preflight instead of selecting
+Python. SELL/BUY cross-process, independent-fork and synthetic tick-loop
+account-output comparisons pass. This does not yet qualify a complete real
+native-enabled account. The previously verified Python
 private B0 configuration has passed a representative one-hour comparison for
 both same-window file resume and actual input cropping. Decisions, quotes,
 fills, campaign accounting and funding matched the uninterrupted reference;

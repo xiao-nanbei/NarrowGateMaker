@@ -2,7 +2,6 @@
 from copy import deepcopy
 from dataclasses import asdict
 from types import SimpleNamespace
-import sys
 
 import pytest
 
@@ -108,7 +107,7 @@ def test_legacy_and_other_venue_defaults_remain_one_packet(engine):
                                      trade_count_unit="individual_execution", trade_ids=[20])
 
 
-def test_reference_model_units_are_uniform_and_opt_in_does_not_change_execution(engine, monkeypatch):
+def test_reference_units_are_uniform_and_opt_in_does_not_change_execution(engine):
     metadata = {head: {"feature_cols": ["close"]} for head in module.REQUIRED_MODEL_HEADS}
     assert module.reference_trade_count_unit(metadata) == "native_aggregate_packet"
     metadata[module.REQUIRED_MODEL_HEADS[0]]["reference_trade_count_unit"] = "individual_execution"
@@ -116,42 +115,42 @@ def test_reference_model_units_are_uniform_and_opt_in_does_not_change_execution(
         module.reference_trade_count_unit(metadata)
     for row in metadata.values():
         row.update(reference_trade_count_unit="individual_execution", reference_trade_symbol="BTCUSDT")
-    monkeypatch.setattr(module, "validate_model_bundle", lambda *a, **k: metadata)
-    monkeypatch.setitem(sys.modules, "lightgbm", SimpleNamespace(Booster=lambda **k: SimpleNamespace(num_feature=lambda: 1)))
-    loaded = SignalEngine(enable_ml=True)
+    loaded = engine
     assert loaded._reference_trade_count_unit == "individual_execution"
     assert loaded._execution_trade_count_unit == "native_aggregate_packet"
     loaded.on_cross_agg_trade(packet())
     old_models = loaded._models
     for row in metadata.values():
         row.pop("reference_trade_count_unit")
-    with pytest.raises(RuntimeError, match="fresh SignalEngine"):
+    with pytest.raises(AttributeError):
         loaded.reload_models()
     assert loaded._models is old_models
 
 
-def test_new_reference_model_cannot_bind_wrong_symbol(engine, monkeypatch):
-    metadata = {head: {"feature_cols": ["close"], "reference_trade_count_unit": "individual_execution",
-                       "reference_trade_symbol": "ETHUSDT"} for head in module.REQUIRED_MODEL_HEADS}
-    monkeypatch.setattr(module, "validate_model_bundle", lambda *a, **k: metadata)
-    with pytest.raises(RuntimeError, match="reference_trade_symbol"):
-        SignalEngine(enable_ml=True)
+def test_reference_individual_input_cannot_bind_wrong_symbol(engine):
+    before = snapshot(engine)
+    with pytest.raises(ValueError, match="limited to the configured"):
+        engine.on_cross_trade_arrays("ETHUSDT", [T+100], [100.], [.6], [False],
+                                     trade_count_unit="individual_execution", trade_ids=[10])
+    assert snapshot(engine) == before
 
 
 @pytest.mark.parametrize("flag,missing", [
-    ("NARROWGATE_CPP_SIGNAL_FEATURES", "SignalRefPerpFeatureEngine.update_trade_weighted_batch"),
-    ("NARROWGATE_CPP_GLOBAL_FLOW", "TradeBarAggregator.update_weighted_batch"),
+    ("reference", "native reference engine lacks individual counts"),
+    ("aggregator", "native reference aggregator lacks individual counts"),
 ])
-def test_new_reference_model_rejects_old_native_before_model_publication(engine, monkeypatch, flag, missing):
-    metadata = {head: {"feature_cols": ["close"], "reference_trade_count_unit": "individual_execution",
-                       "reference_trade_symbol": "BTCUSDT"} for head in module.REQUIRED_MODEL_HEADS}
-    monkeypatch.setattr(module, "validate_model_bundle", lambda *a, **k: metadata)
-    monkeypatch.setenv(flag, "1")
-    engine._cpp_signal = SimpleNamespace()
+def test_reference_rejects_old_native_before_state_publication(engine, flag, missing):
+    if flag == "reference":
+        engine._cpp_ref_perp_engine = SimpleNamespace()
+    else:
+        engine._cpp_cross_batch_enabled = True
+        engine._cpp_signal = SimpleNamespace(TradeBarAggregator=SimpleNamespace())
     before = engine._models
+    before_state = snapshot(engine)
     with pytest.raises(RuntimeError, match=missing):
-        engine.reload_models()
+        engine.on_cross_agg_trade(packet())
     assert engine._models is before and not engine._models
+    assert snapshot(engine) == before_state
 
 
 def test_cumulative_reference_count_overflow_is_atomic(engine):

@@ -72,10 +72,49 @@ def public_checkpoint_binding(input_manifest_id, params, predictions):
                 checkpoint_io_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
 
 
-def _restore_policy_object(cls, state, reentrant):
+def _native_cooldown_binding(cpp):
+    from strategy import native_cooldown, boolean_cooldown_live, boolean_cooldown_buy_e3
+    def digest(path):
+        with open(path, "rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+    return {"interface": cpp.APPLICATION_INTERFACE_VERSION,
+            "binary_sha256": digest(cpp.__file__),
+            "policy_sources": {module.__name__: digest(module.__file__) for module in
+                               (native_cooldown, boolean_cooldown_live, boolean_cooldown_buy_e3)}}
+
+
+def validate_native_cooldown_checkpoint(evaluator):
+    """Cold preflight for the actual replay adapter, before any replay events."""
+    if evaluator is None:
+        return
+    from models.exchange_book_replay import ReceiveTimeCooldownReplayAdapter
+    policies = (evaluator._policies.values() if isinstance(evaluator, ReceiveTimeCooldownReplayAdapter)
+                else (evaluator,))
+    for policy in policies:
+        native = getattr(policy, "_native_hot_path", None)
+        if native is not None and not all(callable(getattr(native, method, None))
+                                         for method in ("export_state", "restore_state")):
+            raise TypeError("native cooldown backend has no complete checkpoint capability")
+
+
+def _restore_policy_object(cls, state, reentrant, native_state=None, native_binding=None):
     restored = cls.__new__(cls)
     restored.__dict__.update(state)
     restored._lock = threading.RLock() if reentrant else threading.Lock()
+    if native_state is not None:
+        from strategy.native_cooldown import build_hot_path
+        from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
+        cpp, native = build_hot_path(
+            restored, profile="BUY" if cls is LiveBuyE3CooldownPolicy else "SELL",
+            warmup_s=restored.windows.warmup_s,
+            max_feature_age_s=restored.windows.max_feature_age_s, requested=True,
+        )
+        if native is None or not callable(getattr(native, "restore_state", None)):
+            raise RuntimeError("native cooldown checkpoint requires state-capable native backend")
+        if _native_cooldown_binding(cpp) != native_binding:
+            raise ValueError("native cooldown checkpoint binary/source identity mismatch")
+        native.restore_state(native_state)
+        restored._native_cpp, restored._native_hot_path = cpp, native
     return restored
 
 
@@ -94,23 +133,33 @@ def _policy_state_types():
     windows = (ReceiveTimeMidEmaWindows, ReceiveTimeFullMidEmaWindows)
     classes = (*windows, LiveBooleanCooldownPolicy, LiveBuyE3CooldownPolicy,
                RuntimeCooldownPolicyEvaluator)
-    return frozenset(classes), frozenset(windows)
+    return frozenset(classes), frozenset((*windows, LiveBooleanCooldownPolicy, LiveBuyE3CooldownPolicy))
 
 
 def _policy_state_reducer(obj):
     classes, windows = _policy_state_types()
     if type(obj) not in classes:
         return NotImplemented
-    if getattr(obj, "_native_hot_path", None) is not None:
-        raise TypeError("native cooldown hot-path state export is not implemented")
+    native = getattr(obj, "_native_hot_path", None)
     reentrant = type(obj) in windows
     if ((reentrant and obj._lock._is_owned()) or not obj._lock.acquire(blocking=False)):
         raise RuntimeError("cannot checkpoint a policy while a callback owns its lock")
     try:
-        state = {name: value for name, value in vars(obj).items() if name != "_lock"}
+        state = {name: value for name, value in vars(obj).items()
+                 if name not in {"_lock", "_native_cpp", "_native_hot_path"}}
+        if native is not None:
+            if not callable(getattr(native, "export_state", None)):
+                raise TypeError("native cooldown backend has no complete state export")
+            native_state = native.export_state()
+            native_binding = _native_cooldown_binding(obj._native_cpp)
+        else:
+            native_state = None
+            native_binding = None
+            if "_native_hot_path" in vars(obj):
+                state.update(_native_cpp=None, _native_hot_path=None)
     finally:
         obj._lock.release()
-    return _restore_policy_object, (type(obj), state, reentrant)
+    return _restore_policy_object, (type(obj), state, reentrant, native_state, native_binding)
 
 
 def _restore_book_scheduler(state):

@@ -5,6 +5,8 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <sstream>
+#include <iomanip>
 
 namespace narrowgate_cpp {
 namespace {
@@ -78,6 +80,83 @@ NativeLiveCooldownHotPath::NativeLiveCooldownHotPath(
         throw std::invalid_argument("live_cooldown_buy_warmup_too_short");
     }
     compile_policy(policy);
+    // Exact cold configuration, including rule content rather than trusting a
+    // caller-supplied policy hash. The compiler recreates all fixed arrays.
+    std::ostringstream identity;
+    identity << std::hexfloat << static_cast<int>(profile_) << ' ' << warmup_s_
+             << ' ' << max_feature_age_s_ << ' ' << std::quoted(policy.policy_sha256)
+             << ' ' << std::quoted(policy.predicate_bundle_sha256)
+             << ' ' << std::quoted(policy.default_action);
+    identity << ' ' << policy.predicate_columns.size();
+    for (const auto& column : policy.predicate_columns) identity << ' ' << std::quoted(column);
+    identity << ' ' << policy.rules.size();
+    for (const auto& rule : policy.rules) {
+        identity << ' ' << std::quoted(rule.action_id) << ' ' << rule.duration_ms << ' ' << rule.clauses.size();
+        for (const auto& clause : rule.clauses) {
+            identity << ' ' << clause.literals.size();
+            for (const auto& literal : clause.literals)
+                identity << ' ' << literal.predicate_index << ' ' << literal.negated;
+        }
+    }
+    identity << ' ' << policy.ema_half_lives_s.size();
+    for (auto value : policy.ema_half_lives_s) identity << ' ' << value;
+    identity << ' ' << policy.predicate_pairs.size();
+    for (const auto& pair : policy.predicate_pairs)
+        identity << ' ' << pair.fast_ema_index << ' ' << pair.slow_ema_index;
+    identity << ' ' << policy.predicate_definitions.size();
+    for (const auto& definition : policy.predicate_definitions)
+        identity << ' ' << definition.predicate_index << ' ' << static_cast<int>(definition.metric)
+                 << ' ' << definition.pair_index << ' ' << definition.threshold_enabled << ' ' << definition.threshold;
+    configuration_identity_ = identity.str();
+}
+
+LiveCooldownRuntimeState NativeLiveCooldownHotPath::export_state() const {
+    std::lock_guard lock(mutex_);
+    LiveCooldownRuntimeState s;
+    s.configuration = configuration_identity_;
+    s.pending = pending_; s.pending_left_ns = pending_left_ns_; s.pending_mid = pending_mid_;
+    s.feature_ready_ts_ns = feature_ready_ts_ns_; s.warmup_start_right_ns = warmup_start_right_ns_;
+    s.last_window_right_ns = last_window_right_ns_; s.ema_initialized = ema_initialized_;
+    s.current_window_observed = current_window_observed_; s.last_observed_ts_ns = last_observed_ts_ns_;
+    s.ema = ema_; s.velocity = velocity_; s.acceleration = acceleration_; s.audit = audit_;
+    for (std::size_t i = 0; i < pairs_.size(); ++i) {
+        s.effective_sign[i] = pairs_[i].effective_sign;
+        s.last_cross_direction[i] = pairs_[i].last_cross_direction;
+        s.arrangement_start_ts_ns[i] = pairs_[i].arrangement_start_ts_ns;
+        s.last_cross_ts_ns[i] = pairs_[i].last_cross_ts_ns;
+    }
+    return s;
+}
+
+void NativeLiveCooldownHotPath::restore_state(const LiveCooldownRuntimeState& s) {
+    if (s.version != 1 || s.configuration != configuration_identity_)
+        throw std::invalid_argument("cooldown checkpoint version/configuration mismatch");
+    if (s.pending_left_ns < 0 || s.feature_ready_ts_ns < 0 || s.warmup_start_right_ns < 0 ||
+        s.last_window_right_ns < 0 || s.last_observed_ts_ns < 0 ||
+        (s.pending && (!std::isfinite(s.pending_mid) || s.pending_mid <= 0)) ||
+        s.audit.gap_windows > s.audit.completed_windows ||
+        s.audit.feature_ready_ts_ns != s.feature_ready_ts_ns ||
+        s.audit.warmup_start_right_ts_ns != s.warmup_start_right_ns ||
+        s.audit.last_window_right_ts_ns != s.last_window_right_ns)
+        throw std::invalid_argument("cooldown checkpoint invalid clock/counter");
+    for (std::size_t i = 0; i < ema_count_; ++i)
+        if (s.ema_initialized && (!std::isfinite(s.ema[i]) || !std::isfinite(s.velocity[i]) || !std::isfinite(s.acceleration[i])))
+            throw std::invalid_argument("cooldown checkpoint invalid EMA");
+    for (std::size_t i = 0; i < pairs_.size(); ++i)
+        if (s.effective_sign[i] < -1 || s.effective_sign[i] > 1 ||
+            s.last_cross_direction[i] < -1 || s.last_cross_direction[i] > 1 ||
+            s.arrangement_start_ts_ns[i] < 0 || s.last_cross_ts_ns[i] < 0)
+            throw std::invalid_argument("cooldown checkpoint invalid pair");
+    std::lock_guard lock(mutex_); // publish only after complete validation
+    pending_ = s.pending; pending_left_ns_ = s.pending_left_ns; pending_mid_ = s.pending_mid;
+    feature_ready_ts_ns_ = s.feature_ready_ts_ns; warmup_start_right_ns_ = s.warmup_start_right_ns;
+    last_window_right_ns_ = s.last_window_right_ns; ema_initialized_ = s.ema_initialized;
+    current_window_observed_ = s.current_window_observed; last_observed_ts_ns_ = s.last_observed_ts_ns;
+    ema_ = s.ema; velocity_ = s.velocity; acceleration_ = s.acceleration; audit_ = s.audit;
+    for (std::size_t i = 0; i < pairs_.size(); ++i) {
+        pairs_[i].effective_sign = s.effective_sign[i]; pairs_[i].last_cross_direction = s.last_cross_direction[i];
+        pairs_[i].arrangement_start_ts_ns = s.arrangement_start_ts_ns[i]; pairs_[i].last_cross_ts_ns = s.last_cross_ts_ns[i];
+    }
 }
 
 void NativeLiveCooldownHotPath::compile_policy(const F05BooleanPolicy& policy) {

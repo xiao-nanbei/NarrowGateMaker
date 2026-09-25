@@ -92,7 +92,11 @@ def test_signal_loader_rejects_missing_consumed_native_method(monkeypatch) -> No
 
 @pytest.fixture(scope="session")
 def synthetic_model_bundle_173(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build a public, non-authoritative canonical-width bundle for parity tests."""
+    """Bare retired-width Boosters for component tests, never a current bundle.
+
+    Historical metadata is deliberately not promoted or read by the component
+    harness. Formal current loaders must reject this directory.
+    """
 
     root = tmp_path_factory.mktemp("synthetic-model-bundle-173")
     feature_names = [str(name) for name in narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES]
@@ -154,6 +158,44 @@ def synthetic_model_bundle_173(tmp_path_factory: pytest.TempPathFactory) -> Path
         )
     return root
 
+
+
+def test_retired_width_fixture_is_not_admitted_as_current_bundle(synthetic_model_bundle_173):
+    with pytest.raises(ValueError):
+        SignalEngine.from_public_models(synthetic_model_bundle_173)
+    with pytest.raises(ValueError, match="direct model startup is retired"):
+        SignalEngine(model_dir=synthetic_model_bundle_173)
+
+
+def component_engine_173(root, *, ret_demean_halflife=0):
+    """Unit harness for the retained 173-column native components, NOT a bundle loader.
+
+    No metadata, input identity or runtime admission is inferred. Production
+    startup rejects these bare synthetic Boosters. Tests below exercise the
+    actual market buffers, native row owner and prediction postprocessor.
+    """
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=ret_demean_halflife)
+    models = {name: lgb.Booster(model_file=str(root / f"{name}.txt"))
+              for name in REQUIRED_MODEL_HEADS}
+    names = tuple(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES)
+    assert all(tuple(model.feature_name()) == names for model in models.values())
+    engine._models = models
+    engine._model_feature_cols = {name: list(names) for name in models}
+    engine._model_feature_schema = names
+    engine._native_model_bundle = engine._build_native_model_bundle(
+        lgb, model_dir=root, feature_count=len(names))
+    engine._cpp_ref_perp_engine = narrowgate_cpp.SignalRefPerpFeatureEngine()
+    engine._refresh_native_model_row_173()
+    engine._enable_ml = True
+    return engine
+
+
+def current_component_engine(*, ret_demean_halflife=0):
+    engine = SignalEngine.from_public_models(MODEL_BUNDLE, ret_demean_halflife=ret_demean_halflife)
+    engine._cpp_signal = narrowgate_cpp
+    engine._native_model_bundle = engine._build_native_model_bundle(
+        lgb, model_dir=MODEL_BUNDLE, feature_count=len(engine._model_feature_schema))
+    return engine
 
 def test_native_build_surface_matches_exposed_runtime(
     synthetic_model_bundle_173: Path,
@@ -1031,12 +1073,12 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    reference = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    reference = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
-    native = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    native = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     reference._cpp_ref_perp_engine = None
@@ -1170,7 +1212,9 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(
     )
     config = QuoteCoreConfig(
         eta_inventory=0.046, a_spread=0.046, risk_per_order=0.046,
-        kappa=0.01,
+        execution_intensity_slope=0.01,
+        risk_horizon_s=1.0,
+        trade_intensity_acceleration_spread_mult=1.0,
         tick_size=0.1,
         lot_size=0.001,
         maker_fee=0.0,
@@ -1203,12 +1247,12 @@ def test_cpp_ref_perp_activation_follows_startup_model_schema(
     synthetic_model_bundle_173: Path,
 ):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
-    one_feature = SignalEngine(
-        model_dir=MODEL_BUNDLE,
+    one_feature = SignalEngine.from_public_models(
+        MODEL_BUNDLE,
         ret_demean_halflife=0,
     )
-    source_aware = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    source_aware = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
 
@@ -1223,12 +1267,12 @@ def test_native_model_row_catch_up_matches_stepwise_inference(
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    stepwise = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    stepwise = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=7,
     )
-    catch_up = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    catch_up = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=7,
     )
     assert stepwise._cpp_model_row_173_enabled is True
@@ -1322,8 +1366,8 @@ def test_native_model_row_does_not_publish_after_nonstrict_commit_failure(
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
-    engine = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    engine = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     base_ms = int(
@@ -1401,16 +1445,11 @@ def test_cpp_ref_perp_keeps_spot_computation_for_declared_diagnostics():
 
 def test_cpp_ref_perp_keeps_spot_computation_for_model_consumers(monkeypatch):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
-    schema = [*REF_PERP_FEATURE_NAMES, "cv_exec_spot_available"]
-
-    def load_models(engine):
-        engine._models = {name: object() for name in REQUIRED_MODEL_HEADS}
-        engine._model_feature_cols = {
-            name: list(schema) for name in REQUIRED_MODEL_HEADS
-        }
-
-    monkeypatch.setattr(SignalEngine, "_load_models", load_models)
-    engine = SignalEngine(enable_ml=True, ret_demean_halflife=0)
+    # This is a feature-component diagnostic, not a supported model protocol.
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0,
+                          preserve_full_cross_market_features=True)
+    engine._cpp_ref_perp_engine = narrowgate_cpp.SignalRefPerpFeatureEngine()
+    engine._model_requires_full_cross_market_features = True
     assert engine._cpp_ref_perp_engine is not None
     assert engine._model_requires_full_cross_market_features is True
 
@@ -1608,26 +1647,19 @@ def test_native_lightgbm_partial_bundle_construction_fails_safely() -> None:
         )
 
 
-def test_native_lightgbm_inference_is_default_off_and_loads_on_ml_enable(
-    monkeypatch,
-) -> None:
+def test_native_lightgbm_inference_is_default_off_and_loads_on_ml_enable(monkeypatch):
     monkeypatch.delenv(CPP_LIGHTGBM_INFERENCE_FLAG, raising=False)
-    engine = SignalEngine(
-        model_dir=MODEL_BUNDLE,
-        enable_ml=False,
-        ret_demean_halflife=0,
-    )
-
+    engine = SignalEngine.from_public_models(MODEL_BUNDLE, ret_demean_halflife=0)
     assert engine._native_inference_requested is False
     assert engine._native_model_bundle is None
-
-    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
-    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    engine._enable_ml = True
-    engine.reload_models()
-
-    assert engine._native_inference_requested is True
-    assert engine._native_model_bundle is not None
+    engine._cpp_signal = narrowgate_cpp
+    bundle = engine._build_native_model_bundle(
+        lgb, model_dir=MODEL_BUNDLE, feature_count=len(engine._model_feature_schema))
+    assert bundle is not None
+    assert engine._native_model_bundle is None  # construction does not publish
+    assert not hasattr(engine, "reload_models")
+    with pytest.raises(ValueError, match="direct model startup is retired"):
+        SignalEngine(model_dir=MODEL_BUNDLE)
 
 
 def test_native_lightgbm_preserves_final_prediction_and_demean_state(
@@ -1636,8 +1668,7 @@ def test_native_lightgbm_preserves_final_prediction_and_demean_state(
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     monkeypatch.setattr(signal_module.time, "time", lambda: 1_725_000_000.0)
-    engine = SignalEngine(
-        model_dir=MODEL_BUNDLE,
+    engine = current_component_engine(
         ret_demean_halflife=7,
     )
     native_bundle = engine._native_model_bundle
@@ -1725,32 +1756,18 @@ def test_native_lightgbm_runtime_failure_never_switches_backend(
     assert isinstance(engine._native_model_bundle, BrokenNativeBundle)
 
 
-def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
-    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    engine = SignalEngine(model_dir=MODEL_BUNDLE, ret_demean_halflife=0)
-    old_models = engine._models
-    old_native_bundle = engine._native_model_bundle
-
-    with pytest.raises(RuntimeError, match="runtime bundle is invalid"):
-        engine.reload_models(MODEL_BUNDLE / "missing-bundle")
+def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(monkeypatch):
+    engine = current_component_engine()
+    old_models, old_native = engine._models, engine._native_model_bundle
+    with pytest.raises(ValueError, match="regular model artifact"):
+        SignalEngine.from_public_models(MODEL_BUNDLE / "missing-bundle")
+    with pytest.raises(FileNotFoundError):
+        engine._build_native_model_bundle(
+            lgb, model_dir=MODEL_BUNDLE / "missing-bundle",
+            feature_count=len(engine._model_feature_schema))
     assert engine._models is old_models
-    assert engine._native_model_bundle is old_native_bundle
-    assert engine._model_dir == MODEL_BUNDLE
-
-    def reject_candidate(_lgb_module, *, model_dir, feature_count):
-        assert model_dir == MODEL_BUNDLE
-        raise RuntimeError(f"rejected width {feature_count}")
-
-    monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
-    with pytest.raises(RuntimeError, match="rejected width"):
-        engine.reload_models()
-
-    assert engine._models is old_models
-    assert engine._native_model_bundle is old_native_bundle
-    assert engine._model_dir == MODEL_BUNDLE
+    assert engine._native_model_bundle is old_native
+    assert not hasattr(engine, "reload_models")
 
 
 @pytest.mark.parametrize("strict", ["0", "1"])
@@ -1762,8 +1779,8 @@ def test_native_173_row_rejection_is_atomic_during_reload(
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", strict)
-    engine = SignalEngine(
-        model_dir=synthetic_model_bundle_173,
+    engine = component_engine_173(
+        synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     old_models = engine._models
@@ -1777,7 +1794,8 @@ def test_native_173_row_rejection_is_atomic_during_reload(
         RuntimeError,
         match="native 173-row order differs from model bundle schema",
     ):
-        engine.reload_models(MODEL_BUNDLE)
+        engine._candidate_native_model_row_173_state(
+            old_native_bundle, tuple(_model_feature_names(MODEL_BUNDLE)))
 
     assert engine._models is old_models
     assert engine._model_feature_cols is old_feature_cols
@@ -1785,28 +1803,16 @@ def test_native_173_row_rejection_is_atomic_during_reload(
     assert engine._model_metadata is old_metadata
     assert engine._native_model_bundle is old_native_bundle
     assert engine._cpp_model_row_173_state is old_row_state
-    assert engine._model_dir == synthetic_model_bundle_173
+    assert engine._models is old_models
 
 
-def test_native_lightgbm_failed_nonstrict_initialization_keeps_old_bundle(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+def test_native_lightgbm_failed_nonstrict_initialization_keeps_old_bundle(monkeypatch):
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
-    engine = SignalEngine(
-        model_dir=MODEL_BUNDLE,
-        enable_ml=False,
-        ret_demean_halflife=0,
-    )
-    engine._enable_ml = True
-
-    def reject_candidate(_lgb_module, *, model_dir, feature_count):
-        assert model_dir == MODEL_BUNDLE
-        raise RuntimeError(f"rejected width {feature_count}")
-
-    monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
+    engine = SignalEngine.from_public_models(MODEL_BUNDLE)
     old_models = engine._models
-    with pytest.raises(RuntimeError, match="rejected width"):
-        engine.reload_models()
+    with pytest.raises(RuntimeError):
+        engine._build_native_model_bundle(
+            lgb, model_dir=MODEL_BUNDLE / "missing-bundle",
+            feature_count=len(engine._model_feature_schema))
     assert engine._models is old_models
     assert engine._native_model_bundle is None

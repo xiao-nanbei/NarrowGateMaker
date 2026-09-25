@@ -9,6 +9,7 @@ import pytest
 from live import main
 from strategy import maker_engine
 from strategy.model_contract import REQUIRED_MODEL_HEADS
+from strategy.native_runtime import APPLICATION_INTERFACE_VERSION
 
 
 def test_successor_cpp_module_token_is_derived_and_conflict_fails_closed(
@@ -109,6 +110,7 @@ def test_native_lightgbm_inference_is_bound_independently(monkeypatch) -> None:
     monkeypatch.setenv("NARROWGATE_CPP_LIGHTGBM_INFERENCE", "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-lightgbm.so",
         NativeLightgbmBundle=object,
         LIGHTGBM_BUNDLE_HEAD_NAMES=REQUIRED_MODEL_HEADS,
@@ -139,6 +141,7 @@ def test_native_lightgbm_inference_rejects_head_order_drift(monkeypatch) -> None
     monkeypatch.setenv("NARROWGATE_CPP_LIGHTGBM_INFERENCE", "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-lightgbm.so",
         NativeLightgbmBundle=object,
         LIGHTGBM_BUNDLE_HEAD_NAMES=tuple(reversed(REQUIRED_MODEL_HEADS)),
@@ -154,6 +157,7 @@ def test_native_quote_policy_stage_is_bound_into_runtime_identity(monkeypatch) -
     _clear_flags(monkeypatch)
     monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-quote-policy.so",
         NativeQuotePolicyStage=object,
         NativeQuotePolicyStageResult=object,
@@ -190,6 +194,7 @@ def test_native_cooldown_is_bound_into_runtime_identity(monkeypatch) -> None:
     _clear_flags(monkeypatch)
     monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-cooldown.so",
         NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE=True,
         **{
@@ -214,6 +219,7 @@ def test_native_order_action_plan_is_bound_into_runtime_identity(
     _clear_flags(monkeypatch)
     monkeypatch.setenv("NARROWGATE_CPP_ORDER_ACTION_PLAN", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-order-action.so",
         NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE=True,
         **{
@@ -242,6 +248,7 @@ def test_native_final_order_plan_is_default_off_and_bound_independently(
         | main.NATIVE_FINAL_ORDER_PLAN_REQUIRED_APIS
     )
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-final-order.so",
         NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE=True,
         NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE=True,
@@ -296,6 +303,7 @@ def test_native_live_routing_allows_inactive_post_fill_mode(monkeypatch) -> None
         )
     )
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="native-routing.so",
         compute_live_routing_decision=lambda *args: None,
     )
@@ -312,6 +320,7 @@ def test_explicit_order_action_profile_rejects_disabled_capability(
     _clear_flags(monkeypatch)
     monkeypatch.setenv("NARROWGATE_CPP_ORDER_ACTION_PLAN", "1")
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="old.so",
         NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE=False,
         **{
@@ -329,14 +338,14 @@ def test_explicit_order_action_profile_rejects_disabled_capability(
 def test_live_routing_loader_rejects_incomplete_native_in_every_mode(
     monkeypatch,
 ) -> None:
-    fake_module = SimpleNamespace(compute_live_routing_decision=lambda *args: None)
+    fake_module = SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION, compute_live_routing_decision=lambda *args: None)
     monkeypatch.setenv("NARROWGATE_CPP_LIVE_ROUTING", "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", fake_module)
     monkeypatch.setattr(maker_engine, "_live_routing_cpp", None)
     assert maker_engine._get_live_routing_cpp() is fake_module
 
-    old_module = SimpleNamespace()
+    old_module = SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION)
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", old_module)
     monkeypatch.setattr(maker_engine, "_live_routing_cpp", None)
     with pytest.raises(RuntimeError, match="compute_live_routing_decision"):
@@ -351,7 +360,7 @@ def test_explicit_order_action_loader_never_silently_falls_back(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("NARROWGATE_CPP_ORDER_ACTION_PLAN", "1")
-    monkeypatch.setitem(sys.modules, "narrowgate_cpp", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "narrowgate_cpp", SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION))
     monkeypatch.setattr(maker_engine, "_live_order_action_plan_cpp", None)
 
     with pytest.raises(RuntimeError, match="ABI missing"):
@@ -360,6 +369,7 @@ def test_explicit_order_action_loader_never_silently_falls_back(
 
 def test_explicit_order_action_loader_returns_complete_module(monkeypatch) -> None:
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE=True,
         **{
             name: object
@@ -381,6 +391,7 @@ def test_native_runtime_reports_compiled_cpu_profile(monkeypatch) -> None:
         main.importlib,
         "import_module",
         lambda name: SimpleNamespace(
+            APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
             __file__="fake.so",
             compute_live_routing_decision=lambda *args: None,
             NATIVE_LIVE_BUILD_PROFILE="ec2-cascadelake-avx2",
@@ -417,7 +428,7 @@ def test_strict_native_profile_fails_when_required_api_is_missing(monkeypatch) -
     monkeypatch.setattr(
         main.importlib,
         "import_module",
-        lambda name: SimpleNamespace(__file__="fake.so"),
+        lambda name: SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION, __file__="fake.so"),
     )
 
     with pytest.raises(RuntimeError, match="missing APIs"):
@@ -440,6 +451,7 @@ def test_strict_native_profile_fails_before_market_start_on_old_quote_abi(monkey
         main.importlib,
         "import_module",
         lambda name: SimpleNamespace(
+            APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
             __file__="old.so",
             compute_quote_core_live=lambda *args: None,
             QuoteFlags=OldQuoteFlags,
@@ -464,6 +476,7 @@ def test_strict_global_flow_profile_requires_batch_abi(monkeypatch) -> None:
         main.importlib,
         "import_module",
         lambda name: SimpleNamespace(
+            APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
             __file__="old.so",
             NativeGlobalFlowEngine=object,
             TradeBarAggregator=OldTradeBarAggregator,
@@ -481,7 +494,7 @@ def test_strict_native_profile_requires_replace_continuation_abi(monkeypatch) ->
     monkeypatch.setattr(
         main.importlib,
         "import_module",
-        lambda name: SimpleNamespace(__file__="old.so"),
+        lambda name: SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION, __file__="old.so"),
     )
 
     with pytest.raises(RuntimeError, match="missing APIs"):
@@ -495,7 +508,7 @@ def test_strict_native_profile_requires_cooldown_abi(monkeypatch) -> None:
     monkeypatch.setattr(
         main.importlib,
         "import_module",
-        lambda name: SimpleNamespace(__file__="old.so"),
+        lambda name: SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION, __file__="old.so"),
     )
 
     with pytest.raises(RuntimeError, match="missing APIs"):
@@ -519,6 +532,7 @@ def test_strict_native_profile_rejects_disabled_cooldown_capability(monkeypatch)
         "NativeLiveCooldownHotPath",
     }
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         __file__="old.so",
         NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE=False,
         **{name: object for name in api_names},
@@ -536,6 +550,7 @@ def test_explicit_native_replace_continuation_never_silently_falls_back(
         pass
 
     fake_module = SimpleNamespace(
+        APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
         NativeReplaceContinuationState=lambda _enabled: OldContinuation(),
         ReplaceContinuationEventKind=object(),
         Side=SimpleNamespace(Buy=0, Sell=1),

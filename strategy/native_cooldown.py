@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from functools import wraps
 from collections.abc import Mapping
 from typing import Any
 
@@ -20,6 +21,15 @@ _BUY_E3_SOURCE_RE = re.compile(
     r"(?P<metric>[a-z_]+)$"
 )
 _DIRECT_CAMPAIGN_AGE = "predicate::m0::campaign_age_gt_control_duration"
+
+
+def synchronized_policy_state(method):
+    """Keep native state and Python audit counters at one callback boundary."""
+    @wraps(method)
+    def synchronized(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return synchronized
 
 
 def native_cooldown_requested(value: bool | None = None) -> bool:

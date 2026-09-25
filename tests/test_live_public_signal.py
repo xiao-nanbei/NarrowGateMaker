@@ -189,7 +189,7 @@ def test_ml_off_entry_does_not_load_models(monkeypatch):
 
 def test_legacy_signal_cannot_admit_shared_feature_model(model_bundle):
     from strategy.signal import SignalEngine
-    with pytest.raises(ValueError, match="explicit shared-feature"):
+    with pytest.raises(ValueError, match="direct model startup is retired"):
         SignalEngine(model_dir=model_bundle, symbol="BTCUSDC")
 
 
@@ -241,6 +241,8 @@ def test_live_shared_frame_prediction_warmup_gap_and_disconnect(model_bundle, mo
     from strategy.live_public_signal import LivePublicSignalEngine
     from strategy.signal import SignalEngine
     from test_live_feature_protocol import individual, depth, NS
+    # This complete offline transport/model assembly is not a deployment.
+    (model_bundle / "live_input_authorization.json").unlink()
     now = [0]
     monkeypatch.setattr("strategy.live_public_signal.time.time_ns", lambda: now[0])
     engine = LivePublicSignalEngine(model_dir=model_bundle, symbol="BTCUSDC", ret_demean_halflife=0)

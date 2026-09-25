@@ -20,6 +20,7 @@ from typing import Any
 from strategy.native_cooldown import (
     build_hot_path,
     native_fallback_reason,
+    synchronized_policy_state,
 )
 
 BASE_WINDOW_WIDTH_NS = 100_000_000
@@ -709,7 +710,7 @@ class LiveBuyE3CooldownPolicy:
             max_feature_age_s=max_feature_age_s,
             requested=native_runtime,
         )
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._evaluations = 0
         self._supported = 0
         self._nonbaseline = 0
@@ -928,6 +929,7 @@ class LiveBuyE3CooldownPolicy:
     def deadline_identity(self) -> str:
         return f"BUY_E3:{self.artifact_sha256}"
 
+    @synchronized_policy_state
     def observe_depth(self, **kwargs: Any) -> None:
         if self._native_hot_path is None:
             self.windows.observe_depth(**kwargs)
@@ -944,6 +946,7 @@ class LiveBuyE3CooldownPolicy:
             ask,
         )
 
+    @synchronized_policy_state
     def evaluate(
         self,
         *,

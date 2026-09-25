@@ -54,7 +54,6 @@ from strategy.global_reference import ReferenceObservation, build_global_referen
 from strategy.model_contract import (
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
-    validate_model_bundle,
 )
 from strategy.native_runtime import load_native_module, validate_native_capabilities
 from strategy.replay_controls import SIGNAL_WARMUP_BARS
@@ -737,6 +736,8 @@ class SignalEngine:
                  bad_trade_log_every: int = 100,
                  execution_trade_count_unit: Optional[str] = None,
                  reference_trade_count_unit: Optional[str] = None):
+        if enable_ml and type(self) is SignalEngine:
+            raise ValueError("select from_public_models for offline models or LivePublicSignalEngine for live; direct model startup is retired")
         self._lock = Lock()
         # Model/schema/native-bundle publication is independent from the
         # market-state lock.  Prediction snapshots this holder briefly, then
@@ -870,7 +871,7 @@ class SignalEngine:
         self._model_feature_schema: tuple[str, ...] = ()
         self._model_metadata: Dict[str, dict] = {}
         if enable_ml:
-            self._load_models()
+            self._initialize_current_models()
 
         # latest prediction
         self._last_prediction = Prediction()
@@ -1052,12 +1053,6 @@ class SignalEngine:
         if timer is not None:
             timer.cancel()
 
-    def set_model_dir(self, model_dir: Optional[Path]):
-        """Update the model directory used by subsequent model loads."""
-        candidate = Path(model_dir).expanduser() if model_dir else MODEL_DIR
-        with self._model_runtime_lock:
-            self._model_dir = candidate
-
     @classmethod
     def from_public_models(cls, model_dir, *, symbol="BTCUSDC", ret_demean_halflife=360):
         """Explicit offline common-contract bundle; does not grant live authority.
@@ -1085,130 +1080,6 @@ class SignalEngine:
         engine._enable_ml = True
         return engine
 
-    def reload_models(self, model_dir: Optional[Path] = None):
-        """Reload ML models, optionally switching to a new model directory."""
-        self._load_models(model_dir=model_dir)
-
-    def _load_models(self, *, model_dir: Optional[Path] = None):
-        """Load saved LightGBM models and their explicit feature schemas."""
-        with self._model_runtime_lock:
-            current_model_dir = self._model_dir
-        candidate_model_dir = (
-            Path(model_dir).expanduser() if model_dir is not None else current_model_dir
-        )
-        if (candidate_model_dir / "public_input_model.json").exists():
-            raise ValueError("execution-v1 models require the explicit shared-feature consumer")
-        native_inference_requested = bool(
-            self._enable_ml and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
-        )
-        if native_inference_requested and self._cpp_signal is None:
-            self._cpp_signal = _load_cpp_signal_module()
-        try:
-            metadata = validate_model_bundle(
-                candidate_model_dir,
-                expected_symbol=self._symbol,
-            )
-            count_unit = execution_trade_count_unit(metadata)
-            requested = self._requested_execution_trade_count_unit
-            if requested is not None and requested != count_unit:
-                raise ValueError("execution_trade_count_unit must be declared by every model head")
-            reference_unit = reference_trade_count_unit(metadata)
-            requested_reference = self._requested_reference_trade_count_unit
-            if requested_reference is not None and requested_reference != reference_unit:
-                raise ValueError("reference_trade_count_unit must be declared by every model head")
-            if reference_unit == "individual_execution" and any(
-                    metadata[name].get("reference_trade_symbol") != self._reference_symbol
-                    for name in REQUIRED_MODEL_HEADS):
-                raise ValueError("individual reference heads must bind the configured reference_trade_symbol")
-            if reference_unit == "individual_execution" and self._cpp_signal is not None:
-                methods = {}
-                if _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES"):
-                    methods["SignalRefPerpFeatureEngine"] = ("update_trade_weighted_batch",)
-                if (_cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
-                        or _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")):
-                    methods["TradeBarAggregator"] = ("update_weighted_batch",)
-                # Reject an incompatible binary before publishing the model,
-                # not later in a swallowed market-data callback exception.
-                validate_native_capabilities(self._cpp_signal, methods=methods)
-        except Exception as exc:
-            raise RuntimeError(
-                f"ML is enabled but its runtime bundle is invalid: {exc}"
-            ) from exc
-        try:
-            import lightgbm as lgb
-        except ImportError as exc:
-            raise RuntimeError("ML is enabled but LightGBM is not installed") from exc
-
-        loaded_models: Dict[str, object] = {}
-        loaded_feature_cols: Dict[str, List[str]] = {}
-        for name in REQUIRED_MODEL_HEADS:
-            path = candidate_model_dir / f"{name}.txt"
-            try:
-                model = lgb.Booster(model_file=str(path))
-            except Exception as exc:
-                raise RuntimeError(f"failed to load required model {path}: {exc}") from exc
-            cols = list(metadata[name]["feature_cols"])
-            if model.num_feature() != len(cols):
-                raise RuntimeError(
-                    f"model/schema width mismatch for {name}: "
-                    f"model={model.num_feature()} metadata={len(cols)}"
-                )
-            loaded_models[name] = model
-            loaded_feature_cols[name] = cols
-            logger.info(
-                "Loaded model: %s (%d features, strict metadata)",
-                name,
-                model.num_feature(),
-            )
-        loaded_feature_schema = self._shared_model_feature_schema(
-            loaded_feature_cols
-        )
-
-        native_bundle = None
-        if native_inference_requested and self._cpp_signal is not None:
-            native_bundle = self._build_native_model_bundle(
-                lgb,
-                model_dir=candidate_model_dir,
-                feature_count=len(loaded_feature_schema),
-            )
-        row_state = None
-        if hasattr(self, "_cpp_model_row_173_state"):
-            # A strict schema/ABI rejection must happen before the new model
-            # generation becomes visible.  Otherwise a failed reload would
-            # leave the rejected bundle published behind the old row state.
-            row_state = self._candidate_native_model_row_173_state(
-                native_bundle,
-                loaded_feature_schema,
-            )
-
-        # Python models, the optional native bundle, and the corresponding
-        # fixed-row admission state are published as one model generation.
-        with self._lock:
-            if (self._execution_trade_state_started
-                    and count_unit != self._execution_trade_count_unit):
-                raise RuntimeError("execution_trade_count_unit change requires a fresh SignalEngine")
-            if (self._reference_trade_state_started
-                    and reference_unit != self._reference_trade_count_unit):
-                raise RuntimeError("reference_trade_count_unit change requires a fresh SignalEngine")
-            with self._model_runtime_lock:
-                self._model_dir = candidate_model_dir
-                self._models = loaded_models
-                self._model_feature_cols = loaded_feature_cols
-                self._model_feature_schema = loaded_feature_schema
-                self._model_metadata = metadata
-                self._native_inference_requested = native_inference_requested
-                self._native_model_bundle = native_bundle
-                self._execution_trade_count_unit = count_unit
-                self._reference_trade_count_unit = reference_unit
-                if row_state is not None:
-                    self._cpp_model_row_173_state = row_state
-        if native_bundle is not None:
-            logger.info(
-                "Native LightGBM inference active: heads=%d features=%d library=%s",
-                len(REQUIRED_MODEL_HEADS),
-                len(loaded_feature_schema),
-                native_bundle.library_path,
-            )
 
     @property
     def _cpp_model_feature_names(self) -> tuple[str, ...]:

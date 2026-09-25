@@ -1682,6 +1682,8 @@ class MakerEngine:
             getattr(multi, "_global_reference_shadow_enabled_explicit", False)
         )
         protocol = getattr(cfg.ml, "feature_protocol", "legacy_v12")
+        if cfg.ml.enabled and protocol != "execution_v1":
+            raise ValueError("ML requires execution_v1; legacy model startup is retired")
         if protocol not in {"legacy_v12", "execution_v1"}:
             raise ValueError("unknown ML feature protocol")
         if (Path(model_path) / "public_input_model.json").exists() != (protocol == "execution_v1"):
@@ -3161,6 +3163,8 @@ class MakerEngine:
             raise ValueError("ml.feature_protocol is restart-only")
         if protocol == "execution_v1" and cfg.ml.model_dir != self.cfg.ml.model_dir:
             raise ValueError("execution-v1 model changes require a new verified deployment")
+        if cfg.ml.enabled != self.cfg.ml.enabled:
+            raise ValueError("ML enable changes require a new verified deployment")
         event_source = self._active_event_source()
         validate_event_source_reload = getattr(
             event_source,
@@ -3280,7 +3284,6 @@ class MakerEngine:
         self._price_precision = self._precision_from_step(cfg.tick_size)
 
         # SignalEngine caches ML enable + ret demeaning settings.
-        prev_ml_enabled = self.signal._enable_ml
         multi = getattr(cfg, "multi_market", None)
         self.signal._symbol = normalize_symbol(cfg.symbol)
         self.signal._reference_symbol = normalize_symbol(
@@ -3289,22 +3292,6 @@ class MakerEngine:
         )
         self.signal._ret_demean_halflife = cfg.ml.ret_demean_halflife
         self.signal._bad_trade_log_every = max(1, int(cfg.logging.bad_trade_log_every))
-        self.signal.set_model_dir(self._model_dir)
-
-        if cfg.ml.enabled:
-            self.signal._enable_ml = True
-            if (not prev_ml_enabled) or model_dir_changed or not self.signal._models:
-                self.signal.reload_models()
-                if not prev_ml_enabled:
-                    reason = "enabled"
-                elif model_dir_changed:
-                    reason = "model_dir changed"
-                else:
-                    reason = "empty model cache"
-                logger.info(f"Config reload: ML models loaded ({reason})")
-        elif not cfg.ml.enabled and prev_ml_enabled:
-            self.signal._enable_ml = False
-            logger.info("Config reload: ML disabled")
 
         event_source = self._active_event_source()
         if event_source is not None and hasattr(event_source, "on_config_reload"):

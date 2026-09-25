@@ -396,7 +396,7 @@ def run_formal_dry_run(
 
         model_dir = _configured_model_dir(cfg)
         model_metadata = (
-            validate_model_bundle(model_dir, expected_symbol=cfg.symbol)
+            validate_model_bundle(model_dir, expected_symbol=cfg.symbol, allow_research_only=True)
             if cfg.ml.enabled else {}
         )
         p3_path = model_dir / "touch_probability.json"
