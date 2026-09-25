@@ -2,14 +2,14 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-21
-Last materially synchronized: 2026-09-21
+Last materially modified: 2026-09-25
+Last materially synchronized: 2026-09-25
 
 One public `data` layer owns acquisition, facts, observations and input contracts. Users select market/channel/date, not a supplier. Delivery addresses and account configuration stay private. Internal adapters and manifests retain real origin; neutral naming does not erase lineage. Licensed market records are not distributed with the source repository.
 
 ## Code organization
 
-All eight acquisition adapters are in [downloaders/](downloaders/): purchased archives, Binance Vision, CryptoHFTData books/trades, Bitget, Bybit, OKX and quota-bounded Infoway. Binance and CryptoHFTData tools are retained, not deleted. Explicit historical commands in `pipeline.py legacy` resolve to this package; the current `data download` remains the purchased-archive workflow with no alternate-source fallback. Internal adapter names are implementation details, not user-facing data directory names. Parsing/facts, observation scheduling and quality checks stay outside the downloader package. Existing historical helper logic inside adapters is retained unchanged in this directory-only migration.
+All eight acquisition adapters are in [downloaders/](downloaders/): purchased archives, Binance Vision, CryptoHFTData books/trades, Bitget, Bybit, OKX and quota-bounded Infoway. Binance and CryptoHFTData tools are retained, not deleted. The current `data download` remains the purchased-archive workflow with no alternate-source fallback. Internal adapter names are implementation details, not user-facing data directory names. Parsing/facts, observation scheduling and quality checks stay outside the downloader package. Existing historical helper logic inside adapters is retained unchanged in this directory-only migration.
 
 Retaining a tool does not admit its output into an experiment. Current F03 books/trades remain Tardis-only, with existing real funding as separately authorized accounting input. The selected experiment plan owns its controls: this guide neither cancels authorized ML-OFF nor restores old B0. Metrics supplementation is not a prerequisite. Existing metrics permission does not automatically add features to new models. This reorganization does not itself download data or establish model compatibility.
 
@@ -23,7 +23,7 @@ Retaining a tool does not admit its output into an experiment. Current F03 books
 .venv/bin/python -m data validate --bundle <fact-bundle> --output <private-acceptance.json>
 ```
 
-`narrowgate data ...` and `pipeline.py data ...` call the same implementation. Download always uses the private resumable archive-only configuration: no implicit fusion, source retirement or alternate-source fallback. A 202 stays pending with backoff while other due files progress; it is not an empty successful file. Compression and configured content checks precede completion. Existing per-file/assignment locks and durable receipts remain in use, including by already running jobs.
+`narrowgate data ...` calls this implementation. Download always uses the private resumable archive-only configuration: no implicit fusion, source retirement or alternate-source fallback. A 202 stays pending with backoff while other due files progress; it is not an empty successful file. Compression and configured content checks precede completion. Existing per-file/assignment locks and durable receipts remain in use, including by already running jobs.
 
 Retain purchased compressed originals under **raw**, including purchases below `.incoming`. Determine XZ/Zstandard by actual compression. Facts, observations, Bars and features belong under the separate **derived** root. Use real directories, no supplier aliases or symlinks. Temporary work may use another volume, but atomic publication occurs on the destination filesystem. Never publish private delivery configuration or purchased records.
 
@@ -72,7 +72,7 @@ Tests use synthetic fixtures. Real engineering checks are labelled by their actu
 
 ## Historical tools and cleanup
 
-Ordinary operation uses `data`. `pipeline.py legacy <command>` is explicitly historical, not an alternate-source fallback or current admission. Existing old modules remain for historical mechanisms/tests. Their ability to run grants no new research authority.
+Ordinary operation uses `data`. The historical pipeline dispatcher and its aliases have been removed. External acquisition adapters retain their distinct protocol responsibilities; they do not grant alternate-source admission.
 
 The former market-data overview is retired and recoverable from the retained private consolidation snapshot, not distributed with the public repository. Its mixed-source layouts, coverage counts and good-day filters are historical, not current defaults. Binance Vision depth summaries are not incremental L2; Tardis L2 does not supply native own-order queue identity. Separate venue/spot/bridge inputs require their own source and visibility evidence. Funding storage is defined in [path conventions](../docs/path_conventions.md#private-runtime-configs), separately from books/trades.
 

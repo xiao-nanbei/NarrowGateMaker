@@ -130,7 +130,7 @@ def _reject_retired_aggregate(symbol: str, dataset: str, market_type: str) -> No
     if dataset == "aggTrades" and market_type == PERP_MARKET and normalize_symbol(symbol) == "BTCUSDC":
         raise ValueError(
             "BTCUSDC perpetual native aggTrades acquisition is retired; "
-            "download individual trades and run pipeline.py aggregate-trades instead"
+            "use the current data acquisition and fact-normalization contract instead"
         )
 
 

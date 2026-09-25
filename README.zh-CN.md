@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-09-22
+Last materially modified: 2026-09-25
 
-Last materially synchronized: 2026-09-22
+Last materially synchronized: 2026-09-25
 
 > 发布说明：`${NARROWGATE_*}` 值和 deployment-epoch 名称是逻辑定位器。所有者侧数据与机器产物保存在私有证据存储中；除非文档提供仓库相对链接，否则这些字节不会随本仓库分发。参见[公开/私有文档合同](docs/public_private_documentation_contract.zh-CN.md)。
 
@@ -233,9 +233,9 @@ flowchart LR
 
 缓存优先使用显式 `NARROWGATE_CACHE_ROOT`；否则为 `$XDG_CACHE_HOME/NarrowGate_BTCUSDC`，XDG 未设置时回退 `$HOME/.cache/NarrowGate_BTCUSDC`。原件、共享规范数据和冻结证据不继承缓存删除权限。根目录变量和私有证据归属见[路径约定](docs/path_conventions.zh-CN.md)。
 
-统一使用 `.venv/bin/python -m data --help`，也可使用 `narrowgate data` 或 `pipeline.py data`。[数据指南](data/README.zh-CN.md) 替代已退役的 401 日混合布局和隐式下载默认。407 日全部留在清单中，包括缺文件和观察不确定的日期。修数据不重置历史使用权、不解锁证据、不自动补全资金费，也不激活模型、经济回放或 live。
+统一使用 `.venv/bin/python -m data --help`，也可使用 `narrowgate data`。[数据指南](data/README.zh-CN.md) 替代已退役的 401 日混合布局和隐式下载默认。407 日全部留在清单中，包括缺文件和观察不确定的日期。修数据不重置历史使用权、不解锁证据、不自动补全资金费，也不激活模型、经济回放或 live。
 
-历史来源专属命令不再作为当前操作示例；其 `pipeline.py legacy <command>` 入口和所属研究文档仍保留供机制参考，不自动回退来源或把旧结果绑定到新数据。
+历史 pipeline 转发入口已经删除。当前回放使用 `narrowgate replay --data-bundle <bundle> --data-replay-config <config.json> --summary-json <summary.json>`，不会隐式选取历史输入目录或 live 配置。历史来源示例只用于溯源，不是当前备用入口。
 
 ## 公开配置与私有配置
 

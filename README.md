@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-09-22
+Last materially modified: 2026-09-25
 
-Last materially synchronized: 2026-09-22
+Last materially synchronized: 2026-09-25
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -233,9 +233,9 @@ The `data/` package contains code, not licensed market payloads. Configure real 
 
 The explicit `NARROWGATE_CACHE_ROOT` override wins; otherwise the portable cache default is `$XDG_CACHE_HOME/NarrowGate_BTCUSDC`, falling back to `$HOME/.cache/NarrowGate_BTCUSDC` when XDG is unset. Raw inputs, canonical data and frozen evidence never inherit cache deletion authority. See [Path Conventions](docs/path_conventions.md) for root variables and private evidence ownership.
 
-Use `.venv/bin/python -m data --help` (also `narrowgate data` or `pipeline.py data`). The [data guide](data/README.md) supersedes the retired 401-day mixed-source layout and implicit downloader defaults. All 407 dates remain in inventory, including missing files and uncertain observations. Data repair does not reset previous-use, unseal evidence, complete funding or authorize model/economic/live activation.
+Use `.venv/bin/python -m data --help` (also `narrowgate data`). The [data guide](data/README.md) supersedes the retired 401-day mixed-source layout and implicit downloader defaults. All 407 dates remain in inventory, including missing files and uncertain observations. Data repair does not reset previous-use, unseal evidence, complete funding or authorize model/economic/live activation.
 
-Historical source-specific command examples are not current operations. They remain explicitly available through `pipeline.py legacy <command>` and their owning research documents for mechanism reference, without automatic source fallback or rebinding old results to the new data.
+The historical pipeline dispatcher has been removed. Current replay uses `narrowgate replay --data-bundle <bundle> --data-replay-config <config.json> --summary-json <summary.json>`; it never selects historical input directories or live configuration implicitly. Historical source examples remain evidence, not alternate current entry points.
 
 ## Public vs Private Config
 

@@ -2,14 +2,14 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-21
-Last materially synchronized: 2026-09-21
+Last materially modified: 2026-09-25
+Last materially synchronized: 2026-09-25
 
 对外统一使用 `data`，负责获取、事实、观察与输入契约。用户按市场、频道、日期操作，不必选择供应商。交付地址和账户配置保持私有；内部适配器、清单仍记录真实来源，统一命名不等于抹去血缘。购买的行情记录不随源码发布。
 
 ## 代码目录
 
-八个下载适配器统一放在 [downloaders/](downloaders/)：购买原件、Binance Vision、CryptoHFTData 盘口／成交、Bitget、Bybit、OKX，以及限额采样的 Infoway。Binance 和 CryptoHFTData 下载器保留，不删除。`pipeline.py legacy` 的显式历史命令指向该包；当前 `data download` 仍只走购买原件流程，不自动回退其他来源。内部适配器名称属于实现细节，不作为用户行情目录名称。解析／事实层、观察调度和质量检查放在下载目录之外；适配器内部已有的历史辅助逻辑，本次仅迁移目录，保持行为不变。
+八个下载适配器统一放在 [downloaders/](downloaders/)：购买原件、Binance Vision、CryptoHFTData 盘口／成交、Bitget、Bybit、OKX，以及限额采样的 Infoway。Binance 和 CryptoHFTData 下载器保留，不删除。当前 `data download` 只走购买原件流程，不自动回退其他来源。内部适配器名称属于实现细节，不作为用户行情目录名称。解析／事实层、观察调度和质量检查放在下载目录之外；适配器内部已有的历史辅助逻辑，本次仅迁移目录，保持行为不变。
 
 保留工具不等于其输出自动获得研究准入。本轮 F03 盘口／成交仍只用 Tardis，已有真实资金费作为独立授权的会计输入。具体对照由所选实验计划规定：本指南不取消已授权的 ML-OFF，也不恢复旧 B0。补充 metrics 不再是前置条件；已有 metrics 使用许可也不代表自动给新模型增加特征。本次整理本身不下载数据，也不代表模型兼容已经完成。
 
@@ -23,7 +23,7 @@ Last materially synchronized: 2026-09-21
 .venv/bin/python -m data validate --bundle <fact-bundle> --output <private-acceptance.json>
 ```
 
-`narrowgate data ...` 和 `pipeline.py data ...` 调用同一实现。下载始终使用私有配置指定的可续传、仅原件路径，不隐式融合、删除来源或回退其他来源。202 保持等待并退避，其他到期文件继续处理，不算空文件或成功。压缩和已配置的内容检查通过后才完成。复用现有逐文件锁、任务锁和持久回执，包括已运行的任务。
+`narrowgate data ...` 调用此实现。下载始终使用私有配置指定的可续传、仅原件路径，不隐式融合、删除来源或回退其他来源。202 保持等待并退避，其他到期文件继续处理，不算空文件或成功。压缩和已配置的内容检查通过后才完成。复用现有逐文件锁、任务锁和持久回执，包括已运行的任务。
 
 购买的压缩原件保留在 **raw**，包括 `.incoming` 中的购买文件；按真实压缩识别 XZ、Zstandard。事实、观察、Bar、特征写入独立 **derived**。使用真实目录，不建供应商别名或软链接。临时工作可用其他磁盘，最终原子发布在目标文件系统内完成。私有交付配置和购买记录不得上传。
 
@@ -72,7 +72,7 @@ Last materially synchronized: 2026-09-21
 
 ## 历史工具与清理
 
-日常操作统一使用 `data`。`pipeline.py legacy <command>` 明确属于历史工具，不是其他来源回退或当前准入。底层旧模块为历史机制和测试保留，可运行不代表获得新研究资格。
+日常操作统一使用 `data`。历史 pipeline 转发入口及其别名已经删除。外部采集适配器保留各自的协议职责，不授予其他来源准入。
 
 旧市场数据总说明已退役，原文可从保留的私有收敛快照恢复，不随公开仓库分发。其中混合来源布局、覆盖数量和好日筛选属于历史，不是当前默认值。Binance Vision 深度摘要不是增量 L2；Tardis L2 不提供本方原生订单队列身份。其他交易所、现货和桥接输入需要各自来源及可见性证据。资金费存储由[路径约定](../docs/path_conventions.zh-CN.md)定义，与盘口／成交分开。
 

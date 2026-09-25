@@ -41,6 +41,17 @@ def assert_same(actual, expected):
         assert actual == expected
 
 
+@pytest.mark.parametrize("flag", ["signal_cold_start", "cold_flat_clock_start"])
+@pytest.mark.parametrize("initial", [{"initial_inventory": 0.001}, {"initial_live_state": {}}])
+@pytest.mark.parametrize("resuming", [False, True])
+def test_cold_start_still_rejects_conflicting_initial_account(flag, initial, resuming):
+    args, kwargs = scenario("ordinary")
+    params = {**args[3], flag: True, **initial}
+    with pytest.raises(ValueError, match="cold signal startup requires an empty experimental account"):
+        simulate_tick(*args[:3], params, **kwargs,
+                      resume_checkpoint={"schema": "invalid"} if resuming else None)
+
+
 @pytest.mark.parametrize("cut_offset", [999, 2_000, 2_001])
 def test_utc_accounting_marks_do_not_change_execution_and_survive_midnight_checkpoint(cut_offset, tmp_path):
     from dataclasses import replace

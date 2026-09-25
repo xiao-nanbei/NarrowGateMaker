@@ -114,20 +114,10 @@ def test_neutral_download_always_archive_only(monkeypatch, tmp_path):
     assert calls == [["--delivery-config", str(tmp_path / "private.json"), "--archive-only"]]
 
 
-def test_pipeline_old_source_is_not_a_current_default(capsys):
-    import pipeline
-    pipeline.main(["--help"])
-    output = capsys.readouterr().out
-    assert "data" in output and "CryptoHFT" not in output and "Tardis" not in output
-    with pytest.raises(SystemExit):
-        pipeline.main(["download-orderbook"])
+def test_retired_pipeline_dispatcher_does_not_exist():
+    from pathlib import Path
 
-
-def test_pipeline_legacy_help_is_explicit_and_does_not_run(capsys):
-    import pipeline
-    pipeline.main(["legacy", "--help"])
-    output = capsys.readouterr().out
-    assert "Historical commands only" in output and "download-orderbook" in output
+    assert not (Path(__file__).resolve().parents[1] / "pipeline.py").exists()
 
 
 def test_installed_data_entry_help_is_same_neutral_interface(capsys):

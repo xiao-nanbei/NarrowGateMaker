@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-21
+Last materially modified: 2026-09-25
 
-Last materially synchronized: 2026-09-21
+Last materially synchronized: 2026-09-25
 
 ## Questions and entry points
 
@@ -12,7 +12,9 @@ This family owns packages 4, 8 in the [unified plan](../../RECOMPUTE_407.md); se
 
 ## Implementation and new results
 
-Ready-time two-market panels and replay adapters exist; new prediction fits and action economics remain pending. Three-venue/spot inputs are missing.
+The frozen first two-market batch completed eight training-support days, two fitted direction models and one paired development account. Its original-version net PnL was −14.915664464194533 USDC for M0 and −10.683021109346399 USDC for M1: an increment of 4.232643354848134 USDC, still a loss. These are independently initialized account profits, not continuous-account returns. The original comparison has been verified without refitting or replaying; see the work list for its private evidence identity and exhausted first-batch budget. Three-venue/spot inputs remain missing.
+
+Current-semantic assembly now loads the real M1 model, frozen F03 base and the complete reference payload containing 17,292 feature frames. At 64 real causal decisions, predictions exactly match the unchanged model before locator conversion. Prior M0 assembly covered 32 decisions. Unknown reference values stay unknown; no zero-fill or USDT-to-USDC price substitution is introduced. This is model/input assembly acceptance, not a new full-account economic replay or whole-family completion. Conversion records and input bytes remain in the private evidence store, not distributed with the repository.
 
 Full new-study results are not delivered here; private evidence is not distributed. Interface tests cannot replace coverage, sample/censoring denominators or prediction-to-action-to-order-to-fill-to-inventory-to-net-PnL evidence.
 

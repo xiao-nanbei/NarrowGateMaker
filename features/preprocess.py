@@ -448,8 +448,7 @@ def main():
                      "trades" if "-trades-" in path.name else "aggTrades") not in replaced] + sorted(canonical)
     if not csv_files:
         print(
-            "错误：未找到CSV文件，请先运行 "
-            f"python pipeline.py download-agg-trades --market-type {args.market_type}"
+            "错误：所选输入不存在；请按 data 输入合同提供已验证的真实文件，不自动下载或回退来源。"
         )
         sys.exit(1)
 

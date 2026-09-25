@@ -74,7 +74,7 @@
       "depends_on": [
         "dual_market_features"
       ],
-      "implementation_status": "bounded_two_market_Tardis_pair_completed_under_frozen_pre_migration_source; current_semantic_version_acceptance_pending",
+      "implementation_status": "bounded_two_market_Tardis_pair_completed_under_frozen_pre_migration_source; current_M0_and_M1_real_model_assembly_verified",
       "execution_status": "first_eight_day_fit_two_arm_development014_comparison_verified; both_arms_negative; family_open",
       "candidate_budget": {
         "frozen_first_batch_fit_utc_days": 8,
@@ -100,7 +100,19 @@
         "not_current_migration_economic_acceptance": true,
         "independent_accounts_not_continuous_return": true
       },
-      "remaining_scope": "current_semantic_version_F04_assembly_acceptance_and_broader_family_research_remain; original_first_pair_has_zero_remaining_fit_or_replay_budget; no_repeat_or_retune; additional_F03_control_not_executed"
+      "current_semantic_assembly": {
+        "availability": "private_not_distributed",
+        "artifact": "F04 current M1 reference assembly receipt",
+        "reference_frames": 17292,
+        "M1_real_causal_frames_checked": 64,
+        "M0_prior_real_causal_frames_checked": 32,
+        "model_weights_unchanged": true,
+        "M1_predictions_exactly_equal": true,
+        "new_fit_calls": 0,
+        "new_account_replays": 0,
+        "scope": "real_models_and_reference_payload_with_offline_locator_and_plan_rebinding; not_new_economic_evaluation"
+      },
+      "remaining_scope": "broader_family_research_remains; original_first_pair_has_zero_remaining_fit_or_replay_budget; no_repeat_or_retune; additional_F03_control_not_executed; no_new_semantic_version_F04_full_account_replay_claim"
     },
     {
       "id": 5,

@@ -234,10 +234,9 @@ def cmd_fill_depth_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    from models.backtest_tick import run_cli
+    from models.replay.cli import main
 
-    run_cli(args.replay_args)
-    return 0
+    return main(args.replay_args)
 
 
 def cmd_research_replay(args: argparse.Namespace) -> int:
