@@ -16,9 +16,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-PUBLIC_TEMPLATE_MARKER = "PUBLIC TEMPLATE"
-
-
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -63,11 +60,6 @@ def validate_deploy_config(
     config_bytes = config_path.read_bytes()
     config_sha256 = hashlib.sha256(config_bytes).hexdigest()
     config_text = config_bytes.decode("utf-8")
-    if PUBLIC_TEMPLATE_MARKER in config_text:
-        raise ValueError(
-            f"{config_path} is marked {PUBLIC_TEMPLATE_MARKER}; "
-            "select a private deploy config"
-        )
 
     from execution.order_lifecycle_journal_storage_v2 import (
         BOUNDED_REMOTE_SPOOL,
@@ -87,6 +79,17 @@ def validate_deploy_config(
     )
 
     config = _as_mapping(yaml.safe_load(config_text), "config")
+    from live.config import _parse
+    _parse(config)  # Same field/schema parser as runtime; no secret/env loading.
+    symbol = config.get("symbol")
+    if not isinstance(symbol, str) or not symbol or symbol != symbol.upper() or not symbol.isalnum():
+        raise ValueError("deploy symbol must be an explicit uppercase market symbol")
+    for field_name in ("key", "secret"):
+        value = config.get("api", {}).get(field_name, "")
+        if value and (not isinstance(value, str) or any(
+            token in value.lower() for token in ("your_api", "your_secret", "replace_me", "changeme", "<", ">")
+        )):
+            raise ValueError(f"api.{field_name} contains a placeholder, not a credential")
     strategy = _as_mapping(config.get("strategy"), "strategy")
     ml = _as_mapping(config.get("ml"), "ml")
     risk = _as_mapping(config.get("risk"), "risk")

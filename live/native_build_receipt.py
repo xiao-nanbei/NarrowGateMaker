@@ -189,6 +189,7 @@ def _run_native_parity_smoke(
     root: Path,
     *,
     expected_module_token: str,
+    tests: tuple[str, ...] = LIVE_PARITY_TESTS,
 ) -> dict[str, int]:
     if (
         not expected_module_token
@@ -219,7 +220,7 @@ def _run_native_parity_smoke(
                 "xfail_strict=true",
                 "-p",
                 "live.native_build_receipt",
-                *LIVE_PARITY_TESTS,
+                *tests,
             ),
             cwd=root,
             check=False,
@@ -342,6 +343,7 @@ def build_receipt(
     root_wheel_sha256: str,
     install_receipt_path: Path,
     install_receipt_sha256: str,
+    active_config_path: Path | None = None,
     generated_utc: str | None = None,
 ) -> dict[str, Any]:
     root = repository_root.expanduser().resolve(strict=True)
@@ -380,44 +382,58 @@ def build_receipt(
             module.read_bytes()
         ):
             raise NativeBuildReceiptError("installed native module does not match the frozen wheel")
-    required = locked_runtime.NATIVE_LIVE_ABI_CONTRACT["required_apis"]
+    abi_contract = locked_runtime.native_live_abi_contract_payload()
+    if active_config_path is not None:
+        import logging
+        from live.config import _load_config_candidate
+        from live.main import audit_native_runtime
+        cfg = _load_config_candidate(active_config_path.expanduser().resolve(strict=True))
+        audit = audit_native_runtime(logging.getLogger(__name__), cfg=cfg)
+        if audit["abi_contract"]["validated"] is not True:
+            raise NativeBuildReceiptError("selected native capabilities did not validate")
+        requested = set(audit["abi_contract"]["required_apis"])
+        # These are still consumed during SignalEngine construction when both
+        # native flags are on, even by a public transport consumer.
+        if "SignalFeatureEngine" in requested and "NativeLightgbmBundle" in requested:
+            requested.update(("SignalFeatureBucketPrepared", "SignalModelFeatureRow173",
+                              "SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION", "SIGNAL_MODEL_FEATURE_NAMES",
+                              "SIGNAL_METRIC_FEATURE_NAMES", "SIGNAL_TIME_FEATURE_NAMES"))
+        abi_contract = locked_runtime.native_live_abi_contract_payload(requested)
+    required = abi_contract["required_apis"]
     if any(not hasattr(narrowgate_cpp, name) for name in required):
         raise NativeBuildReceiptError("native module lacks required live API")
-    _validate_lightgbm_bundle_abi(narrowgate_cpp)
-    if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
+    if "NativeLightgbmBundle" in required:
+        _validate_lightgbm_bundle_abi(narrowgate_cpp)
+    if "compute_live_order_action_plan" in required and not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
         raise NativeBuildReceiptError(
             "native module order-action planner capability is unavailable"
         )
-    if not bool(narrowgate_cpp.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE):
+    if "NativeLiveCooldownHotPath" in required and not bool(narrowgate_cpp.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE):
         raise NativeBuildReceiptError(
             "native module cooldown hot-path capability is unavailable"
         )
     build_surface = _production_build_surface(narrowgate_cpp)
     live_cpu_build = _production_live_cpu_build(narrowgate_cpp)
-    required_class_members = locked_runtime.NATIVE_LIVE_ABI_CONTRACT[
-        "required_class_members"
-    ]
+    required_class_members = abi_contract["required_class_members"]
     if any(
         not hasattr(getattr(narrowgate_cpp, class_name), member)
         for class_name, members in required_class_members.items()
         for member in members
     ):
         raise NativeBuildReceiptError("native module lacks required live class API")
-    quote_instances = {
-        "QuoteFlags": narrowgate_cpp.QuoteFlags(),
-        "SideQuoteContext": narrowgate_cpp.SideQuoteContext(),
-    }
+    quote_instances = {name: getattr(narrowgate_cpp, name)()
+                       for name in abi_contract["required_quote_fields"]}
     if any(
         not hasattr(quote_instances[class_name], field)
-        for class_name, fields in locked_runtime.NATIVE_LIVE_ABI_CONTRACT[
-            "required_quote_fields"
-        ].items()
+        for class_name, fields in abi_contract["required_quote_fields"].items()
         for field in fields
     ):
         raise NativeBuildReceiptError("native module lacks successor quote ABI fields")
+    parity_tests = locked_runtime.native_live_parity_tests(abi_contract)
     parity_qualification = _run_native_parity_smoke(
         root,
         expected_module_token=expected_module_token,
+        tests=parity_tests,
     )
     try:
         import pybind11
@@ -460,9 +476,9 @@ def build_receipt(
         "module": _file(module),
         "build_surface": build_surface,
         "live_cpu_build": live_cpu_build,
-        "abi_contract": locked_runtime.native_live_abi_contract_payload(),
+        "abi_contract": abi_contract,
         "parity_qualification": {
-            "tests": list(LIVE_PARITY_TESTS),
+            "tests": list(parity_tests),
             **parity_qualification,
             "validated": True,
         },
@@ -486,6 +502,7 @@ def main() -> int:
     parser.add_argument("--install-receipt", type=Path, required=True)
     parser.add_argument("--install-receipt-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--active-config", type=Path, help="Qualify only capabilities required by this config and the selected runtime profile")
     args = parser.parse_args()
     payload = build_receipt(
         repository_root=args.repository_root,
@@ -500,6 +517,7 @@ def main() -> int:
         root_wheel_sha256=args.root_wheel_sha256,
         install_receipt_path=args.install_receipt,
         install_receipt_sha256=args.install_receipt_sha256,
+        active_config_path=args.active_config,
     )
     output = args.output.expanduser()
     fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

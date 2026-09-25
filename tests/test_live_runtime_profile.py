@@ -51,6 +51,34 @@ def test_python_profile_does_not_import_extension(monkeypatch) -> None:
     assert result["module"] == "disabled"
 
 
+def test_disabled_cooldown_does_not_require_native_policy_api(monkeypatch):
+    from live.config import Config
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    cfg = Config()
+    cfg.strategy.boolean_cooldown_policy_enabled = False
+    cfg.strategy.buy_e3_cooldown_policy_enabled = False
+    monkeypatch.setattr(main, "load_native_module", lambda: (_ for _ in ()).throw(AssertionError("inactive import")))
+    result = main.audit_native_runtime(logging.getLogger("profile-test"), cfg=cfg)
+    assert not result["abi_contract"]["required_apis"]
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    with pytest.raises(RuntimeError, match="inactive import"):
+        main.audit_native_runtime(logging.getLogger("profile-test"), cfg=cfg)
+
+
+def test_active_api_must_be_in_deployment_qualification(monkeypatch):
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIVE_ROUTING", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    fake = SimpleNamespace(APPLICATION_INTERFACE_VERSION=APPLICATION_INTERFACE_VERSION,
+                           __file__="fixture.so", compute_live_routing_decision=lambda *a: None)
+    monkeypatch.setattr(main, "load_native_module", lambda: fake)
+    with pytest.raises(RuntimeError, match="not qualified"):
+        main.audit_native_runtime(logging.getLogger("profile-test"),
+                                  safety_authority={"native_abi_contract": {"required_apis": []}})
+
+
 def test_persisted_profiles_select_native_cooldown_explicitly() -> None:
     profile_root = Path(main.__file__).resolve().parent / "profiles"
     run_sh = (profile_root.parent / "run.sh").read_text(encoding="utf-8")
@@ -300,6 +328,8 @@ def test_native_live_routing_allows_inactive_post_fill_mode(monkeypatch) -> None
         strategy=SimpleNamespace(
             post_fill_quote_response_enabled=False,
             post_fill_quote_response_mode="inventory_shift",
+            boolean_cooldown_policy_enabled=False,
+            buy_e3_cooldown_policy_enabled=False,
         )
     )
     fake_module = SimpleNamespace(

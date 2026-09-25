@@ -97,6 +97,36 @@ def test_missing_live_authorization_fails_closed(model_bundle):
         validate_public_bundle(model_bundle, live=True)
 
 
+def test_authorization_resolution_requires_live_validated_result(model_bundle):
+    metadata = validate_public_bundle(model_bundle)
+    with pytest.raises(ValueError, match="live-validated"):
+        resolve_model_authorization_manifest(model_bundle, metadata)
+
+
+@pytest.mark.parametrize("change", ["half_life", "research_provenance", "external_fit_read"])
+def test_runtime_does_not_enforce_research_plan_but_publication_does(model_bundle, change):
+    manifest_path = model_bundle / "public_input_model.json"
+    manifest = json.loads(manifest_path.read_text())
+    selection = manifest["training_identity"]["selection"]
+    if change == "half_life":
+        selection["sample_weight_policy"]["half_life_days"] = 90
+    elif change == "research_provenance":
+        selection.pop("train_source_identity_sha256")
+    else:
+        selection["external_panel_read_during_fit"] = True
+    for head in REQUIRED_MODEL_HEADS:
+        path = model_bundle / f"{head}_meta.json"
+        meta = json.loads(path.read_text())
+        meta["train_only_selection"] = selection
+        path.write_text(json.dumps(meta))
+        manifest["heads"][head]["metadata_sha256"] = digest(path)
+    manifest_path.write_text(json.dumps(manifest))
+    assert len(validate_public_bundle(model_bundle)) == 13
+    with pytest.raises(ValueError, match="half-life|incomplete"):
+        panel.publish_model_contract(model_bundle, manifest, REQUIRED_MODEL_HEADS,
+                                     selection_contract=selection)
+
+
 @pytest.mark.parametrize("field,value", [
     ("volatility_unit_contract", {
         **absolute_price_variance_unit_contract("BTCUSDC"),

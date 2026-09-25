@@ -126,17 +126,13 @@ def resolve_model_authorization_manifest(
     model_dir: Path,
     metadata: Mapping[str, Mapping[str, Any]],
 ) -> Path:
-    """Resolve the sole current hash-bound authorization; never inherit old grants."""
-    from strategy.public_model_contract import validate_public_bundle
+    """Resolve authority already checked in this call chain, without rereading trees."""
+    from strategy.public_model_contract import ValidatedModelMetadata
     root = Path(model_dir).expanduser().resolve()
-    symbols = {str(meta.get("symbol") or "BTCUSDC") for meta in metadata.values()}
-    if len(symbols) != 1:
-        raise ValueError("model metadata must bind one symbol")
-    validate_public_bundle(root, expected_symbol=symbols.pop(), live=True)
-    candidate = root / "live_input_authorization.json"
-    if candidate.is_symlink() or not candidate.is_file():
-        raise ValueError("authorization must be a canonical regular file")
-    return candidate
+    if (not isinstance(metadata, ValidatedModelMetadata)
+            or metadata.root != root or metadata.authorization_path is None):
+        raise ValueError("live-validated model result from this bundle is required")
+    return metadata.authorization_path
 
 
 

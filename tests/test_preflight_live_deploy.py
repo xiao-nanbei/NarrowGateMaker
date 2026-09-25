@@ -477,7 +477,7 @@ def test_public_dry_run_bundle_is_hash_bound_but_not_deploy_authorized() -> None
     with pytest.raises(ValueError, match="synthetic model bundle cannot enter remote deployment"):
         validate_model_bundle(bundle)
 
-    with pytest.raises(ValueError, match="public_dry_run_only"):
+    with pytest.raises(ValueError, match="unknown config key.*strategy.gamma"):
         validate_deploy_config(
             root / "examples/live_dry_run_config.yaml",
             root,
@@ -495,6 +495,10 @@ def test_public_dry_run_config_is_rejected_without_text_markers(tmp_path: Path) 
     root = Path(__file__).resolve().parents[1]
     source = (root / "examples/live_dry_run_config.yaml").read_text(encoding="utf-8")
     config = yaml.safe_load(source)
+    # Exercise the bundle admission independently of the example's retired
+    # configuration keys, which the shared parser now rejects earlier.
+    config["strategy"].pop("gamma")
+    config["strategy"].pop("maker_fill_prob")
     config["ml"]["model_dir"] = str((root / PUBLIC_DRY_RUN_BUNDLE).resolve())
     config_path = tmp_path / "renamed.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -503,11 +507,53 @@ def test_public_dry_run_config_is_rejected_without_text_markers(tmp_path: Path) 
         validate_deploy_config(config_path, root)
 
 
-def test_tracked_public_template_marker_fails_before_deploy_validation() -> None:
+def test_tracked_public_template_still_fails_actual_deploy_validation() -> None:
     root = Path(__file__).resolve().parents[1]
 
-    with pytest.raises(ValueError, match="marked PUBLIC TEMPLATE"):
+    with pytest.raises(ValueError):
         validate_deploy_config(root / "live/config.yaml", root)
+
+
+def test_template_comment_does_not_change_valid_preflight(tmp_path):
+    path = _write_fixture(tmp_path)
+    expected = validate_deploy_config(path, tmp_path)
+    path.write_text("# PUBLIC TEMPLATE is documentation, not a config value\n" + path.read_text())
+    actual = validate_deploy_config(path, tmp_path)
+    # The raw configuration identity changes; effective deployment does not.
+    expected.pop("config_sha256", None)
+    actual.pop("config_sha256", None)
+    assert actual == expected
+
+
+@pytest.mark.parametrize("field,value,message", [
+    ("symbol", "btcusdc", "explicit uppercase"),
+    ("unrecognized_execution_setting", True, "unknown config"),
+    ("api", {"key": "YOUR_API_KEY"}, "placeholder"),
+])
+def test_semantic_config_errors_still_rejected(tmp_path, field, value, message):
+    path = _write_fixture(tmp_path)
+    config = yaml.safe_load(path.read_text())
+    config[field] = value
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match=message):
+        validate_deploy_config(path, tmp_path)
+
+
+def test_preflight_validates_model_package_once_per_invocation(tmp_path, monkeypatch):
+    from strategy import public_model_contract
+    original = public_model_contract.validate_public_bundle
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(public_model_contract, "validate_public_bundle", counted)
+    path = _write_fixture(tmp_path)
+    validate_deploy_config(path, tmp_path)
+    assert len(calls) == 1
+    validate_deploy_config(path, tmp_path)
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize(

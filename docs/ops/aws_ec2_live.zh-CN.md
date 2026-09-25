@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-25
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-25
 
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
@@ -143,6 +143,16 @@ Artifact closure 不完整属于 staging failure，不能通过允许 live host 
 修补。
 
 ## Python-only 增量 release
+
+### 校验边界
+
+部署预检对同一不可变模型代际只做一次整包验证，并复用该调用返回的授权定位；独立加载和新部署重新验证。离线 `SignalEngine.from_public_models` 与无网络的 `LivePublicSignalEngine` 构造检查模型兼容性，不要求实盘授权。真正启动实盘仍需哈希绑定的部署授权。训练来源完整性和 F03 半衰期候选表由发布阶段的 `public_input_panel.head_training_identity` 检查；推理保留来源记录和逐头身份一致性，但不强加该研究候选表。
+
+部署 JSON 按规范化对象摘要定义身份，不因缩进、键序或末尾换行不同而失败；重复键和非法数值仍拒绝。冻结模型/P3 及明确按原字节绑定的产物哈希不变。YAML 预检使用运行配置 schema，不再检查 `PUBLIC TEMPLATE` 注释子串；缺少目标、未知键、占位凭据和不合格产物身份仍失败。
+
+启动保留完整 installed RECORD/目录检查及 `pip check`，本次没有证明运行目录不可变。同次验证复用静态扫描结果进行解释器比对，不再让目标进程再次扫描同一目录。因此，不再独立检测恰好发生于这两次原本相邻扫描之间的依赖修改；安装阶段仍保留目标解释器执行前后检查，独立进程准入仍重新验证。引导代码先将验证器与已提交 Git blob 比较，随后验证器执行唯一一次完整源码检查。只有 `docs/` 下及根目录两份 README 中非可执行、非软链接的 Markdown 可免于工作区脏状态拒绝。执行代码、导入和配置改动仍拒绝，单独绑定的输入字节仍受保护。本次不声称启动耗时、报价延迟或 PnL 性能收益。
+
+需要按能力范围验收 native 时，在加载预期的现有运行 profile 后使用 `live.native_build_receipt --active-config <private-config>`。它复用 live 能力选择并运行对应的既有 parity 测试；回执消费者校验精确能力合同，实盘准入要求全部实际启用 API 都已验收。不传 `--active-config` 时仍可验收完整构建。关闭 cooldown 策略后不要求其 API。当前信号构造在对应 profile 开关启用时仍消费 native 特征/173 列组件，不能仅因公共模型之后改用其他特征流就删掉这些要求。CPU 编译选项、浮点语义、活跃 ABI 和模块身份检查不变。这些本地代码与测试不代表 AWS 已切换，也不证明新 Linux wheel 已验收。
 
 只有同时满足以下条件，Python-only 修改才可以复用已经准入的精确 native wheel
 字节：

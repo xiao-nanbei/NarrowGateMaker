@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-25
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-25
 
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
@@ -154,6 +154,16 @@ An incomplete artifact closure is a staging failure. Do not repair it by
 allowing network dependency resolution on the live host.
 
 ## Python-only incremental release
+
+### Validation boundaries
+
+Deployment preflight validates one immutable model generation once and reuses that call's authorization locator; independent loads and deployments validate again. Offline `SignalEngine.from_public_models` and the network-free `LivePublicSignalEngine` constructor check model compatibility, not live authority. Actual live startup still requires the hash-bound deployment authorization. Training-plan provenance completeness and the F03 half-life grid are checked by `public_input_panel.head_training_identity` during publication; inference retains the recorded provenance and cross-head identities without imposing that research grid.
+
+Deployment JSON identity uses its canonical object digest, not indentation, key order or a final newline. Duplicate keys and nonfinite values are rejected. Raw frozen model/P3 and explicitly byte-bound artifact hashes are unchanged. YAML preflight uses the runtime configuration schema, not the `PUBLIC TEMPLATE` comment. Missing targets, unknown keys, placeholder credentials and inadmissible artifact identities remain errors.
+
+Startup retains a full installed RECORD/tree check and `pip check`: this change does not establish an immutable runtime filesystem. Within one verification call the static scan is reused for the interpreter comparison rather than scanning the same tree again in the target process. Consequently it no longer independently detects a dependency mutation occurring specifically between those two formerly adjacent scans; installation retains its before/after-target check. Independent process admission still verifies again. The bootstrap checks the verifier against its committed Git blob; the verifier then performs the sole complete source check. Only non-executable, non-symlink Markdown in `docs/` and the two root README files is exempt from dirty-worktree rejection. Executable/import/config changes remain rejected, and separately bound input bytes remain protected. No startup-time, quote-latency or PnL speedup is claimed.
+
+For a scoped native qualification, run `live.native_build_receipt --active-config <private-config>` with the intended existing runtime profile loaded. It reuses live capability selection and selects the corresponding existing parity tests; the receipt consumer validates that exact capability contract, and live admission requires every active API to have been qualified. Without `--active-config`, full-build qualification remains available. Disabled cooldown policies do not require cooldown APIs. The current signal constructor still consumes native feature/173-row components when their profile flags are enabled; those requirements cannot be removed merely because public inference later uses a different stream. CPU build options, floating-point semantics, active ABI checks and module identity are unchanged. These local code/tests are not an AWS activation or proof of a newly qualified Linux wheel.
 
 A Python-only change can reuse the exact admitted native wheel bytes only when
 all of the following are true:

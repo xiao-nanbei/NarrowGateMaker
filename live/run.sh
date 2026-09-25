@@ -123,7 +123,8 @@ _verify_startup_runtime() {
 
     # Bootstrap the repository verifier from the OS-owned/trusted interpreter.
     # The short stdlib-only check validates the release root, extracts its Git
-    # identity, and proves the checkout clean before repository Python executes.
+    # identity, and verifies the verifier's own committed bytes before it runs.
+    # The verifier owns the sole complete execution-tree check below.
     unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_PROFILE LD_DEBUG
     unset LD_DEBUG_OUTPUT LD_ORIGIN_PATH DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH
     local source_identity expected_commit expected_tree
@@ -142,7 +143,16 @@ import sys
 path, expected = sys.argv[1:]
 with open(path, "rb") as handle:
     raw = handle.read()
-payload = json.loads(raw)
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key: " + key)
+        result[key] = value
+    return result
+def reject_constant(value):
+    raise ValueError("nonfinite JSON value: " + value)
+payload = json.loads(raw, object_pairs_hook=unique_object, parse_constant=reject_constant)
 required = {
     "schema_version", "status", "source", "build_bundle", "config_bundle",
     "model_policy_bundle", "canonical_sha256",
@@ -151,9 +161,6 @@ if set(payload) not in (required, required | {"policy_approvals"}):
     raise SystemExit("deployment release-root fields drifted")
 clone = dict(payload)
 observed = str(clone.pop("canonical_sha256", ""))
-canonical_bytes = (json.dumps(
-    payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
-) + "\n").encode("utf-8")
 actual = hashlib.sha256(json.dumps(
     clone, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
 ).encode("utf-8")).hexdigest()
@@ -161,7 +168,6 @@ source = payload.get("source")
 if (
     payload.get("schema_version") != "narrowgate_private_deployment_envelope.v1"
     or payload.get("status") != "deployment_envelope_built"
-    or raw != canonical_bytes
     or observed != expected
     or actual != expected
     or not isinstance(source, dict)
@@ -174,10 +180,9 @@ print("{}\t{}".format(source["commit"], source["tree"]))
 ' "$envelope" "$NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256"
     )" || return 1
     IFS=$'\t' read -r expected_commit expected_tree <<< "$source_identity"
-    [[ "$(/usr/bin/git -C "$DIR" rev-parse HEAD)" == "$expected_commit" \
-        && "$(/usr/bin/git -C "$DIR" rev-parse 'HEAD^{tree}')" == "$expected_tree" \
-        && -z "$(/usr/bin/git -C "$DIR" status --porcelain=v1 --untracked-files=all)" ]] || {
-        echo "Startup checkout differs from deployment release root" >&2
+    [[ "$(/usr/bin/git -C "$DIR" hash-object --no-filters "$verifier")" \
+        == "$(/usr/bin/git -C "$DIR" rev-parse "$expected_commit:live/deployment_runtime.py")" ]] || {
+        echo "Startup verifier differs from deployment release root" >&2
         return 1
     }
 

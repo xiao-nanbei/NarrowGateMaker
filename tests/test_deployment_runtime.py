@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import base64
 import csv
 import hashlib
@@ -26,6 +27,60 @@ pytestmark = pytest.mark.skipif(
     sys.version_info[:2] != subject.REQUIRED_PYTHON,
     reason="locked live runtime is intentionally CPython 3.12-only",
 )
+
+
+def test_json_authority_formatting_is_not_identity():
+    value = {"schema": "test", "nested": {"b": 2, "a": 1}}
+    assert subject._load_json_bytes(json.dumps(value, indent=4).encode(), "test") == value
+    assert subject._load_json_bytes(json.dumps(value, sort_keys=True).encode(), "test") == value
+
+
+def test_json_authority_rejects_ambiguous_or_nonfinite_content():
+    for raw in (b'{"x":1,"x":2}', b'{"x":{"a":1,"a":2}}',
+                b'{"x":NaN}', b'{"x":Infinity}', b'{"x":1e999}'):
+        with pytest.raises(subject.LockedRuntimeError):
+            subject._load_json_bytes(raw, "test")
+
+
+def test_startup_bootstrap_accepts_semantic_json_and_rejects_duplicate_keys(tmp_path):
+    shell = (Path(subject.__file__).parent / "run.sh").read_text()
+    code = shell.split('"$trusted_python" -I -B -S -c \'', 1)[1].split('\' "$envelope"', 1)[0]
+    payload = {"schema_version": subject.DEPLOYMENT_ENVELOPE_SCHEMA,
+               "status": "deployment_envelope_built", "source": {"commit": "a" * 40, "tree": "b" * 40},
+               "build_bundle": {}, "config_bundle": {}, "model_policy_bundle": {}}
+    payload["canonical_sha256"] = subject.canonical_sha256(payload, "canonical_sha256")
+    path = tmp_path / "envelope.json"
+    for indent in (None, 4):
+        path.write_text(json.dumps(payload, indent=indent))
+        result = subprocess.run([sys.executable, "-I", "-B", "-S", "-c", code,
+                                 str(path), payload["canonical_sha256"]], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "a" * 40 + "\t" + "b" * 40
+    path.write_text('{"source":{},' + json.dumps(payload)[1:])
+    result = subprocess.run([sys.executable, "-I", "-B", "-S", "-c", code,
+                             str(path), payload["canonical_sha256"]], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "duplicate JSON key" in result.stderr
+    assert "status --porcelain" not in shell
+
+
+def test_execution_tree_ignores_only_plain_documentation(tmp_path):
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.md").write_text("ordinary note")
+    (tmp_path / "README.md").write_text("readme")
+    assert subject._runtime_worktree_changes(tmp_path) == []
+    for name in ("shadow.py", "module.so", "config.yaml", "docs/tool.py", "docs/run.sh"):
+        path = tmp_path / name
+        path.write_text("changed")
+        assert name in subject._runtime_worktree_changes(tmp_path)
+        path.unlink()
+    link = tmp_path / "docs" / "alias.md"
+    link.symlink_to(tmp_path / "README.md")
+    assert "docs/alias.md" in subject._runtime_worktree_changes(tmp_path)
+    link.unlink()
+    (tmp_path / "docs" / "note.md").chmod(0o755)
+    assert "docs/note.md" in subject._runtime_worktree_changes(tmp_path)
 
 
 def _digest(raw: bytes) -> str:
@@ -996,10 +1051,19 @@ def test_wheel_tamper_and_resigned_manifest_cannot_cross_frozen_authority(
         )
 
 
-def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path: Path) -> None:
+def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path: Path, monkeypatch) -> None:
     bundle = _install(tmp_path)
     receipt = bundle["receipt"]
+    scans = []
+    original_scan = subject._installed_tree_snapshot
+
+    def counted(*args, **kwargs):
+        scans.append(args)
+        return original_scan(*args, **kwargs)
+
+    monkeypatch.setattr(subject, "_installed_tree_snapshot", counted)
     assert _verify_install(bundle) == receipt
+    assert len(scans) == 1
     assert stat.S_IMODE(bundle["receipt_path"].stat().st_mode) == 0o600
     assert bundle["receipt_path"].stat().st_nlink == 1
     assert receipt["pip_check"] == {"passed": True}
@@ -1033,6 +1097,7 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
         )
         == receipt
     )
+    assert len(scans) == 2
     assert (
         subject.validate_startup_runtime(
             venv_python=bundle["venv"] / "bin/python",
@@ -1051,6 +1116,36 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
         )
         == receipt
     )
+    assert len(scans) == 3
+
+
+def test_native_qualification_can_exclude_inactive_components():
+    contract = subject.native_live_abi_contract_payload(["compute_quote_core_live"])
+    assert contract["required_apis"] == ["compute_quote_core_live"]
+    assert not contract["required_class_members"]
+    tests = subject.native_live_parity_tests(contract)
+    assert tests and all("test_cpp_quote_core_parity.py::" in test for test in tests)
+    assert not any("lightgbm" in test or "cooldown" in test for test in tests)
+    for unwanted in ("NativeLightgbmBundle", "SignalModelFeatureRow173", "NativeLiveCooldownHotPath"):
+        assert unwanted not in contract["required_apis"]
+    with pytest.raises(subject.LockedRuntimeError, match="unknown"):
+        subject.native_live_abi_contract_payload(["unknown_api"])
+
+
+def test_selected_native_receipt_does_not_require_full_build_contract(tmp_path):
+    _bundle, repository, receipt_path, _authorization = _deployment_envelope_fixture(tmp_path)
+    receipt = json.loads(receipt_path.read_text())
+    abi = subject.native_live_abi_contract_payload(["compute_quote_core_live"])
+    receipt["abi_contract"] = abi
+    receipt["parity_qualification"]["tests"] = list(subject.native_live_parity_tests(abi))
+    receipt[subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
+        receipt, subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD)
+    selected = tmp_path / "selected-native.json"
+    subject._write_json_authority(selected, receipt)
+    result = subject._validate_native_build_bundle(
+        selected, execution_commit=subject._git_output(repository, "rev-parse", "HEAD"),
+        execution_tree=subject._git_output(repository, "rev-parse", "HEAD^{tree}"))
+    assert result["native_abi_contract"] == abi
 
 
 def test_offline_install_streams_wheels_without_whole_file_reader(

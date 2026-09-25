@@ -5,6 +5,16 @@ import json
 from pathlib import Path
 
 
+class ValidatedModelMetadata(dict):
+    """One call's validation result; not a persistent admission cache."""
+
+    def __init__(self, metadata, *, root, manifest_sha256, authorization_path):
+        super().__init__(metadata)
+        self.root = Path(root).resolve()
+        self.manifest_sha256 = manifest_sha256
+        self.authorization_path = authorization_path
+
+
 def digest(path):
     if path.is_symlink() or not path.is_file():
         raise ValueError("regular model artifact required")
@@ -53,15 +63,11 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
             raise ValueError("mixed head contract")
         selection = dict(meta.get("train_only_selection") or {})
         selection.pop("spec_path", None)
-        required = ("spec_sha256", "feature_manifest_sha256", "feature_dag_sha256",
-                    "source_manifest_sha256", "train_source_identity_sha256", "fit_days",
-                    "selection_days", "refit_days", "sample_weight_policy")
-        if (any(not selection.get(k) for k in required)
-                or not isinstance(selection.get("sample_weight_policy"), dict)
-                or selection["sample_weight_policy"].get("half_life_days") not in ("inf", 240, 120, 60)):
-            raise ValueError("incomplete training identity")
+        # Research-plan admission belongs to the producer's
+        # head_training_identity(), not inference. Preserve provenance and
+        # exact head-to-manifest consistency without imposing its search grid.
         identity = {**{k: manifest[k] for k in keys}, "selection": selection}
-        if identity != manifest.get("training_identity") or selection.get("external_panel_read_during_fit") is not False:
+        if not selection or identity != manifest.get("training_identity"):
             raise ValueError("mixed training identity")
         validate_variance_unit_contract(meta.get("volatility_unit_contract"), symbol=expected_symbol)
         if name.startswith("absolute_price_variance_rate_") and meta.get("label_semantics") != ABSOLUTE_PRICE_VARIANCE_SEMANTICS:
@@ -92,4 +98,7 @@ def validate_public_bundle(root, *, expected_symbol="BTCUSDC", live=False):
         p3_path = root / "touch_probability.json"
         if p3_path.exists() and authorization.get("p3_sha256") != digest(p3_path):
             raise ValueError("P3 hash mismatch in live input authorization")
-    return metadata
+    return ValidatedModelMetadata(
+        metadata, root=root, manifest_sha256=manifest_digest,
+        authorization_path=(root.resolve() / "live_input_authorization.json") if live else None,
+    )

@@ -1169,7 +1169,12 @@ def audit_native_runtime(
                 "Side",
             }
         )
-    if enabled["NARROWGATE_CPP_COOLDOWN"]:
+    cooldown_policy_enabled = (
+        cfg is None or cfg.strategy.boolean_cooldown_policy_enabled
+        or cfg.strategy.buy_e3_cooldown_policy_enabled
+    )
+    cooldown_effective = enabled["NARROWGATE_CPP_COOLDOWN"] and cooldown_policy_enabled
+    if cooldown_effective:
         required.update(NATIVE_COOLDOWN_REQUIRED_APIS)
     if enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]:
         required.update(NATIVE_ORDER_ACTION_REQUIRED_APIS)
@@ -1216,7 +1221,7 @@ def audit_native_runtime(
                     )
             if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
                 validate_replace_continuation(module)
-            if enabled["NARROWGATE_CPP_COOLDOWN"] and not bool(
+            if cooldown_effective and not bool(
                 module.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE
             ):
                 raise RuntimeError(
@@ -1321,6 +1326,10 @@ def audit_native_runtime(
         "validated": bool(not required or not module_path.startswith("unavailable:")),
     }
     if safety_authority is not None:
+        qualified = safety_authority.get("native_abi_contract")
+        if (not isinstance(qualified, dict)
+                or not required <= set(qualified.get("required_apis", ()))):
+            raise RuntimeError("active native APIs were not qualified by deployment authority")
         candidate = Path(module_path).expanduser()
         if (
             profile != "native"
@@ -1328,6 +1337,7 @@ def audit_native_runtime(
                 not enabled[name]
                 for name in CPP_RUNTIME_FLAGS
                 if name not in OPTIONAL_CPP_RUNTIME_FLAGS
+                and (name != "NARROWGATE_CPP_COOLDOWN" or cooldown_policy_enabled)
             )
             or global_flow_effective is not False
             or module_path == "disabled"

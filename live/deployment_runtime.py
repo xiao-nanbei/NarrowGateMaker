@@ -205,26 +205,92 @@ _RELEASE_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
 
 
-def native_live_abi_contract_payload() -> dict[str, Any]:
+def native_live_abi_contract_payload(required_apis: Iterable[str] | None = None) -> dict[str, Any]:
     """Return the one JSON-shaped ABI contract shared by producer and consumer."""
 
+    additional = (
+        "NativeQuotePolicyStage", "NativeQuotePolicyStageResult", "NATIVE_QUOTE_POLICY_STAGE_AVAILABLE",
+        "NativeGlobalFlowEngine", "compute_live_final_order_plan", "LiveFinalOrderPlanStatus",
+        "NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE", "LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI",
+        "LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR",
+    )
+    catalog = (*NATIVE_LIVE_ABI_CONTRACT["required_apis"], *additional)
+    known = set(catalog)
+    selected = set(NATIVE_LIVE_ABI_CONTRACT["required_apis"]) if required_apis is None else set(required_apis)
+    if not selected or selected - known:
+        raise LockedRuntimeError("native qualification has empty or unknown required APIs")
     return {
         "schema_version": NATIVE_LIVE_ABI_CONTRACT["schema_version"],
-        "required_apis": list(NATIVE_LIVE_ABI_CONTRACT["required_apis"]),
+        "required_apis": [name for name in catalog if name in selected],
         "required_class_members": {
-            name: list(members)
+            name: [member for member in members
+                   if member != "assemble_model_row_173" or "SignalModelFeatureRow173" in selected]
             for name, members in NATIVE_LIVE_ABI_CONTRACT[
                 "required_class_members"
-            ].items()
+            ].items() if name in selected
         },
         "required_quote_fields": {
             name: list(fields)
             for name, fields in NATIVE_LIVE_ABI_CONTRACT[
                 "required_quote_fields"
-            ].items()
+            ].items() if "compute_quote_core_live" in selected
         },
         "validated": True,
     }
+
+
+def native_live_parity_tests(abi_contract: Mapping[str, Any]) -> tuple[str, ...]:
+    """Use existing component regressions for the declared native capability set."""
+    apis = set(abi_contract["required_apis"])
+    if apis == set(NATIVE_LIVE_ABI_CONTRACT["required_apis"]):
+        return NATIVE_LIVE_PARITY_TESTS
+    tests = []
+    if "compute_quote_core_live" in apis:
+        tests.extend("tests/test_cpp_quote_core_parity.py::" + name for name in (
+            "test_cpp_quote_core_scalar_parity",
+            "test_cpp_quote_core_horizon_and_absolute_price_risk_contract",
+            "test_cpp_live_quote_binding_matches_object_binding",
+            "test_cpp_f03_ret_action_requires_explicit_consumer_compatibility",
+            "test_cpp_p3_side_floor_constraint_flags_are_side_specific",
+        ))
+    if "compute_live_routing_decision" in apis:
+        tests.extend("tests/test_cpp_quote_core_parity.py::" + name for name in (
+            "test_cpp_live_routing_compact_tuple_contract",
+            "test_cpp_live_routing_does_not_enlarge_invalid_base_order",
+            "test_cpp_live_routing_rejects_wrong_compact_shape",
+        ))
+    if "NativeQuotePolicyStage" in apis:
+        tests.append("tests/test_cpp_quote_core_parity.py::test_native_quote_policy_stage_matches_separate_quote_and_policy_bits")
+    if "SignalFeatureEngine" in apis:
+        tests.extend("tests/test_cpp_signal_features.py::" + name for name in (
+            "test_cpp_signal_feature_overlay_matches_python_core_features",
+            "test_cpp_signal_feature_ring_buffer_wrap_matches_stateless_tail",
+            "test_cpp_signal_bucket_pipeline_matches_python_aggregate_and_full_feature_row",
+            "test_cpp_execution_l2_incremental_engine_matches_batch_and_bounds_ring",
+        ))
+    if "SignalModelFeatureRow173" in apis:
+        tests.append("tests/test_cpp_signal_features.py::test_native_model_row_fixed_input_groups_land_on_named_columns")
+    if "SignalRefPerpFeatureEngine" in apis:
+        tests.append("tests/test_cpp_signal_features.py::test_cpp_ref_perp_matches_python_for_all_fields_and_basis_history")
+    if "NativeLiveCooldownHotPath" in apis:
+        tests.append("tests/test_cpp_signal_features.py::test_live_build_f05_sell_cooldown_matches_python_windows_and_rules")
+    if "NativeLightgbmBundle" in apis:
+        tests.append("tests/test_cpp_signal_features.py::test_native_lightgbm_bundle_matches_python_boosters_bit_for_bit")
+    if "TradeBarAggregator" in apis:
+        tests.append("tests/test_cpp_global_flow.py::test_trade_bar_native_batch_matches_scalar_rollover_and_gap_fill")
+    if "NativeGlobalFlowEngine" in apis:
+        tests.append("tests/test_cpp_global_flow.py::test_native_global_flow_matches_python_windows_and_consensus")
+    if "NativeReplaceContinuationState" in apis:
+        tests.append("tests/test_cpp_replace_continuation.py")
+    if "compute_live_order_action_plan" in apis:
+        tests.extend(("tests/test_cpp_live_order_state.py",
+                      "tests/test_cpp_live_order_action_plan.py::test_checked_adapter_preserves_b0_one_nanotick_throttle_boundary",
+                      "tests/test_cpp_live_order_action_plan.py::test_checked_adapter_matches_b0_caps_filters_and_cross_zero_order"))
+    if "compute_live_final_order_plan" in apis:
+        tests.append("tests/test_cpp_live_order_action_plan.py::test_native_final_order_plan_matches_python_tail_random_and_nextafter")
+    if not tests:
+        raise LockedRuntimeError("native capability set has no parity qualification")
+    return tuple(tests)
 
 
 class LockedRuntimeError(RuntimeError):
@@ -383,14 +449,25 @@ def _write_create_only_private(path: Path, raw: bytes) -> None:
 
 
 def _load_json_bytes(raw: bytes, label: str) -> dict[str, Any]:
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError(f"nonfinite JSON value: {value}")
+
     try:
-        value = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(raw, object_pairs_hook=unique_object, parse_constant=reject_constant)
+        # Also reject overflow such as 1e999, which parse_constant does not see.
+        _canonical_json_bytes(value)
+    except (UnicodeDecodeError, ValueError) as exc:
         raise LockedRuntimeError(f"invalid JSON authority {label}: {exc}") from exc
     if not isinstance(value, dict):
         raise LockedRuntimeError(f"JSON authority must be an object: {label}")
-    if _canonical_json_bytes(value) != raw:
-        raise LockedRuntimeError(f"JSON authority is not canonical: {label}")
     return value
 
 
@@ -2277,8 +2354,10 @@ def validate_startup_runtime(
     target_python = _absolute(venv_python)
     if target_python.is_symlink() or not target_python.is_file():
         raise LockedRuntimeError("startup venv interpreter is not an owned regular copy")
-    _validate_static_snapshot_against_receipt(target=target_python.parent.parent, receipt=receipt)
-    snapshot = _run_python_json(target_python, "_snapshot-installed")
+    snapshot = _validate_static_snapshot_against_receipt(
+        target=target_python.parent.parent, receipt=receipt,
+    )
+    snapshot["interpreter"] = probe_interpreter(target_python)
     _assert_interpreter_equal(snapshot["interpreter"], interpreter, "startup runtime")
     expected_versions = {row["name"]: row["version"] for row in receipt["installed_distributions"]}
     _validate_installed_versions(snapshot, expected_versions)
@@ -2290,7 +2369,10 @@ def validate_startup_runtime(
     if receipt["pyvenv_cfg_sha256"] != _sha256(pyvenv_raw):
         raise LockedRuntimeError("startup pyvenv.cfg drift")
     runner = target_python if pip_runner_python is None else pip_runner_python
-    runner_interpreter = probe_interpreter(runner)
+    runner_interpreter = (
+        snapshot["interpreter"] if _absolute(runner) == target_python
+        else probe_interpreter(runner)
+    )
     _assert_interpreter_equal(runner_interpreter, interpreter, "startup pip check runner")
     env = _safe_environment()
     env.update({"PIP_CONFIG_FILE": os.devnull, "PIP_NO_INDEX": "1"})
@@ -2350,8 +2432,10 @@ def validate_installed_runtime(
     target_python = _absolute(venv_python)
     if target_python.is_symlink() or not target_python.is_file():
         raise LockedRuntimeError("installed venv interpreter is not an owned regular copy")
-    _validate_static_snapshot_against_receipt(target=target_python.parent.parent, receipt=receipt)
-    snapshot = _run_python_json(target_python, "_snapshot-installed")
+    snapshot = _validate_static_snapshot_against_receipt(
+        target=target_python.parent.parent, receipt=receipt,
+    )
+    snapshot["interpreter"] = probe_interpreter(target_python)
     _assert_interpreter_equal(snapshot["interpreter"], lock["interpreter"], "verified runtime")
     _validate_installed_versions(snapshot, expected_versions)
     if receipt.get("interpreter") != snapshot["interpreter"]:
@@ -2363,7 +2447,10 @@ def validate_installed_runtime(
     pyvenv_raw = _read_regular_file(target_python.parent.parent / "pyvenv.cfg")
     if receipt.get("pyvenv_cfg_sha256") != _sha256(pyvenv_raw):
         raise LockedRuntimeError("pyvenv.cfg drift")
-    runner = probe_interpreter(pip_runner_python)
+    runner = (
+        snapshot["interpreter"] if _absolute(pip_runner_python) == target_python
+        else probe_interpreter(pip_runner_python)
+    )
     _assert_interpreter_equal(runner, lock["interpreter"], "pip check runner")
     env = _safe_environment()
     env.update({"PIP_CONFIG_FILE": os.devnull, "PIP_NO_INDEX": "1"})
@@ -2389,7 +2476,36 @@ def _git_output(repository_root: Path, *args: str) -> str:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()[-2000:]
         raise LockedRuntimeError(f"git {' '.join(args)} failed: {detail}")
-    return completed.stdout.strip()
+    return completed.stdout.rstrip("\n")
+
+
+def _runtime_worktree_changes(repository_root: Path) -> list[str]:
+    """Ignore only plain human Markdown, never executable/module/config changes."""
+    raw = _git_output(repository_root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    rows = iter(raw.split("\0"))
+    changed = []
+    for row in rows:
+        if not row:
+            continue
+        status, path = row[:2], row[3:]
+        paths = [path]
+        if "R" in status or "C" in status:
+            paths.append(next(rows))
+        for name in paths:
+            relative = PurePosixPath(name)
+            documentation = (
+                relative.suffix == ".md"
+                and (relative.parts[0] == "docs" or relative.name in {"README.md", "README.zh-CN.md"})
+            )
+            target = repository_root / name
+            # Symlinks/executables are never admitted as harmless notes.
+            mode = _git_output(repository_root, "ls-files", "--stage", "--", name) if documentation else ""
+            if (documentation and not mode.startswith(("120000", "100755"))
+                    and not target.is_symlink()
+                    and (not target.exists() or (target.is_file() and not target.stat().st_mode & 0o111))):
+                continue
+            changed.append(name)
+    return changed
 
 
 def _load_canonical_authority(
@@ -2545,7 +2661,7 @@ def _validate_native_build_bundle(
     }:
         raise LockedRuntimeError("native production CPU build drifted")
     abi_contract = _require_mapping(native.get("abi_contract"), "native ABI contract")
-    if abi_contract != native_live_abi_contract_payload():
+    if abi_contract != native_live_abi_contract_payload(abi_contract.get("required_apis", ())):
         raise LockedRuntimeError("native live ABI qualification drifted")
     parity = _require_mapping(
         native.get("parity_qualification"),
@@ -2566,7 +2682,7 @@ def _validate_native_build_bundle(
     tests = parity.get("tests")
     if (
         parity.get("validated") is not True
-        or tests != list(NATIVE_LIVE_PARITY_TESTS)
+        or tests != list(native_live_parity_tests(abi_contract))
         or any(
             isinstance(parity.get(name), bool) or not isinstance(parity.get(name), int)
             for name in parity_count_fields
@@ -2746,6 +2862,7 @@ def _validate_native_build_bundle(
         "installed_record_aggregate_sha256": installed_record_aggregate_sha256,
         "locked_runtime_interpreter": interpreter,
         "native_soabi": str(native.get("soabi", "")),
+        "native_abi_contract": abi_contract,
     }
 
 
@@ -3021,7 +3138,7 @@ def validate_deployment_envelope_startup(
     if (
         _git_output(root, "rev-parse", "HEAD") != authority["execution_commit"]
         or _git_output(root, "rev-parse", "HEAD^{tree}") != authority["execution_tree"]
-        or _git_output(root, "status", "--porcelain=v1", "--untracked-files=all")
+        or _runtime_worktree_changes(root)
     ):
         raise LockedRuntimeError("startup checkout differs from deployment release root")
 
@@ -3088,12 +3205,7 @@ def _validated_deployment_envelope_root(
 
 def _load_private_json_object(path: Path, label: str) -> tuple[dict[str, Any], bytes, Path]:
     raw = _read_regular_file(path, private_authority=True)
-    try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise LockedRuntimeError(f"invalid JSON authority {label}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise LockedRuntimeError(f"JSON authority must be an object: {label}")
+    payload = _load_json_bytes(raw, label)
     return payload, raw, _absolute(path).resolve(strict=True)
 
 
