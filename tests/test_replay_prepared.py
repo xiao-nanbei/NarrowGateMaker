@@ -120,7 +120,7 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
         return engine
 
     monkeypatch.setattr(SignalEngine, "from_public_models", classmethod(load))
-    params = {**parameters(), "ml_enabled": True, "vol_blend": 0.5,
+    params = {**parameters(), "ml_enabled": True, "vol_blend": 0.5, "asym_strength": 0.,
               "ret_demean_halflife": 0}
     with pytest.raises(ValueError, match="explicit frozen model_dir"):
         replay_parameter_candidates(bundle, {"b0": {"eta_inventory": params["eta_inventory"]}},
@@ -137,8 +137,8 @@ def test_f01_ml_candidates_load_independent_engines_and_match_direct_b0(bundle, 
                   touch_probability_queue_included=False,
                   touch_probability_artifact_sha256="a" * 64)
     arms = replay_parameter_candidates(
-        bundle, {"b0": {"eta_inventory": params["eta_inventory"]},
-                 "candidate": {"eta_inventory": params["eta_inventory"] * 1.2}},
+        bundle, {"b0": {"eta_inventory": params["eta_inventory"], "asym_strength": 0.},
+                 "candidate": {"eta_inventory": params["eta_inventory"] * 1.2, "asym_strength": .1}},
         common_params=params, model_dir=tmp_path / "frozen",
     )
     assert len(created) == 2 and created[0] is not created[1]

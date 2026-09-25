@@ -7,17 +7,31 @@ from pathlib import Path
 from data.runtime import ConsumerBundle
 
 
+def _parameter_number(name, value):
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite number, not boolean")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a finite number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be finite")
+    if name == "asym_strength" and number < 0:
+        raise ValueError("asym_strength must be nonnegative")
+    if name in {"eta_inventory", "risk_per_order", "a_spread", "execution_intensity_slope"} and number <= 0:
+        raise ValueError(f"{name} must be positive")
+    return number
+
+
 def _validate_effective_quote_change(common_params, changes):
     """Reject legacy aliases that cannot reach the current quote coefficients."""
     for name, value in changes.items():
         if name not in common_params:
             raise ValueError(f"{name} requires an explicit B0 value")
-        if not math.isfinite(float(value)):
-            raise ValueError(f"{name} must be finite")
-        if value == common_params[name]:
+        value = _parameter_number(name, value)
+        baseline = _parameter_number(name, common_params[name])
+        if value == baseline:
             continue  # The explicitly named B0 arm is allowed.
-        if name in {"eta_inventory", "risk_per_order", "a_spread", "execution_intensity_slope"} and value <= 0:
-            raise ValueError(f"{name} must be positive")
         if name == "execution_intensity_slope" and (
             common_params.get("p3_pair_spread_projection_enabled", True)
             and float(common_params.get("p3_touch_log_probability_distance_slope", 0.0)) > 0.0
@@ -55,11 +69,13 @@ def iter_parameter_candidates(root, candidates, *, common_params, model_dir=None
     bundle.source_paths()
     if not candidates:
         raise ValueError("explicit candidates required")
-    allowed = {"eta_inventory", "a_spread", "risk_per_order", "execution_intensity_slope", "max_spread_bps"}
+    allowed = {"eta_inventory", "a_spread", "risk_per_order", "execution_intensity_slope", "max_spread_bps", "asym_strength"}
+    normalized = {}
     for name, changes in candidates.items():
         if not name or not changes or set(changes) - allowed:
             raise ValueError("candidate may vary only declared quote parameters")
         _validate_effective_quote_change(common_params, changes)
+        normalized[name] = {key: _parameter_number(key, value) for key, value in changes.items()}
     if common_params.get("ml_enabled") is True and model_dir is None:
         raise ValueError("ml_enabled F01 replay requires an explicit frozen model_dir")
     if model_dir is not None and common_params.get("ml_enabled") is not True:
@@ -67,7 +83,7 @@ def iter_parameter_candidates(root, candidates, *, common_params, model_dir=None
     if model_dir is not None:
         _require_frozen_f03_p3(common_params)
     prepared = prepare_public_inputs(root, tick_size=common_params["tick_size"])
-    for name, changes in candidates.items():
+    for name, changes in normalized.items():
         engine = None
         if model_dir is not None:
             from strategy.signal import SignalEngine
