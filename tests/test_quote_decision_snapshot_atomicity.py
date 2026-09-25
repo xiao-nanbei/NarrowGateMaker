@@ -347,11 +347,11 @@ def test_policy_l2_metrics_use_frozen_history_cutoff() -> None:
     frozen_metrics = engine._current_l2_policy_metrics(frozen.mid, frozen)
     current_metrics = engine._current_l2_policy_metrics(frozen.mid)
 
-    assert frozen_metrics["microprice_shift_bps"] > 0.0
+    assert frozen_metrics["weighted_mid_proxy_shift_bps"] > 0.0
     assert frozen_metrics["depth_age_s"] == pytest.approx(
         frozen.depth_visible_age_s
     )
-    assert current_metrics["microprice_shift_bps"] < 0.0
+    assert current_metrics["weighted_mid_proxy_shift_bps"] < 0.0
     bad_mid = replace(frozen, mid=frozen.mid + 0.1)
     assert (
         engine._quote_snapshot_contract_error(

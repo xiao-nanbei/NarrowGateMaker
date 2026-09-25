@@ -577,7 +577,7 @@ def test_new_quote_training_publishes_and_loads_without_legacy_cleaner(bundle, t
     model = QuoteEVModel.load(output, input_identity=identity)
     prediction = model.predict_frame(FeatureCursor(bundle).at(2 * SECOND, max_age_ns=SECOND),
                                      decision_ns=2 * SECOND)
-    assert 0 <= prediction.fill_prob <= 1
+    assert 0 <= prediction.lifecycle_fill_probability <= 1
     with pytest.raises(FileExistsError):
         train_opportunity_models(panel, output, **kwargs)
     with pytest.raises(ValueError, match="two classes"):

@@ -250,7 +250,7 @@ def apply_local_add_action(
     mid: float,
     best_bid: float,
     best_ask: float,
-    microprice_shift_bps: float,
+    weighted_mid_proxy_shift_bps: float,
     tick: float,
     max_pair_spread: float,
 ) -> LocalActionQuote:
@@ -289,9 +289,9 @@ def apply_local_add_action(
     elif action == "widen_1tick":
         selected += -tick if side == "BUY" else tick
     elif action == "recenter_1tick":
-        if microprice_shift_bps > 0.0:
+        if weighted_mid_proxy_shift_bps > 0.0:
             selected += tick
-        elif microprice_shift_bps < 0.0:
+        elif weighted_mid_proxy_shift_bps < 0.0:
             selected -= tick
 
     reasons: list[str] = []

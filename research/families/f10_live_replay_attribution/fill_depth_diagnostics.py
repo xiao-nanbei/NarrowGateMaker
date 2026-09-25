@@ -42,7 +42,7 @@ FILL_CONTEXT_COLS = [
 
 FILL_TRACE_BUCKET_COLS = [
     "book_imb",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "near_depth_total",
     "l2_near_depth_total_quote",
     "l2_quote_flip_rate_quote",

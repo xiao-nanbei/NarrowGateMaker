@@ -828,7 +828,7 @@ void bind_live_runtime_core(py::module_& m) {
         BIND_COMMON_POLICY_INPUT(markout_ema)
         BIND_COMMON_POLICY_INPUT(markout_spread_scale)
         BIND_COMMON_POLICY_INPUT(markout_reference)
-        BIND_COMMON_POLICY_INPUT(microprice_shift_bps)
+        BIND_COMMON_POLICY_INPUT(weighted_mid_proxy_shift_bps)
         BIND_COMMON_POLICY_INPUT(l2_quote_flip_rate)
         BIND_COMMON_POLICY_INPUT(l2_book_cancel_ratio)
         BIND_COMMON_POLICY_INPUT(l2_near_depth_total)
@@ -916,7 +916,7 @@ void bind_live_runtime_core(py::module_& m) {
                     READ_STAGE_POLICY(12, markout_ema);
                     READ_STAGE_POLICY(13, markout_spread_scale);
                     READ_STAGE_POLICY(14, markout_reference);
-                    READ_STAGE_POLICY(15, microprice_shift_bps);
+                    READ_STAGE_POLICY(15, weighted_mid_proxy_shift_bps);
                     READ_STAGE_POLICY(16, l2_quote_flip_rate);
                     READ_STAGE_POLICY(17, l2_book_cancel_ratio);
                     READ_STAGE_POLICY(18, l2_near_depth_total);

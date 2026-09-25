@@ -21,7 +21,7 @@ struct RequestStateFeatureResult {
     std::vector<double> mid;
     std::vector<double> bbo_spread_ticks;
     std::vector<double> book_imbalance;
-    std::vector<double> microprice_shift_bps;
+    std::vector<double> weighted_mid_proxy_shift_bps;
     std::vector<double> l2_near_depth_total;
     std::vector<double> l2_quote_flip_rate;
     std::vector<double> l2_book_refresh_ratio;

@@ -398,7 +398,7 @@ def _engine_with_active_fill_cooldowns() -> MakerEngine:
     engine._toxicity_probs = lambda pred: (0.0, 0.0)
     engine._current_l2_policy_metrics = lambda mid: {
         "depth_age_s": 0.0,
-        "microprice_shift_bps": 0.0,
+        "weighted_mid_proxy_shift_bps": 0.0,
         "l2_quote_flip_rate": 0.0,
         "l2_book_refresh_ratio": 1.0,
         "l2_book_cancel_ratio": 0.0,

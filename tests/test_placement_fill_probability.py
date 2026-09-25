@@ -78,7 +78,7 @@ def _context() -> dict[str, float]:
         "sigma_sq_blended": 2.0,
         "quote_horizon_s": 1.0,
         "kappa_used": 0.06,
-        "microprice_shift_bps": 0.1,
+        "weighted_mid_proxy_shift_bps": 0.1,
         "l2_quote_flip_rate": 0.2,
         "l2_book_refresh_ratio": 0.3,
         "l2_book_cancel_ratio": 0.2,

@@ -175,7 +175,7 @@ def test_f01_unmasked_aliases_reach_effective_quote_coefficients():
     def effective(params):
         return quote_core_config_from_params(
             params, tick_size=params["tick_size"], lot_size=params["lot_size"],
-            use_ml=True, use_depth_microprice=False, use_depth_kappa=False,
+            use_ml=True, use_depth_weighted_mid_proxy=False, use_depth_kappa=False,
         )
 
     b0 = effective(base)

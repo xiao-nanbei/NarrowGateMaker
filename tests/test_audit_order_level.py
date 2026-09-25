@@ -454,7 +454,7 @@ def test_replay_order_level_rows_convert_trace_markout_to_bps() -> None:
             "l2_book_refresh_ratio": "0.1",
             "l2_book_cancel_ratio": "0.0",
             "l2_quote_flip_rate": "0.0",
-            "microprice_shift_bps": "0.0",
+            "weighted_mid_proxy_shift_bps": "0.0",
             "side_adverse": "True",
             "adverse_markout": "True",
         }
@@ -562,7 +562,7 @@ def test_replay_order_level_rows_reconstruct_campaign_state_from_prior_fills() -
             "l2_book_refresh_ratio": "0.1",
             "l2_book_cancel_ratio": "0.0",
             "l2_quote_flip_rate": "0.0",
-            "microprice_shift_bps": "0.0",
+            "weighted_mid_proxy_shift_bps": "0.0",
             "side_adverse": "False",
             "adverse_markout": "False",
         }

@@ -52,7 +52,7 @@ REQUIRED_FILL_COLUMNS = (
     "order_id",
 )
 OPTIONAL_MECHANISM_COLUMNS = (
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "l2_book_refresh_ratio",
     "l2_book_cancel_ratio",
     "queue_before",
@@ -223,7 +223,7 @@ def load_fill_events(path: Path, development_days: Iterable[str]) -> pd.DataFram
         "inventory_before_fill",
         "inventory_after_fill",
         "order_id",
-        "microprice_shift_bps",
+        "weighted_mid_proxy_shift_bps",
         "l2_book_refresh_ratio",
         "l2_book_cancel_ratio",
         "queue_before",
@@ -318,7 +318,7 @@ def build_fill_unit_episodes(
                         if math.isclose(before, 0.0, abs_tol=1e-12)
                         else "add"
                     ),
-                    "microprice_shift_bps_at_fill": event.get("microprice_shift_bps", np.nan),
+                    "microprice_shift_bps_at_fill": event.get("weighted_mid_proxy_shift_bps", np.nan),
                     "refill_edge_at_fill": float(event.get("l2_book_refresh_ratio", np.nan))
                     - float(event.get("l2_book_cancel_ratio", np.nan)),
                     "queue_before_fill": event.get("queue_before", np.nan),

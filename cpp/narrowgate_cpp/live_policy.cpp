@@ -71,7 +71,7 @@ CommonSidePolicyResultPod evaluate_common_side_policy(
     }
     if (input.l2_quote_flip_rate >= 0.35 &&
         input.l2_book_cancel_ratio >= 0.04 &&
-        std::abs(input.microprice_shift_bps) >= 0.5) {
+        std::abs(input.weighted_mid_proxy_shift_bps) >= 0.5) {
         out.allow_exposure_increase = false;
         out.spread_mult = std::max(out.spread_mult, 1.35);
         out.size_mult = std::min(out.size_mult, 0.45);

@@ -33,7 +33,7 @@ def _policy(root, tmp_path, monkeypatch):
             assert frame.cutoff_ns <= decision_ns
             assert (frame.max_dependency_ready_ns is None
                     or frame.max_dependency_ready_ns <= decision_ns)
-            return SimpleNamespace(toxic_30s=.8 if self.side == 'bid' else .2)
+            return SimpleNamespace(fill_and_extreme_adverse_probability_30000ms=.8 if self.side == 'bid' else .2)
 
     monkeypatch.setattr(candidate, 'QuoteEVModel', SimpleNamespace(
         load=lambda path, side, input_identity: FakeModel(side)))

@@ -1747,7 +1747,7 @@ TraceOrderRow make_trace_order_row(
     row.tox_bid = pred.tox_bid;
     row.tox_ask = pred.tox_ask;
     row.book_imb = quote.book_imb;
-    row.microprice_shift_bps = quote.microprice_shift_bps;
+    row.weighted_mid_proxy_shift_bps = quote.weighted_mid_proxy_shift_bps;
     row.near_depth_total = ctx.near_depth_total;
     row.l2_near_depth_total = ctx.l2_near_depth_total;
     row.l2_quote_flip_rate = ctx.l2_quote_flip_rate;
@@ -1784,7 +1784,7 @@ TraceOrderRow make_trace_order_row(
     row.adverse_markout = ctx.adverse_markout;
     row.adverse_direction = ctx.adverse_direction;
     row.adverse_ret = ctx.adverse_ret;
-    row.adverse_microprice = ctx.adverse_microprice;
+    row.adverse_weighted_mid_proxy = ctx.adverse_weighted_mid_proxy;
     row.adverse_thin_depth = ctx.adverse_thin_depth;
     row.local_extreme_guard = ctx.local_extreme_guard;
     row.local_extreme_pause = ctx.local_extreme_pause;
@@ -1797,7 +1797,7 @@ TraceOrderRow make_trace_order_row(
     row.defense_markout = ctx.defense_markout;
     row.defense_direction = ctx.defense_direction;
     row.defense_ret = ctx.defense_ret;
-    row.defense_microprice = ctx.defense_microprice;
+    row.defense_weighted_mid_proxy = ctx.defense_weighted_mid_proxy;
     row.defense_spread_mult = ctx.defense_spread_mult;
     row.final_compressed = quote.flags.final_compressed || post_policy_cap_hit;
     row.bid_adverse = quote.flags.bid_adverse;
@@ -2015,7 +2015,7 @@ CommonSidePolicyCpp evaluate_common_side_policy_cpp(
     double markout_ema,
     double markout_spread_scale,
     double mo_ref,
-    double microprice_shift_bps,
+    double weighted_mid_proxy_shift_bps,
     double kappa_depth_baseline,
     double thin_depth_threshold
 ) {
@@ -2065,7 +2065,7 @@ CommonSidePolicyCpp evaluate_common_side_policy_cpp(
     }
     if (ctx.l2_quote_flip_rate >= 0.35 &&
         ctx.l2_book_cancel_ratio >= 0.04 &&
-        std::abs(microprice_shift_bps) >= 0.5) {
+        std::abs(weighted_mid_proxy_shift_bps) >= 0.5) {
         out.allow_exposure_increase = false;
         out.spread_mult = std::max(out.spread_mult, 1.35);
         out.size_mult = std::min(out.size_mult, 0.45);
@@ -4405,7 +4405,7 @@ bool buy_fill_dynamic_numeric_feature(const std::string& feature) {
         feature == "l2_book_refresh_ratio" ||
         feature == "l2_near_depth_total" ||
         feature == "markout_ema" ||
-        feature == "microprice_shift_bps" ||
+        feature == "weighted_mid_proxy_shift_bps" ||
         feature == "near_depth_total" ||
         feature == "order_exposure_increasing" ||
         feature == "queue_local_rank" ||
@@ -4453,8 +4453,8 @@ double buy_fill_numeric_feature(const std::string& feature,
     if (feature == "markout_ema") {
         return mo_ema_bid;
     }
-    if (feature == "microprice_shift_bps") {
-        return quote.microprice_shift_bps;
+    if (feature == "weighted_mid_proxy_shift_bps") {
+        return quote.weighted_mid_proxy_shift_bps;
     }
     if (feature == "near_depth_total") {
         return std::max(ctx.near_depth_total, ctx.l2_near_depth_total);
@@ -9431,7 +9431,7 @@ TickReplayResult simulate_tick_arrays(
             mo_ema_bid,
             quote_cfg.markout_spread_scale,
             mo_ref,
-            quote.microprice_shift_bps,
+            quote.weighted_mid_proxy_shift_bps,
             quote_cfg.kappa_depth_baseline,
             params.thin_depth_threshold
         );
@@ -9445,7 +9445,7 @@ TickReplayResult simulate_tick_arrays(
             mo_ema_ask,
             quote_cfg.markout_spread_scale,
             mo_ref,
-            quote.microprice_shift_bps,
+            quote.weighted_mid_proxy_shift_bps,
             quote_cfg.kappa_depth_baseline,
             params.thin_depth_threshold
         );

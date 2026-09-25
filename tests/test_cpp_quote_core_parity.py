@@ -723,7 +723,7 @@ def test_spread_cap_missing_field_defaults_fail_closed_in_python_and_cpp():
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     ).spread_cap_mode == (
         qc.SPREAD_CAP_PAUSE_EXPOSURE
@@ -845,7 +845,7 @@ def _depth():
 def test_cpp_quote_core_scalar_parity(monkeypatch):
     cases = [
         (_state(0), _cfg(), _pred(0), qc.DepthSnapshot()),
-        (_state(1), _cfg(use_depth_microprice=True, use_depth_kappa=True), _pred(1), _depth()),
+        (_state(1), _cfg(use_depth_weighted_mid_proxy=True, use_depth_kappa=True), _pred(1), _depth()),
         (
             _state(1),
             _cfg(
@@ -1125,7 +1125,7 @@ def test_tick_rounding_snaps_numerical_noise_at_boundary():
 
 
 def test_cpp_live_quote_binding_matches_object_binding():
-    cfg = _cfg(use_depth_microprice=True, use_depth_kappa=True)
+    cfg = _cfg(use_depth_weighted_mid_proxy=True, use_depth_kappa=True)
     state = _state(1)
     pred = _pred(1)
     depth = _depth()
@@ -1207,7 +1207,7 @@ def test_cpp_live_routing_rejects_wrong_compact_shape():
 def test_cpp_live_compact_context_preserves_policy_fields(monkeypatch):
     state = _state(1, inventory=0.006, mo_ema_bid=-6.0, mo_ema_ask=-4.0)
     cfg = _cfg(
-        use_depth_microprice=True,
+        use_depth_weighted_mid_proxy=True,
         use_depth_kappa=True,
         adverse_guard_enabled=True,
         adverse_markout_threshold=5.0,
@@ -1248,7 +1248,7 @@ def test_cpp_live_compact_context_preserves_policy_fields(monkeypatch):
 def test_deferred_live_quote_pod_reads_do_not_materialize(monkeypatch):
     state = _state(1, inventory=0.006, mo_ema_bid=-6.0, mo_ema_ask=-4.0)
     cfg = _cfg(
-        use_depth_microprice=True,
+        use_depth_weighted_mid_proxy=True,
         use_depth_kappa=True,
         adverse_guard_enabled=True,
         adverse_markout_threshold=5.0,
@@ -1309,7 +1309,7 @@ def test_deferred_live_quote_preserves_eager_public_and_full_context_apis(
     monkeypatch,
 ):
     state = _state(2)
-    cfg = _cfg(use_depth_microprice=True, use_depth_kappa=True)
+    cfg = _cfg(use_depth_weighted_mid_proxy=True, use_depth_kappa=True)
     pred = _pred(2)
     monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
@@ -1365,7 +1365,7 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
         unrealized_pnl=-2.0,
     )
     cfg = _cfg(
-        use_depth_microprice=True,
+        use_depth_weighted_mid_proxy=True,
         use_depth_kappa=True,
         book_imb_strength=0.3,
         trace_book_imb_levels=3,
@@ -1382,7 +1382,7 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
         defense_markout_threshold=2.0,
         defense_dir_threshold=0.01,
         defense_ret_bps_threshold=0.01,
-        defense_microprice_shift_bps=0.01,
+        defense_weighted_mid_proxy_shift_bps=0.01,
         defense_pause=True,
         defense_spread_mult=1.4,
         defense_emergency_inventory_ratio=0.9,
@@ -1410,7 +1410,7 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
         "raw_asym_shift",
         "asym",
         "book_imb",
-        "microprice_shift_bps",
+        "weighted_mid_proxy_shift_bps",
         "near_depth_total",
         "raw_quote_skew",
     ]
@@ -1455,7 +1455,7 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
         "defense_markout",
         "defense_direction",
         "defense_ret",
-        "defense_microprice",
+        "defense_weighted_mid_proxy",
         "defense_spread_mult",
     ]
     for side in ("BUY", "SELL"):
@@ -1620,14 +1620,14 @@ def test_cpp_quote_core_batch_parity(monkeypatch):
 
 def test_cpp_quote_core_batch_depth_parity(monkeypatch):
     cfg = _cfg(
-        use_depth_microprice=True,
+        use_depth_weighted_mid_proxy=True,
         use_depth_kappa=True,
         book_imb_strength=0.05,
         trace_book_imb_levels=3,
         depth_tox_enabled=True,
         depth_tox_levels=3,
         depth_tox_imbalance_threshold=0.55,
-        depth_tox_microprice_shift_bps=0.01,
+        depth_tox_weighted_mid_proxy_shift_bps=0.01,
     )
     n = 4_097
     mid = np.linspace(100.0, 100.6, n, dtype=np.float64)
@@ -1860,7 +1860,7 @@ def _native_runtime_with_valid_input():
         ("buy_policy", "markout_ema"),
         ("buy_policy", "markout_spread_scale"),
         ("buy_policy", "markout_reference"),
-        ("buy_policy", "microprice_shift_bps"),
+        ("buy_policy", "weighted_mid_proxy_shift_bps"),
         ("buy_policy", "l2_quote_flip_rate"),
         ("buy_policy", "l2_book_cancel_ratio"),
         ("buy_policy", "l2_near_depth_total"),
@@ -1868,7 +1868,7 @@ def _native_runtime_with_valid_input():
         ("buy_policy", "kappa_depth_baseline"),
         ("buy_policy", "local_extreme_spread_mult"),
         ("buy_policy", "defense_spread_mult"),
-        ("sell_policy", "microprice_shift_bps"),
+        ("sell_policy", "weighted_mid_proxy_shift_bps"),
         ("input", "min_qty"),
         ("input", "min_notional"),
         ("input", "size_eta"),
@@ -2031,7 +2031,7 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
     cfg = _cfg(
         ml_enabled=False,
         use_bar_pricing=False,
-        use_depth_microprice=True,
+        use_depth_weighted_mid_proxy=True,
         use_depth_kappa=True,
         dynamic_cap_enabled=False,
         max_spread_bps=20.0,
@@ -2120,7 +2120,7 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
                 markout_ema=-6.0 if side == "BUY" else -0.5,
                 markout_spread_scale=0.2,
                 markout_reference=50.0,
-                microprice_shift_bps=context["microprice_shift_bps"],
+                weighted_mid_proxy_shift_bps=context["weighted_mid_proxy_shift_bps"],
                 side_adverse=context["side_adverse"],
                 side_adverse_pause=context["side_adverse_pause"],
                 defense_guard=context["defense_guard"],
@@ -2193,7 +2193,7 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
         _cfg(
             regime_enabled=True,
             use_bar_pricing=False,
-            use_depth_microprice=True,
+            use_depth_weighted_mid_proxy=True,
             use_depth_kappa=True,
             historical_p3_scalar_adapter_enabled=True,
             p3_delta_star=0.2,
@@ -2208,7 +2208,7 @@ def test_fused_native_live_runtime_matches_separate_quote_policy_and_routing(
         ),
         _cfg(
             use_bar_pricing=False,
-            use_depth_microprice=True,
+            use_depth_weighted_mid_proxy=True,
             p3_delta_star=0.2,
             p3_side_bbo_floor_enabled=True,
             p3_event_type="touch",
@@ -2331,8 +2331,8 @@ def test_fused_native_quote_hot_plan_is_bitwise_identical_to_public_core(cfg):
         (
             20,
             {
-                "use_depth_microprice": True,
-                "microprice_levels": 7,
+                "use_depth_weighted_mid_proxy": True,
+                "weighted_mid_proxy_levels": 7,
                 "use_depth_kappa": True,
                 "kappa_levels": 13,
                 "depth_tox_enabled": True,
@@ -2345,8 +2345,8 @@ def test_fused_native_quote_hot_plan_is_bitwise_identical_to_public_core(cfg):
         (
             20,
             {
-                "use_depth_microprice": True,
-                "microprice_levels": -7,
+                "use_depth_weighted_mid_proxy": True,
+                "weighted_mid_proxy_levels": -7,
                 "use_depth_kappa": True,
                 "kappa_levels": 99,
                 "depth_tox_enabled": True,
@@ -2359,7 +2359,7 @@ def test_fused_native_quote_hot_plan_is_bitwise_identical_to_public_core(cfg):
         (
             4,
             {
-                "use_depth_microprice": False,
+                "use_depth_weighted_mid_proxy": False,
                 "use_depth_kappa": False,
                 "depth_tox_enabled": False,
                 "book_imb_strength": 0.0,
@@ -2618,7 +2618,7 @@ def test_native_quote_policy_stage_matches_separate_quote_and_policy_bits():
                 markout_ema=state.mo_ema_bid if side == "BUY" else state.mo_ema_ask,
                 markout_spread_scale=cfg.markout_spread_scale,
                 markout_reference=state.mo_ref,
-                microprice_shift_bps=expected_quote.microprice_shift_bps,
+                weighted_mid_proxy_shift_bps=expected_quote.weighted_mid_proxy_shift_bps,
                 l2_quote_flip_rate=source.l2_quote_flip_rate,
                 l2_book_cancel_ratio=source.l2_book_cancel_ratio,
                 l2_near_depth_total=source.l2_near_depth_total,

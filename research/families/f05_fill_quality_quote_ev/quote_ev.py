@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 
+MODEL_SCHEMA = "narrowgate.quote_opportunity_model.v1"
 
 
 def quote_side_prefix(side: str) -> str:
@@ -60,7 +61,7 @@ DEFAULT_BID_QUOTE_FEATURES = [
     "tox_bid",
     "tox_ask",
     "book_imb",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "mo_ema_bid",
     "mo_ema_ask",
     "fair",
@@ -89,14 +90,13 @@ DEFAULT_BID_QUOTE_FEATURES = [
 
 @dataclass
 class QuoteEVPrediction:
-    expected_maker_markout_bps_per_opportunity_30s: float = 0.0
-    toxic_30s: float = 0.0
-    fill_prob: float = 0.0
-    fill_markout_1s: float = 0.0
-    fill_markout_5s: float = 0.0
-    fill_markout_30s: float = 0.0
-    toxic_given_fill_30s: float = 0.0
-    extreme_adverse_given_fill: float = 0.0
+    expected_maker_markout_bps_per_opportunity_30s: float = float("nan")
+    fill_and_extreme_adverse_probability_30000ms: float = float("nan")
+    lifecycle_fill_probability: float = float("nan")
+    maker_markout_bps_given_fill_1000ms: float = float("nan")
+    maker_markout_bps_given_fill_5000ms: float = float("nan")
+    maker_markout_bps_given_fill_30000ms: float = float("nan")
+    extreme_adverse_probability_given_fill_30000ms: float = float("nan")
     markout_bucket_probs: dict[int, list[float]] = field(default_factory=dict)
 
 from features.quote_ev import (  # noqa: E402,F401
@@ -125,42 +125,46 @@ class QuoteEVModel:
                  bucket_classes: dict[int, list[int]] | None = None,
                  extreme_adverse_features: list[str] | None = None,
                  side: str = "bid", missing_policy: str = "reject", input_identity=None):
-        if missing_policy not in {"reject", "native_nan", "legacy_zero"}:
+        if missing_policy not in {"reject", "native_nan"}:
             raise ValueError("explicit quote EV missing policy required")
-        if missing_policy != "legacy_zero":
-            if ((fill_prob_model is not None and not fill_prob_features)
-                    or (extreme_adverse_model is not None and not extreme_adverse_features)
-                    or any(not (bucket_features or {}).get(h) for h in (bucket_models or {}))):
-                raise ValueError("new quote EV models require explicit feature columns")
+        if (not fill_prob_features or not extreme_adverse_features
+                or any(not (bucket_features or {}).get(h) for h in (bucket_models or {}))):
+            raise ValueError("quote EV models require explicit feature columns")
+        if (fill_prob_model is None or extreme_adverse_model is None
+                or set(bucket_models or {}) != {1, 5, 30}
+                or set(bucket_features or {}) != {1, 5, 30}
+                or set(bucket_values or {}) != {1, 5, 30}
+                or set(bucket_classes or {}) != {1, 5, 30}):
+            raise ValueError("complete five-head quote EV contract required")
+        for horizon in (1, 5, 30):
+            values, classes = bucket_values[horizon], bucket_classes[horizon]
+            if (not values or not classes or len(set(classes)) != len(classes)
+                    or not all(type(c) is int and 0 <= c < len(values) for c in classes)
+                    or not np.isfinite(values).all()):
+                raise ValueError("explicit valid quote EV bucket values/classes required")
         self.missing_policy = missing_policy
         self.input_identity = dict(input_identity) if input_identity else None
         self.side = quote_side_prefix(side)
         self.fill_prob_model = fill_prob_model
         self.bucket_models = bucket_models or {}
         self.extreme_adverse_model = extreme_adverse_model
-        self.fill_prob_features = fill_prob_features or list(DEFAULT_BID_QUOTE_FEATURES)
+        self.fill_prob_features = list(fill_prob_features)
         self.bucket_features = bucket_features or {}
         self.bucket_values = bucket_values or {}
         self.bucket_classes = bucket_classes or {}
-        self.extreme_adverse_features = extreme_adverse_features or list(DEFAULT_BID_QUOTE_FEATURES)
-
-    @classmethod
-    def load_legacy(cls, model_dir: str | Path, side: str = "bid") -> QuoteEVModel:
-        """Historical default columns/zero ABI; not new-source compatibility."""
-        return cls.load(model_dir, side=side, _legacy=True)
+        self.extreme_adverse_features = list(extreme_adverse_features)
 
     @classmethod
     def load(cls, model_dir: str | Path, side: str = "bid", *,
-             input_identity: dict | None = None, _legacy=False) -> QuoteEVModel:
+             input_identity: dict | None = None) -> QuoteEVModel:
         import lightgbm as lgb
 
         identity_keys = ("input_contract_id", "observation_contract_id", "feature_contract_id",
                          "source_manifest_sha256", "training_contract_id", "label_contract_id")
-        if not _legacy:
-            from data.tardis_input import CONTRACT
-            if (not input_identity or input_identity.get("input_contract_id") != CONTRACT
-                    or any(not input_identity.get(k) for k in identity_keys)):
-                raise ValueError("new quote EV input/source/training/label identity required")
+        from data.tardis_input import CONTRACT
+        if (not input_identity or input_identity.get("input_contract_id") != CONTRACT
+                or any(not input_identity.get(k) for k in identity_keys)):
+            raise ValueError("new quote EV input/source/training/label identity required")
         path = Path(model_dir).expanduser()
         names = quote_side_model_names(side)
         prefix = quote_side_prefix(side)
@@ -181,35 +185,33 @@ class QuoteEVModel:
         def _load_meta(name: str) -> dict[str, Any]:
             meta_path = path / f"{name}_meta.json"
             if not meta_path.exists():
-                if _legacy:
-                    return {}
                 raise ValueError("new quote EV model metadata required")
             with open(meta_path) as f:
                 meta = json.load(f)
-            if not _legacy:
-                if any(meta.get(k) != input_identity[k] for k in identity_keys):
-                    raise ValueError("quote EV model input identity mismatch")
-                cols = meta.get("feature_cols")
-                if (not isinstance(cols, list) or not cols or len(set(cols)) != len(cols)
-                        or not all(isinstance(c, str) and c for c in cols)
-                        or meta.get("missing_policy") not in {"native_nan", "reject"}):
-                    raise ValueError("new quote EV feature/missing contract required")
+            if meta.get("schema") != MODEL_SCHEMA:
+                raise ValueError("current quote EV model schema required")
+            if any(meta.get(k) != input_identity[k] for k in identity_keys):
+                raise ValueError("quote EV model input identity mismatch")
+            cols = meta.get("feature_cols")
+            if (not isinstance(cols, list) or not cols or len(set(cols)) != len(cols)
+                    or not all(isinstance(c, str) and c for c in cols)
+                    or meta.get("missing_policy") not in {"native_nan", "reject"}):
+                raise ValueError("new quote EV feature/missing contract required")
             return meta
 
         def _load_features(name: str) -> list[str]:
             meta = _load_meta(name)
-            cols = meta.get("feature_cols") or meta.get("feature_columns") or []
-            return list(cols) if cols else list(DEFAULT_BID_QUOTE_FEATURES)
+            return list(meta["feature_cols"])
 
         all_names = [names["fill_prob"], names["extreme_adverse"], *names["markout_buckets"].values()]
         all_meta = {name: _load_meta(name) for name in all_names}
         policies = {m.get("missing_policy") for m in all_meta.values()}
-        if not _legacy and len(policies) != 1:
+        if len(policies) != 1:
             raise ValueError("mixed quote EV missing policies")
 
         def load_booster(name):
             model = lgb.Booster(model_file=str(path/(name+".txt")))
-            if not _legacy and model.feature_name() != all_meta[name]["feature_cols"]:
+            if model.feature_name() != all_meta[name]["feature_cols"]:
                 raise ValueError("quote EV booster feature schema mismatch")
             return model
 
@@ -223,15 +225,15 @@ class QuoteEVModel:
         bucket_classes = {}
         for horizon, name in names["markout_buckets"].items():
             meta = _load_meta(name)
-            if not _legacy and (not meta.get("bucket_values") or not meta.get("classes")):
+            if not meta.get("bucket_values") or not meta.get("classes"):
                 raise ValueError("new quote EV bucket semantics required")
             bucket_features[horizon] = _load_features(name)
-            values = meta.get("bucket_values") or DEFAULT_MARKOUT_BUCKET_VALUES
+            values = meta["bucket_values"]
             bucket_values[horizon] = [float(v) for v in values]
-            classes = meta.get("classes")
-            if classes is None:
-                classes = list(range(len(bucket_values[horizon])))
-            bucket_classes[horizon] = [int(c) for c in classes]
+            classes = meta["classes"]
+            if not isinstance(classes, list) or any(type(c) is not int for c in classes):
+                raise ValueError("quote EV bucket classes must be explicit integers")
+            bucket_classes[horizon] = list(classes)
         extreme_adverse_model = load_booster(names["extreme_adverse"])
         return cls(
             fill_prob_model=fill_prob_model,
@@ -243,15 +245,15 @@ class QuoteEVModel:
             bucket_classes=bucket_classes,
             extreme_adverse_features=_load_features(names["extreme_adverse"]),
             side=prefix,
-            missing_policy="legacy_zero" if _legacy else next(iter(policies)),
-            input_identity=None if _legacy else input_identity,
+            missing_policy=next(iter(policies)),
+            input_identity=input_identity,
         )
 
     def predict_frame(self, frame, *, decision_ns):
         """Consume the shared validity mask before any quote-EV prediction."""
         from data.observation import model_row
 
-        if self.input_identity is None or self.missing_policy == "legacy_zero":
+        if self.input_identity is None:
             raise ValueError("public feature frames require a bound new-input model")
         columns = list(dict.fromkeys([
             *self.fill_prob_features, *self.extreme_adverse_features,
@@ -265,12 +267,12 @@ class QuoteEVModel:
     @staticmethod
     def _bucket_expected_value(probs: np.ndarray, classes: list[int], values: list[float]) -> float:
         probs = np.asarray(probs, dtype=np.float64).reshape(-1)
-        if not len(probs):
-            return 0.0
+        if len(probs) != len(classes) or not len(probs):
+            raise ValueError("bucket probability/class count mismatch")
         total = 0.0
         for idx, prob in enumerate(probs):
-            cls = int(classes[idx]) if idx < len(classes) else idx
-            value = values[cls] if 0 <= cls < len(values) else values[-1]
+            cls = classes[idx]
+            value = values[cls]
             total += float(prob) * float(value)
         return total
 
@@ -283,7 +285,6 @@ class QuoteEVModel:
         fill_markout = 0.0
         fill_markout_1s = 0.0
         fill_markout_5s = 0.0
-        toxic_given_fill = 0.0
         extreme_adverse_given_fill = 0.0
         bucket_probs: dict[int, list[float]] = {}
 
@@ -295,7 +296,7 @@ class QuoteEVModel:
         if self.fill_prob_model is not None and self.bucket_models:
             for horizon, model in self.bucket_models.items():
                 raw = np.asarray(model.predict(
-                    feature_array(features, self.bucket_features.get(horizon, DEFAULT_BID_QUOTE_FEATURES), missing_policy=self.missing_policy)
+                    feature_array(features, self.bucket_features[horizon], missing_policy=self.missing_policy)
                 ))
                 probs = raw[0] if raw.ndim == 2 else raw.reshape(-1)
                 if not np.isfinite(probs).all():
@@ -303,8 +304,8 @@ class QuoteEVModel:
                 bucket_probs[horizon] = [float(p) for p in probs]
                 expected = self._bucket_expected_value(
                     probs,
-                    self.bucket_classes.get(horizon, list(range(len(probs)))),
-                    self.bucket_values.get(horizon, DEFAULT_MARKOUT_BUCKET_VALUES),
+                    self.bucket_classes[horizon],
+                    self.bucket_values[horizon],
                 )
                 if horizon == 1:
                     fill_markout_1s = expected
@@ -319,17 +320,15 @@ class QuoteEVModel:
             if not math.isfinite(extreme_adverse_given_fill):
                 raise ValueError("nonfinite quote EV adverse probability")
             extreme_adverse_given_fill = max(0.0, min(1.0, extreme_adverse_given_fill))
-            toxic_given_fill = extreme_adverse_given_fill
             toxic = fill_prob * extreme_adverse_given_fill
         toxic = max(0.0, min(1.0, toxic))
         return QuoteEVPrediction(
             expected_maker_markout_bps_per_opportunity_30s=ev,
-            toxic_30s=toxic,
-            fill_prob=fill_prob,
-            fill_markout_1s=fill_markout_1s,
-            fill_markout_5s=fill_markout_5s,
-            fill_markout_30s=fill_markout,
-            toxic_given_fill_30s=toxic_given_fill,
-            extreme_adverse_given_fill=extreme_adverse_given_fill,
+            fill_and_extreme_adverse_probability_30000ms=toxic,
+            lifecycle_fill_probability=fill_prob,
+            maker_markout_bps_given_fill_1000ms=fill_markout_1s,
+            maker_markout_bps_given_fill_5000ms=fill_markout_5s,
+            maker_markout_bps_given_fill_30000ms=fill_markout,
+            extreme_adverse_probability_given_fill_30000ms=extreme_adverse_given_fill,
             markout_bucket_probs=bucket_probs,
         )

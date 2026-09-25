@@ -122,7 +122,7 @@ def _native_frame() -> pd.DataFrame:
                             "reducing_fill_count_so_far": row_number % 2,
                             "quote_distance_ticks": quote_distance,
                             "queue_ahead_btc": queue_ahead,
-                            "microprice_shift_bps": microprice,
+                            "weighted_mid_proxy_shift_bps": microprice,
                             "l2_book_refresh_ratio": refresh,
                             "l2_book_cancel_ratio": cancel,
                             "local_toxicity": local_toxicity,

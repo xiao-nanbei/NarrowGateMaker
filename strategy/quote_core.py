@@ -120,18 +120,18 @@ def finite_positive_quote_coefficient(name: str, value: Any) -> float:
 
 
 def reservation_price(
-    mid: float,
-    q: float,
-    gamma: float,
-    sigma_sq: float,
-    horizon_s: float = 1.0,
+    mid_price: float,
+    inventory_quantity: float,
+    inventory_risk_coefficient: float,
+    absolute_price_variance_rate: float,
+    risk_horizon_s: float = 1.0,
 ) -> float:
     """Inventory fair value for an explicit per-second variance integral.
 
-    ``q`` is measured in base currency, ``sigma_sq`` in
-    ``(quote/base)^2 / second``, and legacy ``gamma`` in ``1 / quote``.
+    Inventory is measured in base currency, variance rate in
+    ``(quote/base)^2 / second``, and the coefficient in ``1 / quote``.
     """
-    return mid - q * gamma * sigma_sq * max(float(horizon_s), 0.0)
+    return mid_price - inventory_quantity * inventory_risk_coefficient * absolute_price_variance_rate * max(float(risk_horizon_s), 0.0)
 
 
 def weighted_mid_proxy_from_book(
@@ -159,10 +159,6 @@ def weighted_mid_proxy_from_book(
     mid = 0.5 * (best_bid + best_ask)
     return mid + imbalance * 0.5 * (best_ask - best_bid)
 
-
-# Frozen public/runtime ABI.  New code should use the semantically accurate
-# name above; old callers remain behavior-identical.
-microprice_from_book = weighted_mid_proxy_from_book
 
 def spread_cap_mode_code(value: Any) -> int:
     """Normalize the public string mode to the compact Python/C++ ABI value."""
@@ -268,9 +264,9 @@ class QuoteCoreConfig:
     p3_kappa_eff: float = 0.0
 
     use_bar_pricing: bool = True
-    use_depth_microprice: bool = False
+    use_depth_weighted_mid_proxy: bool = False
     use_depth_kappa: bool = False
-    microprice_levels: int = 3
+    weighted_mid_proxy_levels: int = 3
     kappa_levels: int = 5
     kappa_depth_baseline: float = 50.0
     depth_kappa_ratio: float = 0.3
@@ -291,7 +287,7 @@ class QuoteCoreConfig:
     depth_tox_enabled: bool = False
     depth_tox_levels: int = 20
     depth_tox_imbalance_threshold: float = 0.65
-    depth_tox_microprice_shift_bps: float = 1.0
+    depth_tox_weighted_mid_proxy_shift_bps: float = 1.0
     depth_tox_spread_mult: float = 1.25
 
     dynamic_cap_enabled: bool = False
@@ -323,7 +319,7 @@ class QuoteCoreConfig:
     adverse_markout_pause_hybrid: bool = False
     adverse_dir_threshold: float = 0.0
     adverse_ret_bps_threshold: float = 0.0
-    adverse_microprice_shift_bps: float = 0.0
+    adverse_weighted_mid_proxy_shift_bps: float = 0.0
     adverse_spread_mult: float = 1.10
     adverse_thin_depth_threshold: float = 0.0
     adverse_thin_depth_mult: float = 1.0
@@ -333,7 +329,7 @@ class QuoteCoreConfig:
     defense_markout_threshold: float = 2.0
     defense_dir_threshold: float = 0.05
     defense_ret_bps_threshold: float = 0.0
-    defense_microprice_shift_bps: float = 0.0
+    defense_weighted_mid_proxy_shift_bps: float = 0.0
     defense_spread_mult: float = 1.35
     defense_pause: bool = True
     defense_emergency_inventory_ratio: float = 0.50
@@ -1040,7 +1036,7 @@ def _depth_tox_mult(mid: float, depth: DepthSnapshot, cfg: QuoteCoreConfig) -> f
         micro_shift_bps = (fair - mid) / mid * 10000.0
     if (
         abs(imb) >= abs(cfg.depth_tox_imbalance_threshold)
-        or abs(micro_shift_bps) >= abs(cfg.depth_tox_microprice_shift_bps)
+        or abs(micro_shift_bps) >= abs(cfg.depth_tox_weighted_mid_proxy_shift_bps)
     ):
         return max(1.0, cfg.depth_tox_spread_mult)
     return 1.0
@@ -1181,7 +1177,7 @@ def _side_adverse_state(
     toxicity: float,
     markout_ema: float,
     markout_pause_latch: bool,
-    microprice_shift_bps: float,
+    weighted_mid_proxy_shift_bps: float,
     near_depth: float,
     cfg: QuoteCoreConfig,
 ) -> dict[str, Any]:
@@ -1226,8 +1222,8 @@ def _side_adverse_state(
         ret_active = sign * pred_ret * 10000.0 >= abs(cfg.adverse_ret_bps_threshold)
 
     micro_active = False
-    if cfg.adverse_microprice_shift_bps > 0.0:
-        micro_active = sign * microprice_shift_bps >= abs(cfg.adverse_microprice_shift_bps)
+    if cfg.adverse_weighted_mid_proxy_shift_bps > 0.0:
+        micro_active = sign * weighted_mid_proxy_shift_bps >= abs(cfg.adverse_weighted_mid_proxy_shift_bps)
 
     thin_active = (
         cfg.adverse_thin_depth_threshold > 0.0
@@ -1266,7 +1262,7 @@ def _side_defense_state(
     dir_signal: float,
     pred_ret: float,
     markout_ema: float,
-    microprice_shift_bps: float,
+    weighted_mid_proxy_shift_bps: float,
     unrealized_pnl: float,
     cfg: QuoteCoreConfig,
 ) -> dict[str, Any]:
@@ -1312,13 +1308,13 @@ def _side_defense_state(
         ret_active = sign * pred_ret * 10000.0 >= abs(cfg.defense_ret_bps_threshold)
 
     micro_active = False
-    if cfg.defense_microprice_shift_bps > 0.0:
-        micro_active = sign * microprice_shift_bps >= abs(cfg.defense_microprice_shift_bps)
+    if cfg.defense_weighted_mid_proxy_shift_bps > 0.0:
+        micro_active = sign * weighted_mid_proxy_shift_bps >= abs(cfg.defense_weighted_mid_proxy_shift_bps)
 
     needs_extreme = (
         cfg.defense_dir_threshold > 0.0
         or cfg.defense_ret_bps_threshold > 0.0
-        or cfg.defense_microprice_shift_bps > 0.0
+        or cfg.defense_weighted_mid_proxy_shift_bps > 0.0
     )
     extreme_active = (dir_active or ret_active or micro_active) if needs_extreme else True
     active = reducing and not emergency and markout_active and extreme_active
@@ -1350,7 +1346,7 @@ def quote_core_config_from_live_config(
     fees = cfg.fees
     risk = cfg.risk
     depth_exec = getattr(cfg, "depth_execution", None)
-    mk_cfg = getattr(depth_exec, "microprice_kappa", None) if depth_exec else None
+    mk_cfg = getattr(depth_exec, "weighted_mid_distance_decay", None) if depth_exec else None
     mk_enabled = bool(mk_cfg and getattr(mk_cfg, "enabled", False))
     use_depth_pricing = (not bool(getattr(strategy, "use_bar_pricing", False))) or mk_enabled
 
@@ -1442,9 +1438,9 @@ def quote_core_config_from_live_config(
         f03_ret_action_horizon_s=float(f03_ret_action_horizon_s),
         f03_ret_action_compatible=bool(f03_ret_action_compatible),
         use_bar_pricing=bool(getattr(strategy, "use_bar_pricing", True)),
-        use_depth_microprice=use_depth_pricing,
+        use_depth_weighted_mid_proxy=use_depth_pricing,
         use_depth_kappa=use_depth_pricing,
-        microprice_levels=int(getattr(mk_cfg, "microprice_levels", 3)) if mk_enabled else 3,
+        weighted_mid_proxy_levels=int(getattr(mk_cfg, "weighted_mid_proxy_levels", 3)) if mk_enabled else 3,
         kappa_levels=int(getattr(mk_cfg, "kappa_levels", 5)) if mk_enabled else 5,
         kappa_depth_baseline=(
             float(getattr(mk_cfg, "kappa_depth_baseline", 50.0))
@@ -1465,7 +1461,7 @@ def quote_core_config_from_live_config(
         depth_tox_enabled=bool(tox_cfg and getattr(tox_cfg, "enabled", False)),
         depth_tox_levels=int(getattr(tox_cfg, "levels", 20)) if tox_cfg else 20,
         depth_tox_imbalance_threshold=float(getattr(tox_cfg, "imbalance_threshold", 0.65)) if tox_cfg else 0.65,
-        depth_tox_microprice_shift_bps=float(getattr(tox_cfg, "microprice_shift_bps", 1.0)) if tox_cfg else 1.0,
+        depth_tox_weighted_mid_proxy_shift_bps=float(getattr(tox_cfg, "weighted_mid_proxy_shift_bps", 1.0)) if tox_cfg else 1.0,
         depth_tox_spread_mult=float(getattr(tox_cfg, "spread_mult", 1.25)) if tox_cfg else 1.25,
         dynamic_cap_enabled=bool(getattr(strategy, "dynamic_cap_enabled", False)),
         max_spread_bps=float(getattr(strategy, "max_spread_bps", 0.0)),
@@ -1490,7 +1486,7 @@ def quote_core_config_from_live_config(
         adverse_markout_pause_hybrid=bool(getattr(strategy, "adverse_markout_pause_hybrid", False)),
         adverse_dir_threshold=abs(float(getattr(strategy, "adverse_dir_threshold", 0.0))),
         adverse_ret_bps_threshold=abs(float(getattr(strategy, "adverse_ret_bps_threshold", 0.0))),
-        adverse_microprice_shift_bps=abs(float(getattr(strategy, "adverse_microprice_shift_bps", 0.0))),
+        adverse_weighted_mid_proxy_shift_bps=abs(float(getattr(strategy, "adverse_weighted_mid_proxy_shift_bps", 0.0))),
         adverse_spread_mult=max(1.0, float(getattr(strategy, "adverse_spread_mult", 1.10))),
         adverse_thin_depth_threshold=max(0.0, float(getattr(strategy, "adverse_thin_depth_threshold", 0.0))),
         adverse_thin_depth_mult=max(1.0, float(getattr(strategy, "adverse_thin_depth_mult", 1.0))),
@@ -1499,7 +1495,7 @@ def quote_core_config_from_live_config(
         defense_markout_threshold=abs(float(getattr(strategy, "defense_markout_threshold", 2.0))),
         defense_dir_threshold=abs(float(getattr(strategy, "defense_dir_threshold", 0.05))),
         defense_ret_bps_threshold=abs(float(getattr(strategy, "defense_ret_bps_threshold", 0.0))),
-        defense_microprice_shift_bps=abs(float(getattr(strategy, "defense_microprice_shift_bps", 0.0))),
+        defense_weighted_mid_proxy_shift_bps=abs(float(getattr(strategy, "defense_weighted_mid_proxy_shift_bps", 0.0))),
         defense_spread_mult=max(1.0, float(getattr(strategy, "defense_spread_mult", 1.35))),
         defense_pause=bool(getattr(strategy, "defense_pause", True)),
         defense_emergency_inventory_ratio=max(0.0, float(getattr(strategy, "defense_emergency_inventory_ratio", 0.50))),
@@ -1524,7 +1520,7 @@ def quote_core_config_from_params(
     tick_size: float,
     lot_size: float,
     use_ml: bool,
-    use_depth_microprice: bool,
+    use_depth_weighted_mid_proxy: bool,
     use_depth_kappa: bool,
 ) -> QuoteCoreConfig:
     max_spread_bps = float(params.get("max_spread_bps", 0.0))
@@ -1622,9 +1618,9 @@ def quote_core_config_from_params(
         ),
         f03_ret_action_compatible=f03_ret_action_compatible,
         use_bar_pricing=bool(params.get("use_bar_pricing", True)),
-        use_depth_microprice=bool(use_depth_microprice),
+        use_depth_weighted_mid_proxy=bool(use_depth_weighted_mid_proxy),
         use_depth_kappa=bool(use_depth_kappa),
-        microprice_levels=int(params.get("microprice_levels", 3)),
+        weighted_mid_proxy_levels=int(params.get("weighted_mid_proxy_levels", 3)),
         kappa_levels=int(params.get("kappa_levels", 5)),
         kappa_depth_baseline=float(params.get("kappa_depth_baseline", 50.0)),
         depth_kappa_ratio=max(0.05, min(3.0, float(params.get("depth_kappa_ratio", 0.3)))),
@@ -1642,7 +1638,7 @@ def quote_core_config_from_params(
         depth_tox_enabled=bool(params.get("depth_tox_enabled", False)),
         depth_tox_levels=max(1, int(params.get("depth_tox_levels", 20))),
         depth_tox_imbalance_threshold=float(params.get("depth_tox_imbalance_threshold", 0.65)),
-        depth_tox_microprice_shift_bps=float(params.get("depth_tox_microprice_shift_bps", 1.0)),
+        depth_tox_weighted_mid_proxy_shift_bps=float(params.get("depth_tox_weighted_mid_proxy_shift_bps", 1.0)),
         depth_tox_spread_mult=max(1.0, float(params.get("depth_tox_spread_mult", 1.25))),
         dynamic_cap_enabled=bool(params.get("dynamic_cap_enabled", False)),
         max_spread_bps=max_spread_bps,
@@ -1667,7 +1663,7 @@ def quote_core_config_from_params(
         adverse_markout_pause_hybrid=bool(params.get("adverse_markout_pause_hybrid", False)),
         adverse_dir_threshold=abs(float(params.get("adverse_dir_threshold", 0.0))),
         adverse_ret_bps_threshold=abs(float(params.get("adverse_ret_bps_threshold", 0.0))),
-        adverse_microprice_shift_bps=abs(float(params.get("adverse_microprice_shift_bps", 0.0))),
+        adverse_weighted_mid_proxy_shift_bps=abs(float(params.get("adverse_weighted_mid_proxy_shift_bps", 0.0))),
         adverse_spread_mult=max(1.0, float(params.get("adverse_spread_mult", 1.10))),
         adverse_thin_depth_threshold=max(0.0, float(params.get("adverse_thin_depth_threshold", 0.0))),
         adverse_thin_depth_mult=max(1.0, float(params.get("adverse_thin_depth_mult", 1.0))),
@@ -1676,7 +1672,7 @@ def quote_core_config_from_params(
         defense_markout_threshold=abs(float(params.get("defense_markout_threshold", 2.0))),
         defense_dir_threshold=abs(float(params.get("defense_dir_threshold", 0.05))),
         defense_ret_bps_threshold=abs(float(params.get("defense_ret_bps_threshold", 0.0))),
-        defense_microprice_shift_bps=abs(float(params.get("defense_microprice_shift_bps", 0.0))),
+        defense_weighted_mid_proxy_shift_bps=abs(float(params.get("defense_weighted_mid_proxy_shift_bps", 0.0))),
         defense_spread_mult=max(1.0, float(params.get("defense_spread_mult", 1.35))),
         defense_pause=bool(params.get("defense_pause", True)),
         defense_emergency_inventory_ratio=max(0.0, float(params.get("defense_emergency_inventory_ratio", 0.50))),
@@ -1717,8 +1713,8 @@ def _compute_quote_core_py(
     kappa_before_depth = kappa_used
 
     fair = mid
-    if depth.has_book and cfg.use_depth_microprice:
-        fair = _weighted_mid_proxy(depth, cfg.microprice_levels, mid)
+    if depth.has_book and cfg.use_depth_weighted_mid_proxy:
+        fair = _weighted_mid_proxy(depth, cfg.weighted_mid_proxy_levels, mid)
     if depth.has_book and cfg.use_depth_kappa:
         kappa_used = _estimate_depth_kappa(
             depth,
@@ -1914,7 +1910,7 @@ def _compute_quote_core_py(
         asym -= inv_sign * min(urgency, 1.0) * cfg.exit_urgency_strength
 
     trace_book_imb = 0.0
-    microprice_shift_bps = (fair - mid) / mid * 10000.0 if mid > 0.0 else 0.0
+    weighted_mid_proxy_shift_bps = (fair - mid) / mid * 10000.0 if mid > 0.0 else 0.0
     if depth.has_book:
         asym_imb, _, _ = _depth_imbalance(depth, cfg.book_imb_levels)
         trace_book_imb, _, _ = _depth_imbalance(depth, cfg.trace_book_imb_levels)
@@ -1972,7 +1968,7 @@ def _compute_quote_core_py(
         toxicity=tox_bid,
         markout_ema=state.mo_ema_bid,
         markout_pause_latch=state.bid_adverse_markout_pause_latch,
-        microprice_shift_bps=microprice_shift_bps,
+        weighted_mid_proxy_shift_bps=weighted_mid_proxy_shift_bps,
         near_depth=near_depth_total,
         cfg=cfg,
     )
@@ -1986,7 +1982,7 @@ def _compute_quote_core_py(
         toxicity=tox_ask,
         markout_ema=state.mo_ema_ask,
         markout_pause_latch=state.ask_adverse_markout_pause_latch,
-        microprice_shift_bps=microprice_shift_bps,
+        weighted_mid_proxy_shift_bps=weighted_mid_proxy_shift_bps,
         near_depth=near_depth_total,
         cfg=cfg,
     )
@@ -1997,7 +1993,7 @@ def _compute_quote_core_py(
         dir_signal=dir_signal,
         pred_ret=pred_ret,
         markout_ema=state.mo_ema_bid,
-        microprice_shift_bps=microprice_shift_bps,
+        weighted_mid_proxy_shift_bps=weighted_mid_proxy_shift_bps,
         unrealized_pnl=float(state.unrealized_pnl),
         cfg=cfg,
     )
@@ -2008,7 +2004,7 @@ def _compute_quote_core_py(
         dir_signal=dir_signal,
         pred_ret=pred_ret,
         markout_ema=state.mo_ema_ask,
-        microprice_shift_bps=microprice_shift_bps,
+        weighted_mid_proxy_shift_bps=weighted_mid_proxy_shift_bps,
         unrealized_pnl=float(state.unrealized_pnl),
         cfg=cfg,
     )
@@ -2170,8 +2166,7 @@ def _compute_quote_core_py(
         "tox_bid": tox_bid,
         "tox_ask": tox_ask,
         "book_imb": trace_book_imb,
-        "weighted_mid_proxy_shift_bps": microprice_shift_bps,
-        "microprice_shift_bps": microprice_shift_bps,
+        "weighted_mid_proxy_shift_bps": weighted_mid_proxy_shift_bps,
         "near_depth_total": near_depth_total,
         "mo_ema_bid": state.mo_ema_bid,
         "mo_ema_ask": state.mo_ema_ask,
@@ -2193,7 +2188,7 @@ def _compute_quote_core_py(
         "adverse_markout": False,
         "adverse_direction": False,
         "adverse_ret": False,
-        "adverse_microprice": False,
+        "adverse_weighted_mid_proxy": False,
         "adverse_thin_depth": False,
         "side_adverse": False,
         "side_adverse_pause": False,
@@ -2206,7 +2201,7 @@ def _compute_quote_core_py(
         "defense_markout": False,
         "defense_direction": False,
         "defense_ret": False,
-        "defense_microprice": False,
+        "defense_weighted_mid_proxy": False,
         "defense_spread_mult": 1.0,
         "bid_adverse": bid_adverse_active,
         "ask_adverse": ask_adverse_active,
@@ -2227,7 +2222,7 @@ def _compute_quote_core_py(
             "adverse_markout": bool(bid_side_adverse["markout"]),
             "adverse_direction": bool(bid_side_adverse["direction"]),
             "adverse_ret": bool(bid_side_adverse["ret"]),
-            "adverse_microprice": bool(bid_side_adverse["microprice"]),
+            "adverse_weighted_mid_proxy": bool(bid_side_adverse["microprice"]),
             "adverse_thin_depth": bool(bid_side_adverse["thin_depth"]),
             "side_adverse": bool(bid_adverse_active),
             "side_adverse_pause": bool(bid_adverse_pause_active),
@@ -2239,7 +2234,7 @@ def _compute_quote_core_py(
             "defense_markout": bool(bid_defense["markout"]),
             "defense_direction": bool(bid_defense["direction"]),
             "defense_ret": bool(bid_defense["ret"]),
-            "defense_microprice": bool(bid_defense["microprice"]),
+            "defense_weighted_mid_proxy": bool(bid_defense["microprice"]),
             "defense_spread_mult": float(bid_defense["spread_mult"]),
             "raw_price": raw_bid_px,
             "pre_guard_price": pre_guard_bid,
@@ -2270,7 +2265,7 @@ def _compute_quote_core_py(
             "adverse_markout": bool(ask_side_adverse["markout"]),
             "adverse_direction": bool(ask_side_adverse["direction"]),
             "adverse_ret": bool(ask_side_adverse["ret"]),
-            "adverse_microprice": bool(ask_side_adverse["microprice"]),
+            "adverse_weighted_mid_proxy": bool(ask_side_adverse["microprice"]),
             "adverse_thin_depth": bool(ask_side_adverse["thin_depth"]),
             "side_adverse": bool(ask_side_adverse["active"]),
             "side_adverse_pause": bool(ask_side_adverse["pause"]),
@@ -2282,7 +2277,7 @@ def _compute_quote_core_py(
             "defense_markout": bool(ask_defense["markout"]),
             "defense_direction": bool(ask_defense["direction"]),
             "defense_ret": bool(ask_defense["ret"]),
-            "defense_microprice": bool(ask_defense["microprice"]),
+            "defense_weighted_mid_proxy": bool(ask_defense["microprice"]),
             "defense_spread_mult": float(ask_defense["spread_mult"]),
             "raw_price": raw_ask_px,
             "pre_guard_price": pre_guard_ask,
@@ -2395,7 +2390,7 @@ def _compute_quote_core_py(
         "bid_defense_markout_active": bool(bid_defense["markout"]),
         "bid_defense_direction_active": bool(bid_defense["direction"]),
         "bid_defense_ret_active": bool(bid_defense["ret"]),
-        "bid_defense_microprice_active": bool(bid_defense["microprice"]),
+        "bid_defense_weighted_mid_proxy_active": bool(bid_defense["microprice"]),
         "ask_defense_active": bool(ask_defense["active"]),
         "ask_defense_pause_active": bool(ask_defense["pause"]),
         "ask_defense_reducing": bool(ask_defense["reducing"]),
@@ -2403,17 +2398,17 @@ def _compute_quote_core_py(
         "ask_defense_markout_active": bool(ask_defense["markout"]),
         "ask_defense_direction_active": bool(ask_defense["direction"]),
         "ask_defense_ret_active": bool(ask_defense["ret"]),
-        "ask_defense_microprice_active": bool(ask_defense["microprice"]),
+        "ask_defense_weighted_mid_proxy_active": bool(ask_defense["microprice"]),
         "adverse_guard_enabled": cfg.adverse_guard_enabled,
         "bid_adverse_direction_active": bool(bid_side_adverse["direction"]),
         "bid_adverse_ret_active": bool(bid_side_adverse["ret"]),
-        "bid_adverse_microprice_active": bool(bid_side_adverse["microprice"]),
+        "bid_adverse_weighted_mid_proxy_active": bool(bid_side_adverse["microprice"]),
         "bid_adverse_thin_depth_active": bool(bid_side_adverse["thin_depth"]),
         "ask_adverse_toxicity_active": bool(ask_side_adverse["toxicity"]),
         "ask_adverse_markout_active": bool(ask_side_adverse["markout"]),
         "ask_adverse_direction_active": bool(ask_side_adverse["direction"]),
         "ask_adverse_ret_active": bool(ask_side_adverse["ret"]),
-        "ask_adverse_microprice_active": bool(ask_side_adverse["microprice"]),
+        "ask_adverse_weighted_mid_proxy_active": bool(ask_side_adverse["microprice"]),
         "ask_adverse_thin_depth_active": bool(ask_side_adverse["thin_depth"]),
         "mid_guard_bid": mid_guard_bid,
         "mid_guard_ask": mid_guard_ask,
@@ -2537,14 +2532,14 @@ _CPP_CFG_FIELDS = (
     "volatility_spread_scale_min", "volatility_spread_scale_max", "liq_baseline",
     "liquidity_spread_scale_min", "liquidity_spread_scale_max", "vol_power",
     "kappa_ratio", "p3_delta_star", "p3_kappa_eff", "use_bar_pricing",
-    "use_depth_microprice", "use_depth_kappa", "microprice_levels",
+    "use_depth_weighted_mid_proxy", "use_depth_kappa", "weighted_mid_proxy_levels",
     "kappa_levels", "kappa_depth_baseline", "depth_kappa_ratio",
     "ber_spread_mult", "markout_spread_scale", "markout_side_asymmetry_sign",
     "inventory_skew_strength",
     "inventory_asym_strength", "inventory_signal_fade_strength",
     "book_imb_strength", "book_imb_levels", "trace_book_imb_levels",
     "depth_tox_enabled", "depth_tox_levels", "depth_tox_imbalance_threshold",
-    "depth_tox_microprice_shift_bps", "depth_tox_spread_mult",
+    "depth_tox_weighted_mid_proxy_shift_bps", "depth_tox_spread_mult",
     "dynamic_cap_enabled", "max_spread_bps", "dynamic_cap_base_bps",
     "dynamic_cap_alpha", "dynamic_cap_max_mult", "dynamic_cap_var_baseline",
     "dynamic_cap_liq_beta", "dynamic_cap_liq_baseline",
@@ -2553,11 +2548,11 @@ _CPP_CFG_FIELDS = (
     "adverse_toxicity_threshold", "adverse_markout_threshold",
     "adverse_markout_pause_threshold", "adverse_markout_pause_hybrid",
     "adverse_dir_threshold",
-    "adverse_ret_bps_threshold", "adverse_microprice_shift_bps",
+    "adverse_ret_bps_threshold", "adverse_weighted_mid_proxy_shift_bps",
     "adverse_spread_mult", "adverse_thin_depth_threshold",
     "adverse_thin_depth_mult", "adverse_pause", "defense_guard_enabled",
     "defense_markout_threshold", "defense_dir_threshold",
-    "defense_ret_bps_threshold", "defense_microprice_shift_bps",
+    "defense_ret_bps_threshold", "defense_weighted_mid_proxy_shift_bps",
     "defense_spread_mult", "defense_pause",
     "defense_emergency_inventory_ratio", "defense_emergency_loss",
     "inventory_reference_qty", "eta_inventory", "a_spread",
@@ -2707,7 +2702,7 @@ def _cpp_side_context_to_dict(
         "adverse_markout": bool(getattr(ctx, "adverse_markout", False)),
         "adverse_direction": bool(getattr(ctx, "adverse_direction", False)),
         "adverse_ret": bool(getattr(ctx, "adverse_ret", False)),
-        "adverse_microprice": bool(getattr(ctx, "adverse_microprice", False)),
+        "adverse_weighted_mid_proxy": bool(getattr(ctx, "adverse_weighted_mid_proxy", False)),
         "adverse_thin_depth": bool(getattr(ctx, "adverse_thin_depth", False)),
         "side_adverse": side_adverse,
         "side_adverse_pause": bool(getattr(ctx, "side_adverse_pause", False)),
@@ -2719,7 +2714,7 @@ def _cpp_side_context_to_dict(
         "defense_markout": bool(getattr(ctx, "defense_markout", False)),
         "defense_direction": bool(getattr(ctx, "defense_direction", False)),
         "defense_ret": bool(getattr(ctx, "defense_ret", False)),
-        "defense_microprice": bool(getattr(ctx, "defense_microprice", False)),
+        "defense_weighted_mid_proxy": bool(getattr(ctx, "defense_weighted_mid_proxy", False)),
         "defense_spread_mult": float(getattr(ctx, "defense_spread_mult", 1.0)),
         "raw_price": float(getattr(ctx, "raw_price", 0.0)),
         "pre_guard_price": float(getattr(ctx, "pre_guard_price", 0.0)),
@@ -2850,8 +2845,7 @@ def _compute_quote_core_cpp(
         "tox_bid": pred_tox_bid,
         "tox_ask": pred_tox_ask,
         "book_imb": float(result.book_imb),
-        "weighted_mid_proxy_shift_bps": float(result.microprice_shift_bps),
-        "microprice_shift_bps": float(result.microprice_shift_bps),
+        "weighted_mid_proxy_shift_bps": float(result.weighted_mid_proxy_shift_bps),
         "near_depth_total": float(result.near_depth_total),
         "mo_ema_bid": float(state.mo_ema_bid),
         "mo_ema_ask": float(state.mo_ema_ask),
@@ -2874,7 +2868,7 @@ def _compute_quote_core_cpp(
         "adverse_markout": False,
         "adverse_direction": False,
         "adverse_ret": False,
-        "adverse_microprice": False,
+        "adverse_weighted_mid_proxy": False,
         "adverse_thin_depth": False,
         "side_adverse": False,
         "side_adverse_pause": False,
@@ -2887,7 +2881,7 @@ def _compute_quote_core_cpp(
         "defense_markout": False,
         "defense_direction": False,
         "defense_ret": False,
-        "defense_microprice": False,
+        "defense_weighted_mid_proxy": False,
         "defense_spread_mult": 1.0,
         "bid_adverse": quote_flags["bid_adverse"],
         "ask_adverse": quote_flags["ask_adverse"],
@@ -2979,7 +2973,7 @@ def _compute_quote_core_cpp(
         "bid_defense_markout_active": bool(result.buy.defense_markout),
         "bid_defense_direction_active": bool(result.buy.defense_direction),
         "bid_defense_ret_active": bool(result.buy.defense_ret),
-        "bid_defense_microprice_active": bool(result.buy.defense_microprice),
+        "bid_defense_weighted_mid_proxy_active": bool(result.buy.defense_weighted_mid_proxy),
         "ask_defense_active": bool(result.sell.defense_guard),
         "ask_defense_pause_active": bool(result.sell.defense_pause),
         "ask_defense_reducing": bool(result.sell.defense_reducing),
@@ -2987,17 +2981,17 @@ def _compute_quote_core_cpp(
         "ask_defense_markout_active": bool(result.sell.defense_markout),
         "ask_defense_direction_active": bool(result.sell.defense_direction),
         "ask_defense_ret_active": bool(result.sell.defense_ret),
-        "ask_defense_microprice_active": bool(result.sell.defense_microprice),
+        "ask_defense_weighted_mid_proxy_active": bool(result.sell.defense_weighted_mid_proxy),
         "adverse_guard_enabled": bool(cfg.adverse_guard_enabled),
         "bid_adverse_direction_active": bool(result.buy.adverse_direction),
         "bid_adverse_ret_active": bool(result.buy.adverse_ret),
-        "bid_adverse_microprice_active": bool(result.buy.adverse_microprice),
+        "bid_adverse_weighted_mid_proxy_active": bool(result.buy.adverse_weighted_mid_proxy),
         "bid_adverse_thin_depth_active": bool(result.buy.adverse_thin_depth),
         "ask_adverse_toxicity_active": bool(result.sell.adverse_toxicity),
         "ask_adverse_markout_active": bool(result.sell.adverse_markout),
         "ask_adverse_direction_active": bool(result.sell.adverse_direction),
         "ask_adverse_ret_active": bool(result.sell.adverse_ret),
-        "ask_adverse_microprice_active": bool(result.sell.adverse_microprice),
+        "ask_adverse_weighted_mid_proxy_active": bool(result.sell.adverse_weighted_mid_proxy),
         "ask_adverse_thin_depth_active": bool(result.sell.adverse_thin_depth),
         "mid_guard_bid": bool(result.mid_guard_bid),
         "mid_guard_ask": bool(result.mid_guard_ask),
@@ -3193,7 +3187,7 @@ _CPP_COMMON_POLICY_FIELDS = (
     "side_adverse_pause", "local_extreme_guard", "local_extreme_pause",
     "defense_guard", "defense_pause", "inventory_ratio", "depth_age_s",
     "max_book_age_s", "toxicity", "markout_ema", "markout_spread_scale",
-    "markout_reference", "microprice_shift_bps", "l2_quote_flip_rate",
+    "markout_reference", "weighted_mid_proxy_shift_bps", "l2_quote_flip_rate",
     "l2_book_cancel_ratio", "l2_near_depth_total", "thin_depth_threshold",
     "kappa_depth_baseline", "local_extreme_spread_mult",
     "defense_spread_mult",

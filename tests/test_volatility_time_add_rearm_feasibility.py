@@ -30,7 +30,7 @@ def _event(
         "inventory_before_fill": before,
         "inventory_after_fill": after,
         "order_id": order_id,
-        "microprice_shift_bps": 0.0,
+        "weighted_mid_proxy_shift_bps": 0.0,
         "l2_book_refresh_ratio": 0.2,
         "l2_book_cancel_ratio": 0.1,
         "queue_before": 1.0,

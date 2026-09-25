@@ -140,7 +140,7 @@ class StrategyConfig:
     adverse_markout_decay_tau_s: float = 900.0
     adverse_dir_threshold: float = 0.0
     adverse_ret_bps_threshold: float = 0.0
-    adverse_microprice_shift_bps: float = 0.0
+    adverse_weighted_mid_proxy_shift_bps: float = 0.0
     adverse_spread_mult: float = 1.10
     adverse_thin_depth_threshold: float = 0.0
     adverse_thin_depth_mult: float = 1.0
@@ -149,7 +149,7 @@ class StrategyConfig:
     defense_markout_threshold: float = 2.0
     defense_dir_threshold: float = 0.05
     defense_ret_bps_threshold: float = 0.0
-    defense_microprice_shift_bps: float = 0.0
+    defense_weighted_mid_proxy_shift_bps: float = 0.0
     defense_spread_mult: float = 1.35
     defense_pause: bool = True
     defense_emergency_inventory_ratio: float = 0.50
@@ -492,9 +492,9 @@ class ExternalVenuesConfig:
 
 
 @dataclass
-class DepthMicropriceKappaConfig:
+class DepthWeightedMidDistanceDecayConfig:
     enabled: bool = False
-    microprice_levels: int = 3
+    weighted_mid_proxy_levels: int = 3
     kappa_levels: int = 5
     kappa_depth_baseline: float = 50.0
 
@@ -511,7 +511,7 @@ class DepthToxSpreadConfig:
     enabled: bool = False
     levels: int = 20
     imbalance_threshold: float = 0.65
-    microprice_shift_bps: float = 1.0
+    weighted_mid_proxy_shift_bps: float = 1.0
     spread_mult: float = 1.25
 
 
@@ -519,7 +519,7 @@ class DepthToxSpreadConfig:
 class DepthExecutionConfig:
     shadow_enabled: bool = False
     log_interval_requotes: int = 6
-    microprice_kappa: DepthMicropriceKappaConfig = field(default_factory=DepthMicropriceKappaConfig)
+    weighted_mid_distance_decay: DepthWeightedMidDistanceDecayConfig = field(default_factory=DepthWeightedMidDistanceDecayConfig)
     imbalance_asym: DepthImbalanceAsymConfig = field(default_factory=DepthImbalanceAsymConfig)
     depth_tox_spread: DepthToxSpreadConfig = field(default_factory=DepthToxSpreadConfig)
 
@@ -655,7 +655,7 @@ BACKTEST_PARAM_SOURCES = (
     ("adverse_markout_decay_tau_s", ("strategy", "adverse_markout_decay_tau_s")),
     ("adverse_dir_threshold", ("strategy", "adverse_dir_threshold")),
     ("adverse_ret_bps_threshold", ("strategy", "adverse_ret_bps_threshold")),
-    ("adverse_microprice_shift_bps", ("strategy", "adverse_microprice_shift_bps")),
+    ("adverse_weighted_mid_proxy_shift_bps", ("strategy", "adverse_weighted_mid_proxy_shift_bps")),
     ("adverse_spread_mult", ("strategy", "adverse_spread_mult")),
     ("adverse_thin_depth_threshold", ("strategy", "adverse_thin_depth_threshold")),
     ("adverse_thin_depth_mult", ("strategy", "adverse_thin_depth_mult")),
@@ -664,7 +664,7 @@ BACKTEST_PARAM_SOURCES = (
     ("defense_markout_threshold", ("strategy", "defense_markout_threshold")),
     ("defense_dir_threshold", ("strategy", "defense_dir_threshold")),
     ("defense_ret_bps_threshold", ("strategy", "defense_ret_bps_threshold")),
-    ("defense_microprice_shift_bps", ("strategy", "defense_microprice_shift_bps")),
+    ("defense_weighted_mid_proxy_shift_bps", ("strategy", "defense_weighted_mid_proxy_shift_bps")),
     ("defense_spread_mult", ("strategy", "defense_spread_mult")),
     ("defense_pause", ("strategy", "defense_pause")),
     ("defense_emergency_inventory_ratio", ("strategy", "defense_emergency_inventory_ratio")),
@@ -775,7 +775,7 @@ BACKTEST_PARAM_SOURCES = (
     ("depth_tox_enabled", ("depth_execution", "depth_tox_spread", "enabled")),
     ("depth_tox_levels", ("depth_execution", "depth_tox_spread", "levels")),
     ("depth_tox_imbalance_threshold", ("depth_execution", "depth_tox_spread", "imbalance_threshold")),
-    ("depth_tox_microprice_shift_bps", ("depth_execution", "depth_tox_spread", "microprice_shift_bps")),
+    ("depth_tox_weighted_mid_proxy_shift_bps", ("depth_execution", "depth_tox_spread", "weighted_mid_proxy_shift_bps")),
     ("depth_tox_spread_mult", ("depth_execution", "depth_tox_spread", "spread_mult")),
     ("sync_adjust_degrade_enabled", ("risk", "sync_adjust_degrade_enabled")),
     ("sync_adjust_degrade_count", ("risk", "sync_adjust_degrade_count")),

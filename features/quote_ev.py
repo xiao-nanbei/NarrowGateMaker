@@ -22,26 +22,21 @@ def clean_feature_value(value: Any) -> float:
     return out
 
 
-def feature_array(features: dict[str, Any], feature_cols: list[str], *, missing_policy="legacy_zero") -> np.ndarray:
-    if missing_policy not in {"legacy_zero", "native_nan", "reject"}:
+def feature_array(features: dict[str, Any], feature_cols: list[str], *, missing_policy: str) -> np.ndarray:
+    if missing_policy not in {"native_nan", "reject"}:
         raise ValueError("unsupported quote EV missing policy")
-    if missing_policy != "legacy_zero":
-        values = []
-        for col in feature_cols:
-            try:
-                value = float(features[col])
-            except (KeyError, TypeError, ValueError):
-                value = float("nan")
-            if not math.isfinite(value):
-                if missing_policy == "reject":
-                    raise ValueError(f"missing or nonfinite quote EV feature: {col}")
-                value = float("nan")
-            values.append(value)
-        return np.array(values, dtype=np.float64).reshape(1, -1)
-    return np.array(
-        [clean_feature_value(features.get(col, 0.0)) for col in feature_cols],
-        dtype=np.float64,
-    ).reshape(1, -1)
+    values = []
+    for col in feature_cols:
+        try:
+            value = float(features[col])
+        except (KeyError, TypeError, ValueError):
+            value = float("nan")
+        if not math.isfinite(value):
+            if missing_policy == "reject":
+                raise ValueError(f"missing or nonfinite quote EV feature: {col}")
+            value = float("nan")
+        values.append(value)
+    return np.array(values, dtype=np.float64).reshape(1, -1)
 
 
 def add_quote_time_interaction_feature_values(
@@ -198,7 +193,7 @@ def add_local_flow_quote_feature_values(features: dict[str, Any]) -> dict[str, A
     else:
         raw_micro = _first_feature_value(
             features,
-            ("l2_microprice_offset_bps", "microprice_shift_bps"),
+            ("l2_microprice_offset_bps", "weighted_mid_proxy_shift_bps"),
             0.0,
         )
         adverse_micro = -pos * raw_micro
@@ -350,7 +345,7 @@ def add_toxic_risk_quote_feature_values(features: dict[str, Any]) -> dict[str, A
             "defense_pause",
             "defense_markout",
             "defense_direction",
-            "defense_microprice",
+            "defense_weighted_mid_proxy",
         )
     )
     guard_adverse_defense = 1.0 if adverse_guard and defense_guard else 0.0

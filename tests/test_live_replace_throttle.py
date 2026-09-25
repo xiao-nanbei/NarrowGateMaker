@@ -375,7 +375,7 @@ def test_side_policy_reuses_immutable_l2_summary_without_changing_decisions() ->
     engine._last_quote_context = {"BUY": {}, "SELL": {}}
     metrics = {
         "depth_age_s": 0.012,
-        "microprice_shift_bps": 0.3,
+        "weighted_mid_proxy_shift_bps": 0.3,
         "l2_quote_flip_rate": 0.2,
         "l2_book_refresh_ratio": 0.4,
         "l2_book_cancel_ratio": 0.1,
@@ -2009,7 +2009,7 @@ def test_read_only_side_policy_does_not_advance_side_runtime_state() -> None:
     engine._toxicity_probs = lambda pred: (0.5, 0.5)
     engine._current_l2_policy_metrics = lambda *args, **kwargs: {
         "depth_age_s": 0.0,
-        "microprice_shift_bps": 0.0,
+        "weighted_mid_proxy_shift_bps": 0.0,
         "l2_quote_flip_rate": 0.0,
         "l2_book_refresh_ratio": 0.0,
         "l2_book_cancel_ratio": 0.0,
@@ -2076,7 +2076,7 @@ def test_side_only_update_orders_preserves_opposite_runtime_state(
     engine._toxicity_probs = lambda pred: (0.5, 0.5)
     engine._current_l2_policy_metrics = lambda *args, **kwargs: {
         "depth_age_s": 0.0,
-        "microprice_shift_bps": 0.0,
+        "weighted_mid_proxy_shift_bps": 0.0,
         "l2_quote_flip_rate": 0.0,
         "l2_book_refresh_ratio": 0.0,
         "l2_book_cancel_ratio": 0.0,

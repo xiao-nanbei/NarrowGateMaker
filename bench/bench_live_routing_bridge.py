@@ -30,7 +30,7 @@ class Policy:
     toxicity: float = 0.5
     markout_ema: float = 0.0
     depth_age_s: float = 0.0
-    microprice_shift_bps: float = 0.0
+    weighted_mid_proxy_shift_bps: float = 0.0
     l2_quote_flip_rate: float = 0.0
     l2_book_refresh_ratio: float = 0.0
     l2_book_cancel_ratio: float = 0.0

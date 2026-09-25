@@ -161,7 +161,7 @@ QuoteCoreConfig quote_config() {
     value.max_inventory = 0.026;
     value.ml_enabled = false;
     value.use_bar_pricing = false;
-    value.use_depth_microprice = true;
+    value.use_depth_weighted_mid_proxy = true;
     value.use_depth_kappa = true;
     value.book_imb_strength = 0.02;
     value.max_spread_bps = 20.0;

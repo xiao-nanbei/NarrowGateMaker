@@ -51,7 +51,7 @@ CAMPAIGN_STATE_FEATURES = (
 LOCAL_MICROSTRUCTURE_FEATURES = (
     "quote_distance_ticks",
     "queue_ahead_btc",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "l2_book_refresh_ratio",
     "l2_book_cancel_ratio",
     "local_toxicity",

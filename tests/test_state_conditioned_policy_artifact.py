@@ -22,7 +22,7 @@ def _panel() -> pd.DataFrame:
         row.update(
             {
                 "action": action,
-                "microprice_shift_bps": signal,
+                "weighted_mid_proxy_shift_bps": signal,
                 "reward": signal if action == CANDIDATE_ACTION else 0.0,
                 f"behavior_prob_{CONTROL_ACTION}": 0.5,
                 f"behavior_prob_{CANDIDATE_ACTION}": 0.5,
@@ -37,7 +37,7 @@ def test_fitted_artifact_model_selects_state_specific_widen() -> None:
     fitted = _fit_action_models(panel, alpha=1.0, min_action_rows=100)
     selected = _predict_actions(panel, fitted)
 
-    positive = panel["microprice_shift_bps"].to_numpy() > 0.0
+    positive = panel["weighted_mid_proxy_shift_bps"].to_numpy() > 0.0
     assert selected[positive].eq(CANDIDATE_ACTION).all()
     assert selected[~positive].eq(CONTROL_ACTION).all()
     assert np.isfinite(fitted["mean"]).all()

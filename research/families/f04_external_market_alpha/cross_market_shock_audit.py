@@ -260,7 +260,7 @@ def _add_labels(fills: pd.DataFrame, *, ret_threshold: float, flow_threshold: fl
         out.get("taker_quote_imbalance_30s", 0.0), errors="coerce"
     ).fillna(0.0)
     out["local_adverse_microprice"] = -pos * pd.to_numeric(
-        out.get("l2_microprice_offset_bps", out.get("microprice_shift_bps", 0.0)), errors="coerce"
+        out.get("l2_microprice_offset_bps", out.get("weighted_mid_proxy_shift_bps", 0.0)), errors="coerce"
     ).fillna(0.0)
     depth = pd.to_numeric(out.get("l2_near_depth_total", out.get("near_depth_total", 0.0)), errors="coerce").fillna(0.0)
     out["local_near_depth_total"] = depth

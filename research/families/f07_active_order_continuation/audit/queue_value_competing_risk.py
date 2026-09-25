@@ -70,7 +70,7 @@ DEFAULT_FEATURES = (
     "campaign_pnl_so_far",
     "campaign_mae_so_far",
     "campaign_add_count_so_far",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "l2_book_cancel_ratio",
     "l2_book_refresh_ratio",
     "l2_quote_flip_rate",

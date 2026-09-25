@@ -592,7 +592,7 @@ def test_quantity_aware_quote_is_invariant_to_btc_vs_mbtc_denomination() -> None
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     mbtc_cfg = quote_core_config_from_params(
@@ -605,7 +605,7 @@ def test_quantity_aware_quote_is_invariant_to_btc_vs_mbtc_denomination() -> None
         tick_size=0.0001,
         lot_size=1.0,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     btc = compute_quote_core(
@@ -930,7 +930,7 @@ def test_f03_ret_action_requires_matching_consumer_horizon_but_ml_off_is_noop() 
             tick_size=0.1,
             lot_size=0.001,
             use_ml=True,
-            use_depth_microprice=False,
+            use_depth_weighted_mid_proxy=False,
             use_depth_kappa=False,
         )
 
@@ -954,7 +954,7 @@ def test_legacy_replay_gamma_override_still_rebinds_both_coefficients() -> None:
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     assert cfg.eta_inventory == pytest.approx(0.07)
@@ -987,7 +987,7 @@ def test_legacy_replay_without_p3_adapter_field_preserves_pair_floor() -> None:
         tick_size=0.1,
         lot_size=0.001,
         use_ml=False,
-        use_depth_microprice=False,
+        use_depth_weighted_mid_proxy=False,
         use_depth_kappa=False,
     )
     result = compute_quote_core(

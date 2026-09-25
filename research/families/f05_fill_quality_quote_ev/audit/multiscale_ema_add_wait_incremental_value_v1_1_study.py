@@ -553,7 +553,7 @@ def _eligible_opportunities(
     )
     frame["pred_direction_side_signed"] = sign * (2.0 * frame["pred_dir"] - 1.0)
     frame["pred_return_side_signed"] = sign * frame["pred_ret"]
-    frame["microprice_shift_side_signed_bps"] = sign * frame["microprice_shift_bps"]
+    frame["microprice_shift_side_signed_bps"] = sign * frame["weighted_mid_proxy_shift_bps"]
     frame["bbo_spread_ticks"] = (frame["best_ask"] - frame["best_bid"]) / float(tick_size)
     frame["baseline_distance_ticks"] = np.where(
         frame["side"].eq("BUY"),

@@ -49,7 +49,7 @@ def _probe_rows(days: int = 24, episodes_per_day: int = 12) -> pd.DataFrame:
                         "quote_delta_to_bbo": 9.9,
                         "toxicity": -signal,
                         "markout_ema": signal,
-                        "microprice_shift_bps": signal,
+                        "weighted_mid_proxy_shift_bps": signal,
                         "l2_quote_flip_rate": 0.0,
                         "l2_book_refresh_ratio": max(signal, 0.0),
                         "l2_book_cancel_ratio": max(-signal, 0.0),

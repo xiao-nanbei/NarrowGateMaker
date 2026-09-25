@@ -96,7 +96,7 @@ DEFAULT_FEATURE_SPECS: tuple[PanelFeatureSpec, ...] = (
     PanelFeatureSpec("spread_ticks", "decision"),
     PanelFeatureSpec("book_imbalance", "decision"),
     PanelFeatureSpec("book_state_resolution_ms", "decision"),
-    PanelFeatureSpec("microprice_shift_bps", "decision"),
+    PanelFeatureSpec("weighted_mid_proxy_shift_bps", "decision"),
     PanelFeatureSpec("l2_book_cancel_ratio", "decision"),
     PanelFeatureSpec("l2_book_refresh_ratio", "decision"),
     PanelFeatureSpec("l2_quote_flip_rate", "decision"),

@@ -211,7 +211,7 @@ double depth_tox_mult(
         micro_shift_bps = (fair - mid) / mid * 10000.0;
     }
     if (std::abs(imb) >= std::abs(cfg.depth_tox_imbalance_threshold) ||
-        std::abs(micro_shift_bps) >= std::abs(cfg.depth_tox_microprice_shift_bps)) {
+        std::abs(micro_shift_bps) >= std::abs(cfg.depth_tox_weighted_mid_proxy_shift_bps)) {
         return std::max(1.0, cfg.depth_tox_spread_mult);
     }
     return 1.0;
@@ -261,7 +261,7 @@ SideAdverseState side_adverse_state(
     double toxicity,
     double markout_ema,
     bool markout_pause_latch,
-    double microprice_shift_bps,
+    double weighted_mid_proxy_shift_bps,
     double near_depth,
     const QuoteCoreConfig& cfg
 ) {
@@ -290,8 +290,8 @@ SideAdverseState side_adverse_state(
     if (cfg.adverse_ret_bps_threshold > 0.0) {
         out.ret = sign * pred_ret * 10000.0 >= std::abs(cfg.adverse_ret_bps_threshold);
     }
-    if (cfg.adverse_microprice_shift_bps > 0.0) {
-        out.microprice = sign * microprice_shift_bps >= std::abs(cfg.adverse_microprice_shift_bps);
+    if (cfg.adverse_weighted_mid_proxy_shift_bps > 0.0) {
+        out.microprice = sign * weighted_mid_proxy_shift_bps >= std::abs(cfg.adverse_weighted_mid_proxy_shift_bps);
     }
     out.thin_depth = cfg.adverse_thin_depth_threshold > 0.0 &&
         near_depth > 0.0 && near_depth < cfg.adverse_thin_depth_threshold;
@@ -325,7 +325,7 @@ SideDefenseState side_defense_state(
     double dir_signal,
     double pred_ret,
     double markout_ema,
-    double microprice_shift_bps,
+    double weighted_mid_proxy_shift_bps,
     double unrealized_pnl,
     const QuoteCoreConfig& cfg
 ) {
@@ -355,13 +355,13 @@ SideDefenseState side_defense_state(
     if (cfg.defense_ret_bps_threshold > 0.0) {
         out.ret = sign * pred_ret * 10000.0 >= std::abs(cfg.defense_ret_bps_threshold);
     }
-    if (cfg.defense_microprice_shift_bps > 0.0) {
-        out.microprice = sign * microprice_shift_bps >= std::abs(cfg.defense_microprice_shift_bps);
+    if (cfg.defense_weighted_mid_proxy_shift_bps > 0.0) {
+        out.microprice = sign * weighted_mid_proxy_shift_bps >= std::abs(cfg.defense_weighted_mid_proxy_shift_bps);
     }
 
     const bool needs_extreme = cfg.defense_dir_threshold > 0.0 ||
         cfg.defense_ret_bps_threshold > 0.0 ||
-        cfg.defense_microprice_shift_bps > 0.0;
+        cfg.defense_weighted_mid_proxy_shift_bps > 0.0;
     const bool extreme = needs_extreme ? (out.direction || out.ret || out.microprice) : true;
     out.active = out.reducing && !out.emergency && out.markout && extreme;
     out.pause = out.active && cfg.defense_pause;
@@ -397,7 +397,7 @@ void fill_side_context(
     ctx.adverse_markout = adverse.markout;
     ctx.adverse_direction = adverse.direction;
     ctx.adverse_ret = adverse.ret;
-    ctx.adverse_microprice = adverse.microprice;
+    ctx.adverse_weighted_mid_proxy = adverse.microprice;
     ctx.adverse_thin_depth = adverse.thin_depth;
     ctx.defense_guard = defense.active;
     ctx.defense_pause = defense.pause;
@@ -406,7 +406,7 @@ void fill_side_context(
     ctx.defense_markout = defense.markout;
     ctx.defense_direction = defense.direction;
     ctx.defense_ret = defense.ret;
-    ctx.defense_microprice = defense.microprice;
+    ctx.defense_weighted_mid_proxy = defense.microprice;
     ctx.defense_spread_mult = defense.spread_mult;
     ctx.mid_guard = mid_guard;
     ctx.post_only = post_only;
@@ -770,8 +770,8 @@ QuoteCoreResult compute_quote_core(
     const double kappa_before_depth = kappa_used;
     const bool depth_has_book = depth.has_book();
     double fair = mid;
-    if (depth_has_book && cfg.use_depth_microprice) {
-        fair = microprice(depth, cfg.microprice_levels, mid, depth_has_book);
+    if (depth_has_book && cfg.use_depth_weighted_mid_proxy) {
+        fair = microprice(depth, cfg.weighted_mid_proxy_levels, mid, depth_has_book);
     }
     if (depth_has_book && cfg.use_depth_kappa) {
         kappa_used = estimate_depth_kappa(
@@ -994,7 +994,7 @@ QuoteCoreResult compute_quote_core(
     }
     asym = clamp(asym, -0.9, 0.9);
     out.asym = asym;
-    out.microprice_shift_bps = micro_shift_bps;
+    out.weighted_mid_proxy_shift_bps = micro_shift_bps;
 
     const double raw_half = 0.5 * out.delta_pre_cap;
     const double raw_hd_bid = raw_half * (1.0 - asym);

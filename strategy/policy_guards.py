@@ -316,7 +316,7 @@ class CommonSidePolicyInput:
     markout_ema: float = 0.0
     markout_spread_scale: float = 0.0
     markout_reference: float = 1.0
-    microprice_shift_bps: float = 0.0
+    weighted_mid_proxy_shift_bps: float = 0.0
     l2_quote_flip_rate: float = 0.0
     l2_book_cancel_ratio: float = 0.0
     l2_near_depth_total: float = 0.0
@@ -393,7 +393,7 @@ def evaluate_common_side_policy(inputs: CommonSidePolicyInput) -> CommonSidePoli
     if (
         inputs.l2_quote_flip_rate >= 0.35
         and inputs.l2_book_cancel_ratio >= 0.04
-        and abs(inputs.microprice_shift_bps) >= 0.5
+        and abs(inputs.weighted_mid_proxy_shift_bps) >= 0.5
     ):
         allow_exposure = False
         spread_mult = max(spread_mult, 1.35)

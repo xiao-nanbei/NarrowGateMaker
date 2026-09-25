@@ -38,7 +38,7 @@ OPE_FEATURES = (
     "campaign_reducing_fills_so_far",
     "toxicity",
     "markout_ema",
-    "microprice_shift_bps",
+    "weighted_mid_proxy_shift_bps",
     "l2_quote_flip_rate",
     "l2_book_refresh_ratio",
     "l2_book_cancel_ratio",

@@ -834,7 +834,7 @@ void bind_request_state_features(py::module_& m) {
             out["mid"] = vector_array(result.mid);
             out["bbo_spread_ticks"] = vector_array(result.bbo_spread_ticks);
             out["book_imbalance"] = vector_array(result.book_imbalance);
-            out["microprice_shift_bps"] = vector_array(result.microprice_shift_bps);
+            out["weighted_mid_proxy_shift_bps"] = vector_array(result.weighted_mid_proxy_shift_bps);
             out["l2_near_depth_total"] = vector_array(result.l2_near_depth_total);
             out["l2_quote_flip_rate"] = vector_array(result.l2_quote_flip_rate);
             out["l2_book_refresh_ratio"] = vector_array(result.l2_book_refresh_ratio);

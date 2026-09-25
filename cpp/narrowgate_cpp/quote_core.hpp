@@ -44,9 +44,9 @@ struct QuoteCoreConfig {
     double p3_kappa_eff = 0.0;
 
     bool use_bar_pricing = true;
-    bool use_depth_microprice = false;
+    bool use_depth_weighted_mid_proxy = false;
     bool use_depth_kappa = false;
-    int microprice_levels = 3;
+    int weighted_mid_proxy_levels = 3;
     int kappa_levels = 5;
     double kappa_depth_baseline = 50.0;
     double depth_kappa_ratio = 0.3;
@@ -65,7 +65,7 @@ struct QuoteCoreConfig {
     bool depth_tox_enabled = false;
     int depth_tox_levels = 20;
     double depth_tox_imbalance_threshold = 0.65;
-    double depth_tox_microprice_shift_bps = 1.0;
+    double depth_tox_weighted_mid_proxy_shift_bps = 1.0;
     double depth_tox_spread_mult = 1.25;
 
     bool dynamic_cap_enabled = false;
@@ -91,7 +91,7 @@ struct QuoteCoreConfig {
     bool adverse_markout_pause_hybrid = false;
     double adverse_dir_threshold = 0.0;
     double adverse_ret_bps_threshold = 0.0;
-    double adverse_microprice_shift_bps = 0.0;
+    double adverse_weighted_mid_proxy_shift_bps = 0.0;
     double adverse_spread_mult = 1.10;
     double adverse_thin_depth_threshold = 0.0;
     double adverse_thin_depth_mult = 1.0;
@@ -101,7 +101,7 @@ struct QuoteCoreConfig {
     double defense_markout_threshold = 2.0;
     double defense_dir_threshold = 0.05;
     double defense_ret_bps_threshold = 0.0;
-    double defense_microprice_shift_bps = 0.0;
+    double defense_weighted_mid_proxy_shift_bps = 0.0;
     double defense_spread_mult = 1.35;
     bool defense_pause = true;
     double defense_emergency_inventory_ratio = 0.50;
@@ -151,7 +151,7 @@ struct SideQuoteContext {
     bool adverse_markout = false;
     bool adverse_direction = false;
     bool adverse_ret = false;
-    bool adverse_microprice = false;
+    bool adverse_weighted_mid_proxy = false;
     bool adverse_thin_depth = false;
     bool defense_guard = false;
     bool defense_pause = false;
@@ -160,7 +160,7 @@ struct SideQuoteContext {
     bool defense_markout = false;
     bool defense_direction = false;
     bool defense_ret = false;
-    bool defense_microprice = false;
+    bool defense_weighted_mid_proxy = false;
     double defense_spread_mult = 1.0;
     bool mid_guard = false;
     bool post_only = false;
@@ -224,7 +224,7 @@ struct QuoteCoreResult {
     double raw_asym_shift = 0.0;
     double raw_quote_skew = 0.0;
     double book_imb = 0.0;
-    double microprice_shift_bps = 0.0;
+    double weighted_mid_proxy_shift_bps = 0.0;
     double near_depth_total = 0.0;
     double kappa_before_depth = 0.0;
     double kappa_used = 0.0;

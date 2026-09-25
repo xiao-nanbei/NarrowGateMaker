@@ -239,7 +239,8 @@ def train_opportunity_models(panel, output, *, input_identity, feature_columns, 
                                                 feature_name=list(feature_columns)),
                               num_boost_round=num_boost_round)
             model.save_model(str(stage / (name + ".txt")))
-            meta = {**input_identity, "feature_cols": list(feature_columns),
+            from .quote_ev import MODEL_SCHEMA
+            meta = {**input_identity, "schema": MODEL_SCHEMA, "feature_cols": list(feature_columns),
                     "missing_policy": missing_policy, "name": name, "side": side,
                     "training_boundary_ns": training_boundary_ns, "fit_rows": len(part),
                     "actual_outcome_end_max_ns": int(part.actual_outcome_end_ns.max()),

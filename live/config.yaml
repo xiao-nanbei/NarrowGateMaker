@@ -329,7 +329,7 @@ external_venues:
 depth_execution:
   shadow_enabled: false
   log_interval_requotes: 6
-  microprice_kappa:
+  weighted_mid_distance_decay:
     # Frozen name: weighted-mid proxy + top-N depth-ratio spread adapter;
     # neither is the published micro-price estimator or an identified GLFT kappa.
     enabled: false
