@@ -12,68 +12,13 @@ NATIVE_WHEEL_DIR ?= dist/native/live/$(NATIVE_BUILD_COMMIT)
 NATIVE_BUILD_PARALLEL_LEVEL ?= 1
 NATIVE_BUILD_MIN_AVAILABLE_MIB ?= 2048
 NATIVE_BUILD_MEMINFO ?= /proc/meminfo
-SYMBOL  := BTCUSDC
-DAYS    := 5
-START   ?= 2026-01-01
 
 .PHONY: native-replay-dev
 native-replay-dev:
 	$(PYTHON) scripts/build_replay_native.py --jobs $(NATIVE_BUILD_PARALLEL_LEVEL)
 
-# ── Data ────────────────────────────────────────────────────
-download:
-	$(PYTHON) pipeline.py download-raw-trades --symbols $(SYMBOL) --day-start $(START) --days $(DAYS)
-
-download-metrics:
-	$(PYTHON) pipeline.py download-metrics --symbol $(SYMBOL) --start $(START) --workers 8
-
-download-orderbook:
-	$(PYTHON) pipeline.py download-orderbook --symbols $(SYMBOL) --start $(START)
-
-audit-raw-trades:
-	$(PYTHON) pipeline.py audit-raw --symbols $(SYMBOL) BTCUSDT
-
-preprocess:
-	$(PYTHON) pipeline.py features-all --symbol $(SYMBOL)
-
-preprocess-bars:
-	$(PYTHON) pipeline.py bars --symbol $(SYMBOL)
-
-preprocess-metrics:
-	$(PYTHON) pipeline.py preprocess-metrics --symbol $(SYMBOL)
-
-features:
-	$(PYTHON) pipeline.py engineer --symbol $(SYMBOL)
-
-# ── Training ────────────────────────────────────────────────
-TARGETS := dir_10s dir_30s dir_60s ret_10s ret_30s ret_60s vol_10s vol_30s vol_60s
-
-train:
-	$(PYTHON) models/experiment_runner.py train --symbol $(SYMBOL)
-
-train-tune:
-	@for t in $(TARGETS); do \
-		echo "=== Tuning $$t ==="; \
-		$(PYTHON) models/experiment_runner.py train --symbol $(SYMBOL) --target $$t --tune; \
-	done
-
-platform-describe:
-	$(PYTHON) models/experiment_runner.py describe --symbol $(SYMBOL)
-
-# ── Backtesting ─────────────────────────────────────────────
-# backtest/backtest-sweep/backtest-as are legacy bar diagnostics only.
-# Formal strategy evidence uses backtest-tick with a frozen replay contract.
-backtest:
-	$(PYTHON) models/experiment_runner.py backtest-ml --symbol $(SYMBOL)
-
-backtest-sweep:
-	$(PYTHON) models/experiment_runner.py backtest-ml --symbol $(SYMBOL) --sweep
-
-backtest-as:
-	$(PYTHON) models/experiment_runner.py backtest-as --symbol $(SYMBOL)
-
-backtest-tick:
-	$(PYTHON) models/experiment_runner.py backtest-tick --symbol $(SYMBOL)
+# Data and replay use the installed `narrowgate data` / `narrowgate replay`
+# entry points with explicit inputs. Training belongs to each research family.
 
 # ── Native live wheel ─────────────────────────────────────────────
 # This is a build-host operation. It is deliberately not a dependency of source
@@ -180,10 +125,6 @@ clean:
 clean-logs:
 	rm -f logs/maker.log logs/maker.log.*
 
-.PHONY: download download-metrics download-orderbook audit-raw-trades \
-	preprocess preprocess-bars preprocess-metrics features \
-	train train-tune platform-describe \
-	backtest backtest-sweep backtest-as backtest-tick \
-	native-live-build-preflight native-live-wheel \
+.PHONY: native-live-build-preflight native-live-wheel \
 	run stop restart status logs reload \
 	deploy-preflight publish-source publish-source-dry clean clean-logs

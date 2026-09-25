@@ -5,6 +5,28 @@
   "historical_status_blocks_new_work": false,
   "previous_use_reset": false,
   "automatic_execution": false,
+  "l3_engineering": {
+    "as_of": "2026-09-25",
+    "scope": "Python ConsumerBundle prepared replay with owned runtime graph and complete L2 prefix",
+    "source_commit": "25dbe1cbef6f54003956507543c6bf99cbce832f",
+    "receipt_availability": "private_not_distributed",
+    "receipt_artifact": "development072 F05 independent-process checkpoint restoration comparison",
+    "original_six_checkpoint_failures": "fixed; current checkpoint file has 134 passing cases",
+    "full_two_day_account_executions": 1,
+    "new_model_fits": 0,
+    "new_strategy_candidates": 0,
+    "exact_fill_rows": 1082,
+    "exact_l2_rows": 452728,
+    "accounting_utc_marks_policy_and_event_path_equal": true,
+    "net_pnl_delta_usdc": 0.0,
+    "synthetic_independent_forks": "persisted F06 widen and F07 keep/cancel; exact result and L2 comparison",
+    "remaining_limits": [
+      "native cooldown hot-path state export not implemented",
+      "deferred mutable variance output checkpointing not supported",
+      "cross-version and arbitrary cross-host recovery not admitted",
+      "F06/F07 scientific tasks still require their own bounded contracts and workload validation"
+    ]
+  },
   "f03": {
     "existing_frozen_run_preserved": true,
     "original_strategy_shards": 654,

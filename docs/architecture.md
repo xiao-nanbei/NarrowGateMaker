@@ -2,9 +2,9 @@
 
 [English](architecture.md) | [简体中文](architecture.zh-CN.md)
 
-Last materially modified: 2026-09-21
+Last materially modified: 2026-09-25
 
-Last materially synchronized: 2026-09-21
+Last materially synchronized: 2026-09-25
 
 This is the single current architecture guide. The private repository is the development source; the public repository distributes reviewed source, not a competing implementation. Model weights, purchased inputs and private runtime evidence remain outside versioned source; see the [public/private contract](public_private_documentation_contract.md).
 
@@ -52,6 +52,16 @@ Eight acquisition adapters now live in `data/downloaders/`; the old claim that g
 Historical removal inventories and migration identities remain in `research/governance/` and retained private snapshots, not a second current architecture manual. The replaced architecture/ownership guides are recoverable from a verified pre-consolidation source bundle (private evidence store; not distributed).
 
 ## Remaining migrations and removal boundary
+
+### Replay restoration scope
+
+The maintained Python ConsumerBundle entry, `simulate_prepared_inputs`, accepts `checkpoint_at_ts_ms` and `resume_checkpoint`. `models/replay/runtime_checkpoint_io.py` persists the owned account/order/queue/RNG/policy graph; the prepared entry binds the input manifest, effective parameters, numeric predictions and execution-owner source. An output directory and progress callback are process-local rather than economic inputs. Resume restores the saved strategy, not a freshly initialized substitute. A checkpoint is trusted local implementation state, not a portable artifact or an accepted web upload.
+
+`ReplayL2Journal` seals an immutable prefix without fabricating account closure, then copies verified records into a separate branch writer with their original logical event identities. Each branch continues independent production/submission/read-back counts. Tests cover persisted independent branches, public F06/F07 policy state, cold signal startup, asynchronous execution, pending order transitions and UTC accounting boundaries. Source/input/parameter mismatches and changed journal prefixes are errors, not compatibility fallbacks. Retired Makefile wrappers are removed; installed `narrowgate data` and `narrowgate replay` commands own those CLI surfaces.
+
+A full previously evaluated two-day development F05 account was saved at the intervening UTC midnight and restored in a new process. All 1,082 fills and 452,728 L2 records, policy counters, UTC marks and complete accounting matched the retained cold-run baseline exactly; net PnL difference was zero. This is one engineering replay, no new fit or candidate. The source-bound receipt is indexed in the [existing work list](../research/recompute_407.json); underlying inputs and receipts are private, not distributed. An expanded native signal test run separately retains ten obsolete-loader fixture failures; they are not the six repaired checkpoint failures or evidence that every repository test passes.
+
+These capabilities do not establish native cooldown hot-path state export, arbitrary cross-version recovery, crash-proof storage under every filesystem failure, or the scientific/economic completion of F06/F07. Deferred mutable variance outputs remain unsupported for checkpointing. A research plan must still bind its complete frozen environment, workload budget and permitted compute window; recovery is not permission to run overnight.
 
 Executor decomposition, governance ownership consolidation, deployment/maintenance script separation, full `src/narrowgate` consolidation and root-manual shortening remain unfinished. Do not move active research code or split the large executor as a side effect of documentation cleanup. Future extraction needs bounded responsibilities and fixed-input quote/order/inventory/accounting regressions.
 

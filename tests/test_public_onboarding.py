@@ -98,6 +98,13 @@ def _docker_context_includes(relative_path: str) -> bool:
 
 
 class PublicOnboardingSmokeTest(unittest.TestCase):
+    def test_makefile_does_not_reintroduce_removed_business_entry_points(self) -> None:
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertNotIn("pipeline.py", makefile)
+        self.assertNotIn("models/experiment_runner.py", makefile)
+        for target in ("train:", "train-tune:", "backtest:", "backtest-tick:"):
+            self.assertNotIn(target, makefile)
+
     def test_python_and_cpp_packages_share_the_main_dev_version(self) -> None:
         config = _project_config()
         with (ROOT / "cpp" / "pyproject.toml").open("rb") as handle:
