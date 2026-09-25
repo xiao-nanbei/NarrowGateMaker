@@ -2215,11 +2215,10 @@ def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
     assert pointer == {
         "schema_version": subject.CURRENT_POINTER_SCHEMA,
         "release_id": release_id,
-        "activation_receipt_sha256": receipt_result["canonical_sha256"],
         "status": subject.CURRENT_POINTER_STATUS,
     }
     assert "canonical_sha256" not in pointer
-    assert pointer["status"] == "selected_activation"
+    assert pointer["status"] == "selected_release"
     assert stat.S_IMODE(pointer_path.stat().st_mode) == 0o600
     assert pointer_path.stat().st_nlink == 1
     assert (
@@ -2230,41 +2229,14 @@ def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
         )["pointer"]
         == pointer
     )
-    legacy_pointer = {
-        "schema_version": subject.LEGACY_CURRENT_POINTER_SCHEMA,
-        "release_id": release_id,
-        "deployment_envelope_sha256": envelope["canonical_sha256"],
-        "activation_receipt_sha256": receipt_result["canonical_sha256"],
-        "status": subject.CURRENT_POINTER_STATUS,
-    }
+    assert subject.load_current_pointer(pointer_path)["pointer"] == pointer
     legacy_pointer_path = tmp_path / "legacy-live.current.json"
-    subject._write_json_authority(legacy_pointer_path, legacy_pointer)  # noqa: SLF001
-    assert (
-        subject.load_current_pointer(
-            legacy_pointer_path,
-            deployment_envelope_path=envelope_path,
-            activation_receipt_path=receipt_path,
-        )["pointer"]
-        == legacy_pointer
-    )
-    wrong_legacy_pointer = {
-        **legacy_pointer,
-        "deployment_envelope_sha256": "0" * 64,
-    }
-    wrong_legacy_pointer_path = tmp_path / "wrong-legacy-live.current.json"
-    subject._write_json_authority(  # noqa: SLF001
-        wrong_legacy_pointer_path,
-        wrong_legacy_pointer,
-    )
-    with pytest.raises(
-        subject.LockedRuntimeError,
-        match="current pointer deployment envelope lineage drifted",
-    ):
-        subject.load_current_pointer(
-            wrong_legacy_pointer_path,
-            deployment_envelope_path=envelope_path,
-            activation_receipt_path=receipt_path,
-        )
+    subject._write_json_authority(legacy_pointer_path, {
+        **pointer, "schema_version": "narrowgate_live_current_pointer.v2",
+        "activation_receipt_sha256": receipt_result["canonical_sha256"],
+    })
+    with pytest.raises(subject.LockedRuntimeError, match="schema drifted"):
+        subject.load_current_pointer(legacy_pointer_path)
     wrong_receipt = dict(receipt)
     wrong_receipt["deployment_envelope_sha256"] = "0" * 64
     wrong_receipt[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
@@ -2273,10 +2245,7 @@ def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
     )
     wrong_receipt_path = tmp_path / "wrong-envelope-receipt.json"
     subject._write_json_authority(wrong_receipt_path, wrong_receipt)  # noqa: SLF001
-    wrong_pointer = {
-        **pointer,
-        "activation_receipt_sha256": wrong_receipt[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
-    }
+    wrong_pointer = dict(pointer)
     wrong_pointer_path = tmp_path / "wrong-envelope-current.json"
     subject._write_json_authority(wrong_pointer_path, wrong_pointer)  # noqa: SLF001
     with pytest.raises(subject.LockedRuntimeError, match="deployment release root drifted"):
@@ -2422,14 +2391,13 @@ def test_compact_receipt_and_pointer_reject_ambiguous_or_broken_lineage(
     pointer = {
         "schema_version": subject.CURRENT_POINTER_SCHEMA,
         "release_id": "release-a",
-        "activation_receipt_sha256": payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
         "status": subject.CURRENT_POINTER_STATUS,
     }
     with pytest.raises(subject.LockedRuntimeError, match="current pointer fields drifted"):
         subject._validate_current_pointer_payload(  # noqa: SLF001
             {**pointer, "deployment_envelope_sha256": "7" * 64}
         )
-    with pytest.raises(subject.LockedRuntimeError, match="lowercase SHA256"):
+    with pytest.raises(subject.LockedRuntimeError, match="current pointer fields drifted"):
         subject._validate_current_pointer_payload(  # noqa: SLF001
             {**pointer, "activation_receipt_sha256": int("1" * 64)}
         )
@@ -2573,7 +2541,8 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert marker_check < shell.index("set -o noclobber", marker_check) < marker_open
     assert marker_check < shell.index('private_parent "$start_marker"') < marker_open
     assert '--output "$pointer_stage"' in shell[publish:post_check]
-    assert "activation_receipt_sha256" in shell[pointer_verify:post_check]
+    assert "activation_receipt" in shell[pointer_verify:post_check]
+    assert "canonical_sha256" in shell[pointer_verify:post_check]
     assert "os.fsync(fd)" in shell[parent_fsync:trap_restore]
     assert "load_current_pointer" not in shell[final_publish:cleanup_disarm]
     assert "start narrowgate.service" not in shell
@@ -2662,8 +2631,8 @@ def test_prepared_activation_can_resume_only_from_proven_stopped_previous() -> N
         rendered.index("unit_inactive_or_absent()") : rendered.index("cleanup()")
     ]
     assert 'canonical_input "$current"' in resume_block
-    assert "narrowgate_live_current_pointer.v2" in resume_block
-    assert "selected_activation" in resume_block
+    assert "narrowgate_live_current_pointer.v3" in resume_block
+    assert "selected_release" in resume_block
     assert "release_id" in resume_block
     assert '"$current" "$previous_release_id"' in resume_block
     assert "journalctl" not in resume_block
@@ -3184,3 +3153,18 @@ def test_prepared_activation_uses_one_ssh_and_accepts_existing_roots(
             execute=True,
             **_prepared_activation_args(),
         )
+
+
+def test_select_current_release_does_not_claim_activation(tmp_path):
+    release = tmp_path / "candidate-a"
+    release.mkdir()
+    pointer = tmp_path / "current.json"
+    result = subject.select_current_release(
+        release_id="candidate-a", release_root=release, output_path=pointer)
+    assert result["pointer"]["status"] == "selected_release"
+    assert "activation_receipt" not in result
+    assert "activation_receipt_sha256" not in result["pointer"]
+    with pytest.raises(subject.LockedRuntimeError, match="real existing directory"):
+        subject.select_current_release(
+            release_id="missing", release_root=tmp_path / "missing", output_path=pointer)
+    assert subject.load_current_pointer(pointer) == result

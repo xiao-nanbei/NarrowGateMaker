@@ -2,9 +2,9 @@
 
 [English](path_conventions.md) | [简体中文](path_conventions.zh-CN.md)
 
-Last materially modified: 2026-09-19
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-19
+Last materially synchronized: 2026-09-26
 
 状态：当前公共路径与隐私合同。变量名和结构化标识与英文版本一致；私有位置不随源码分发。
 
@@ -68,7 +68,7 @@ export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
 
 保留的资金费结算输入位于 `${NARROWGATE_RAW_DATA_ROOT}/accounting/funding/<SYMBOL>/YYYY-MM-DD.parquet`，与购买的盘口／成交及派生产物分开。`daily_market_path(..., "funding")` 解析该会计目录；回测接受工作区根目录或对应交易对的会计目录。迁移保持文件字节不变，更新当前逐日索引并写入私有资金费清单。历史转换回执保留历史定位，不作为当前读取索引。不创建软链接，也不回退到旧目录。
 
-受版本控制的 `live/config.yaml` 只是公开模板。当前私有配置由 ignored 选择器解析，通过 `NARROWGATE_LIVE_CONFIG` 显式传入。它不是启动权威；live 启动仍需独立部署 envelope 和停止状态的交易所核对。冻结历史记录中的 current 占位符不能重绑定到今天的主机。
+受版本控制的 `live/config.yaml` 只是公开模板。当前私有配置由 ignored 选择器解析，通过 `NARROWGATE_LIVE_CONFIG` 显式传入。current 可独立选择已存在但尚未启动的部署版本，不要求也不证明实际激活；激活证据单独保留。它不是启动权威；live 启动仍需独立部署 envelope 和停止状态的交易所核对。冻结历史记录中的 current 占位符不能重绑定到今天的主机。
 
 `make deploy-preflight` 拒绝 `PUBLIC TEMPLATE`；`make publish-source-dry` 和 `make publish-source` 只传输干净公开 Git checkout，不读取私有配置。源码不分发当前运行或回测权威身份；缺失或不匹配的私有输入必须拒绝，live 配置不能代替回测权威。
 

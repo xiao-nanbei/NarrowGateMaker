@@ -2,9 +2,9 @@
 
 [English](path_conventions.md) | [简体中文](path_conventions.zh-CN.md)
 
-Last materially modified: 2026-09-19
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-19
+Last materially synchronized: 2026-09-26
 
 Status: Current public path and privacy contract.
 
@@ -70,7 +70,7 @@ export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
 
 Cross-project private runtime pointers remain under `docs/private/`. Component-local unpublished evidence is owned by the ignored `live/private/`, `data/private/`, `models/private/`, or `execution/private/` root defined in [Non-Research Private Evidence Owners](public_private_documentation_contract.md#evidence-owners-and-local-catalogs). Each concrete research unit also owns an ignored `private/` directory for its artifact catalog and owner-only research context; see [Public Research and Private Evidence Layout](public_private_documentation_contract.md#evidence-owners-and-local-catalogs). None of these private surfaces is published, and a component-private root may not duplicate or override repository-wide current authority.
 
-The physical storage volume, capacity policy, and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the private deployment that was current when that report became effective; it must not be rebound to today's host. Mutable current pointers may advance only after a verified activation receipt is published, and are selectors rather than startup authority. Live startup independently requires the deployment-envelope root and stopped-exchange reconciliation root. Owner-side immutable evidence retains its original private runtime identity. The default cache root follows the bilingual README [Data Layout](../README.md#data-layout) section. Cache is reproducible and disposable; raw inputs, shared canonical data, and frozen evidence never inherit deletion authority merely because they are old. Private evidence paths are resolved through an owner-side locator without publishing their bytes or identity.
+The physical storage volume, capacity policy, and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the private deployment that was current when that report became effective; it must not be rebound to today's host. Mutable current pointers select an existing release independently of activation; they are not startup authority. Actual activation evidence remains separate. Live startup independently requires the deployment-envelope root and stopped-exchange reconciliation root. Owner-side immutable evidence retains its original private runtime identity. The default cache root follows the bilingual README [Data Layout](../README.md#data-layout) section. Cache is reproducible and disposable; raw inputs, shared canonical data, and frozen evidence never inherit deletion authority merely because they are old. Private evidence paths are resolved through an owner-side locator without publishing their bytes or identity.
 
 Repository package names do not identify data-storage roots. `data/` contains offline acquisition and normalization code. `live/orderbook/` contains the in-process execution-market book. Raw files belong under `${NARROWGATE_RAW_DATA_ROOT}` and processed files under `${NARROWGATE_DATA_ROOT}`. Both are real directories: no project symlinks or supplier aliases. Tick replay and mechanics caches belong under `${NARROWGATE_CACHE_ROOT}`; `NARROWGATE_TICK_WINDOW_CACHE_DIR` may override the legacy tick-window subdirectory without changing either data root. `NARROWGATE_REPLAY_DAG_CACHE_DIR` may separately override the component cache; its default is `${NARROWGATE_CACHE_ROOT}/replay_dag`. An external override must remain below `${NARROWGATE_DATA_ROOT}/cache`, not a raw-data or evidence directory. Strategy-dependent order, queue, fill, inventory and campaign paths must never be shared through either cache root.
 

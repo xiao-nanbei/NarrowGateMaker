@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-26
 
 本目录保存可复用的公共运维合同，不得包含当前主机、credential、账户/订单/持仓状态、
 active release identity、private artifact location、策略参数或 live economics。
@@ -38,8 +38,7 @@ identity 留在负责它的 manifest 内；下一层边界只暴露所需的最�
 | Activated live release | activation-receipt root | receipt 已绑定的 runtime identity 与 reconciliation leaf |
 | Research run | source identity、runtime root、input-manifest root 与 output-receipt root | cache key 与每个 input/output leaf |
 
-Mutable current pointer 不自哈希，只包含 release selector、activation-receipt root、schema
-与 status；它不是 health record。Cache hash 只是 cache key，不授予 research 或 live
+Mutable current pointer 不自哈希，只包含 release selector、schema 与 selected-release status，不要求也不证明已激活。激活回执单独保留，启动／恢复在必要边界继续核验；它不是 health record。Cache hash 只是 cache key，不授予 research 或 live
 authority。不得把 leaf identity 复制进 Python constant、environment variable、test、
 Markdown、current pointer 或多层 receipt。
 

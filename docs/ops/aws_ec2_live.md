@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-25
+Last materially synchronized: 2026-09-26
 
-Last materially modified: 2026-09-25
+Last materially modified: 2026-09-26
 
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
@@ -374,13 +374,12 @@ current pointer with `live.deployment_runtime`. The pointer is only a selector:
 ```json
 {
   "release_id": "<release-id>",
-  "activation_receipt_sha256": "<activation-receipt-root>",
   "schema_version": "<current-pointer-schema>",
-  "status": "selected_activation"
+  "status": "selected_release"
 }
 ```
 
-`selected_activation` is lineage state, not a health assertion. Do not expand
+`selected_release` records selection only, not activation or health. `select-current-release --release-id <release-id> --release-root <existing-release-directory> --output <private-current-pointer>` can select an unstarted candidate. Actual activation remains separately recorded and validated. Do not expand
 the pointer with leaf artifact inventories, host routing, account state, or live
 metrics.
 

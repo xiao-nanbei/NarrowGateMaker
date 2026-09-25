@@ -62,9 +62,8 @@ DEPLOYMENT_POLICY_APPROVALS = frozenset(DEPLOYMENT_POLICY_CONFIG_FIELDS)
 ACTIVATION_RECEIPT_SCHEMA = "narrowgate_private_activation_receipt.v1"
 ACTIVATION_RECEIPT_CANONICAL_FIELD = "canonical_sha256"
 ACTIVATION_RECEIPT_STATUS = "activation_complete"
-LEGACY_CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v1"
-CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v2"
-CURRENT_POINTER_STATUS = "selected_activation"
+CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v3"
+CURRENT_POINTER_STATUS = "selected_release"
 STOPPED_RECONCILIATION_SCHEMA = "narrowgate_stopped_exchange_reconciliation.v1"
 STOPPED_RECONCILIATION_CANONICAL_FIELD = "canonical_exchange_reconciliation_sha256"
 STOPPED_RECONCILIATION_STATUS = "signed_open_orders_zero_exact_position_stable"
@@ -3457,75 +3456,63 @@ def load_activation_receipt(
 
 
 def _validate_current_pointer_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    v2_fields = {
-        "schema_version",
-        "release_id",
-        "activation_receipt_sha256",
-        "status",
-    }
-    v1_fields = {
-        *v2_fields,
-        "deployment_envelope_sha256",
-    }
-    schema = payload.get("schema_version")
-    if schema == CURRENT_POINTER_SCHEMA:
-        expected_fields = v2_fields
-    elif schema == LEGACY_CURRENT_POINTER_SCHEMA:
-        expected_fields = v1_fields
-    else:
+    if payload.get("schema_version") != CURRENT_POINTER_SCHEMA:
         raise LockedRuntimeError("current pointer schema drifted")
-    if set(payload) != expected_fields:
+    if set(payload) != {"schema_version", "release_id", "status"}:
         raise LockedRuntimeError("current pointer fields drifted")
     if payload.get("status") != CURRENT_POINTER_STATUS:
         raise LockedRuntimeError("current pointer status drifted")
     _require_release_id(payload.get("release_id"))
-    if schema == LEGACY_CURRENT_POINTER_SCHEMA:
-        _require_exact_sha256(
-            payload.get("deployment_envelope_sha256", ""),
-            "current pointer deployment envelope",
-        )
-    _require_exact_sha256(
-        payload.get("activation_receipt_sha256", ""),
-        "current pointer activation receipt",
-    )
     return payload
 
 
 def load_current_pointer(
     path: Path,
     *,
-    deployment_envelope_path: Path,
-    activation_receipt_path: Path,
+    deployment_envelope_path: Path | None = None,
+    activation_receipt_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Resolve a current pointer through its immutable activation root."""
-
+    """Read selection only; optional activation evidence is independently verified."""
     pointer_path = _absolute(path)
     raw = _read_regular_file(pointer_path, private_authority=True)
     pointer = _validate_current_pointer_payload(_load_json_bytes(raw, str(pointer_path)))
-    receipt = _load_activation_receipt_payload(
-        activation_receipt_path,
-        expected_root_sha256=pointer["activation_receipt_sha256"],
-        expected_release_id=pointer["release_id"],
-    )
-    receipt_envelope_root = str(receipt["deployment_envelope_sha256"])
-    if pointer["schema_version"] == LEGACY_CURRENT_POINTER_SCHEMA:
-        pointer_envelope_root = str(pointer["deployment_envelope_sha256"])
-        if pointer_envelope_root != receipt_envelope_root:
-            raise LockedRuntimeError("current pointer deployment envelope lineage drifted")
-        expected_envelope_root = pointer_envelope_root
-    else:
-        expected_envelope_root = receipt_envelope_root
-    _validated_deployment_envelope_root(
-        deployment_envelope_path,
-        expected_root_sha256=expected_envelope_root,
-    )
+    result = {"pointer": pointer, "path": str(pointer_path)}
+    if (deployment_envelope_path is None) != (activation_receipt_path is None):
+        raise LockedRuntimeError("activation verification requires envelope and receipt")
+    if activation_receipt_path is not None:
+        payload, _ = _load_canonical_authority(
+            activation_receipt_path,
+            schema=ACTIVATION_RECEIPT_SCHEMA,
+            canonical_field=ACTIVATION_RECEIPT_CANONICAL_FIELD,
+        )
+        receipt = _load_activation_receipt_payload(
+            activation_receipt_path,
+            expected_root_sha256=payload[ACTIVATION_RECEIPT_CANONICAL_FIELD],
+            expected_release_id=pointer["release_id"],
+        )
+        _validated_deployment_envelope_root(
+            deployment_envelope_path,
+            expected_root_sha256=receipt["deployment_envelope_sha256"],
+        )
+        result["activation_receipt"] = receipt
     if _read_regular_file(pointer_path, private_authority=True) != raw:
-        raise LockedRuntimeError("current pointer changed during lineage validation")
-    return {
-        "pointer": pointer,
-        "path": str(pointer_path),
-        "activation_receipt": receipt,
+        raise LockedRuntimeError("current pointer changed during validation")
+    return result
+
+
+def select_current_release(*, release_id: str, release_root: Path, output_path: Path) -> dict[str, Any]:
+    """Select an installed directory without creating activation or trading authority."""
+    release_id = _require_release_id(release_id)
+    root = _absolute(release_root)
+    if root.is_symlink() or not root.is_dir() or root.name != release_id:
+        raise LockedRuntimeError("selected release must be its real existing directory")
+    pointer = {
+        "schema_version": CURRENT_POINTER_SCHEMA,
+        "release_id": release_id,
+        "status": CURRENT_POINTER_STATUS,
     }
+    _write_json_pointer_atomic(output_path, pointer)
+    return load_current_pointer(output_path)
 
 
 def publish_current_pointer(
@@ -3564,7 +3551,6 @@ def publish_current_pointer(
     pointer = {
         "schema_version": CURRENT_POINTER_SCHEMA,
         "release_id": normalized_release_id,
-        "activation_receipt_sha256": receipt_root,
         "status": CURRENT_POINTER_STATUS,
     }
     _write_json_pointer_atomic(output_path, pointer)
@@ -3691,9 +3677,14 @@ def _build_parser() -> argparse.ArgumentParser:
     activation.add_argument("--runtime-identity", type=Path, required=True)
     activation.add_argument("--output", type=Path, required=True)
 
+    selection = subparsers.add_parser("select-current-release", help="select a release without starting trading")
+    selection.add_argument("--release-id", required=True)
+    selection.add_argument("--release-root", type=Path, required=True)
+    selection.add_argument("--output", type=Path, required=True)
+
     current = subparsers.add_parser(
         "publish-current-pointer",
-        help="validate activation lineage and atomically publish its four-field pointer",
+        help="validate activation separately and atomically select its release",
     )
     current.add_argument("--release-id", required=True)
     current.add_argument("--deployment-envelope", type=Path, required=True)
@@ -3874,6 +3865,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     separators=(",", ":"),
                 )
             )
+            return 0
+        if args.command == "select-current-release":
+            result = select_current_release(release_id=args.release_id, release_root=args.release_root, output_path=args.output)
+            print(json.dumps(result, sort_keys=True))
             return 0
         if args.command == "publish-current-pointer":
             result = publish_current_pointer(

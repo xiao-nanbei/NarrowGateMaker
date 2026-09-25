@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-25
+Last materially synchronized: 2026-09-26
 
-Last materially modified: 2026-09-25
+Last materially modified: 2026-09-26
 
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
@@ -337,13 +337,12 @@ Health admission 通过后，用 `live.deployment_runtime` 创建新 activation 
 ```json
 {
   "release_id": "<release-id>",
-  "activation_receipt_sha256": "<activation-receipt-root>",
   "schema_version": "<current-pointer-schema>",
-  "status": "selected_activation"
+  "status": "selected_release"
 }
 ```
 
-`selected_activation` 是 lineage state，不是 health assertion。不得向 pointer 添加 leaf
+`selected_release` 仅记录版本选择，不代表激活或健康状态。`select-current-release --release-id <release-id> --release-root <existing-release-directory> --output <private-current-pointer>` 可选择未启动候选；实际激活仍单独记录并核验。不得向 pointer 添加 leaf
 artifact inventory、host routing、账户状态或 live metric。
 
 ## Live 热路径运行合同

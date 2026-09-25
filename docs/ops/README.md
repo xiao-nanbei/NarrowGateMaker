@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-06
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-06
+Last materially synchronized: 2026-09-26
 
 This directory contains reusable public operations contracts. It must not contain
 current hosts, credentials, account/order/position state, active release
@@ -43,7 +43,7 @@ expose only the smallest root set required by the next boundary.
 | Research run | Source identity, runtime root, input-manifest root, and output-receipt root | Cache keys and every input/output leaf |
 
 The mutable current pointer has no self-hash. It contains only the release
-selector, activation-receipt root, schema, and status. It is not a health record.
+selector, schema, and selected-release status. It neither requires nor proves activation. Activation receipts remain separate; startup/recovery still validate them where required. It is not a health record.
 Cache hashes are cache keys only and never grant research or live authority. Do
 not copy leaf identities into Python constants, environment variables, tests,
 Markdown, current pointers, or multiple receipts.

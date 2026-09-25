@@ -1230,14 +1230,14 @@ def render_prepared_release_activation_shell(
         "deployment_envelope_path=Path(sys.argv[3]),"
         "activation_receipt_path=Path(sys.argv[4]));p=v['pointer'];"
         "assert p['release_id']==sys.argv[5];"
-        "assert p['activation_receipt_sha256']==sys.argv[6]"
+        "assert v['activation_receipt']['canonical_sha256']==sys.argv[6]"
     )
     previous_pointer_check = (
         "import json,re,sys;v=json.load(open(sys.argv[1]));"
-        "assert v.get('schema_version')=='narrowgate_live_current_pointer.v2';"
+        "assert v.get('schema_version')=='narrowgate_live_current_pointer.v3';"
         "assert v.get('release_id')==sys.argv[2];"
-        "assert v.get('status')=='selected_activation';"
-        "assert re.fullmatch('[0-9a-f]{64}',v.get('activation_receipt_sha256',''))"
+        "assert v.get('status')=='selected_release';"
+        "assert set(v)=={'schema_version','release_id','status'}"
     )
     script = f"""set -Eeuo pipefail
 umask 077
