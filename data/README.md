@@ -2,8 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-25
-Last materially synchronized: 2026-09-25
+Last materially modified: 2026-09-26
+Last materially synchronized: 2026-09-26
 
 One public `data` layer owns acquisition, facts, observations and input contracts. Users select market/channel/date, not a supplier. Delivery addresses and account configuration stay private. Internal adapters and manifests retain real origin; neutral naming does not erase lineage. Licensed market records are not distributed with the source repository.
 
@@ -25,7 +25,9 @@ Retaining a tool does not admit its output into an experiment. Current F03 books
 
 `narrowgate data ...` calls this implementation. Download always uses the private resumable archive-only configuration: no implicit fusion, source retirement or alternate-source fallback. A 202 stays pending with backoff while other due files progress; it is not an empty successful file. Compression and configured content checks precede completion. Existing per-file/assignment locks and durable receipts remain in use, including by already running jobs.
 
-Retain purchased compressed originals under **raw**, including purchases below `.incoming`. Determine XZ/Zstandard by actual compression. Facts, observations, Bars and features belong under the separate **derived** root. Use real directories, no supplier aliases or symlinks. Temporary work may use another volume, but atomic publication occurs on the destination filesystem. Never publish private delivery configuration or purchased records.
+Retain completed purchased compressed originals under **raw/<retained-batch>**, preserving the batch's internal paths and delivery state. `.incoming` is for unfinished transfers, not the permanent archive; its name never grants deletion authority. The download configuration selects an explicit batch root; the non-delivery entry requires `--output-root` or the configured purchased root, with no implicit `.incoming` destination. Determine XZ/Zstandard by actual compression. Facts, observations, Bars and features belong under the separate **derived** root. Use real directories, no supplier aliases or symlinks. Temporary work may use another volume, but atomic publication occurs on the destination filesystem. Never publish private delivery configuration or purchased records.
+
+Relocate a retained batch only after its download, mirror and queued raw readers reach a safe boundary. Same-volume rename preserves bytes but does not atomically update configuration. Frozen facts/consumer manifests retain their historical bytes and paths; calendar reuse currently also checks the original source paths and full plan, so do not move a batch until that operational dependency is addressed explicitly. Raw relocation does not require rebuilding models or imply freed disk space. Delete verified, completed transport wrappers only after checking their retained source and pending users; reproducible caches remain protected while active or needed for recovery. Reports may be unique private evidence, not disposable cache.
 
 [dataset_scope.json](dataset_scope.json) fixes **407 UTC dates, 2025-08-01..2026-09-11**: Binance USD-M perpetual BTCUSDC execution and BTCUSDT reference, each with L2 and trades. Context files do not enlarge the denominator. Missing/stale/difficult dates stay present. Availability, content acceptance, model support, previous-use and economic admission remain separate.
 

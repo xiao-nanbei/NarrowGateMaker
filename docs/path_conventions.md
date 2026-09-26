@@ -76,7 +76,7 @@ Repository package names do not identify data-storage roots. `data/` contains of
 
 ## Market-Data Tree
 
-The current public interface is `data`; the [data guide](../data/README.md) owns its input and storage contract. Download endpoints and account details stay in private configuration. Licensed compressed purchases remain below the raw root, including retained batches under `.incoming`; that directory name does not grant deletion authority. Normalized facts and later observations, Bars and features belong under the separate derived root.
+The current public interface is `data`; the [data guide](../data/README.md) owns its input and storage contract. Download endpoints and account details stay in private configuration. Completed licensed compressed purchases belong in `raw/<retained-batch>` with their internal layout and delivery state unchanged; `.incoming` is reserved for unfinished transfers, not permanent retention. Directory names never grant deletion authority. Existing raw readers and frozen-source reuse must be accounted for before relocation; no compatibility symlink or global path-prefix fallback is introduced. Normalized facts and later observations, Bars and features belong under the separate derived root.
 
 ```text
 <market-data-workspace>/

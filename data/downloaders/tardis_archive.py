@@ -46,10 +46,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from data_paths import daily_market_path, marketdata_root, raw_data_root  # noqa: E402
+from data_paths import daily_market_path, marketdata_root, raw_data_root, tardis_raw_root  # noqa: E402
 
 DEFAULT_BASE_URL = "https://data.yutsing.work/0730-beinan/tardis"
-DEFAULT_OUTPUT_ROOT = raw_data_root() / ".incoming" / "tardis"
+# Historical manifest resolution only; never a destination for new downloads.
+HISTORICAL_ARTIFACT_ROOT = raw_data_root() / ".incoming" / "tardis"
 LEGACY_OUTPUT_ROOT = marketdata_root() / "tardis" / "0730-beinan"
 GIB = 1024**3
 
@@ -64,8 +65,16 @@ def resolve_tardis_artifact_path(path: Path | str) -> Path:
         relative = candidate.relative_to(LEGACY_OUTPUT_ROOT)
     except ValueError:
         return candidate
-    relocated = DEFAULT_OUTPUT_ROOT / relative
+    relocated = HISTORICAL_ARTIFACT_ROOT / relative
     return relocated if relocated.exists() else candidate
+
+
+def _archive_output_root(explicit: Path | None) -> Path:
+    """Require one selected retained batch, without inventing a staging root."""
+    selected = explicit if explicit is not None else tardis_raw_root()
+    if selected is None:
+        raise ValueError("set --output-root or configure the retained purchased archive root")
+    return Path(selected).expanduser().resolve()
 
 
 @dataclass(frozen=True)
@@ -1146,7 +1155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
     if args.start is None or args.end is None or not args.contract:
         _parser().error("--start, --end and --contract are required without --delivery-config")
-    output_root = (args.output_root or DEFAULT_OUTPUT_ROOT).expanduser().resolve()
+    output_root = _archive_output_root(args.output_root)
     plan = build_plan(
         base_url=args.base_url,
         contracts=args.contract,

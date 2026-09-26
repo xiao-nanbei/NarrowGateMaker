@@ -17,11 +17,17 @@ from data.downloaders.tardis_archive import (
 )
 
 
-def test_default_delivery_is_ingestion_staging_not_research_root() -> None:
-    from data.downloaders.tardis_archive import DEFAULT_OUTPUT_ROOT
-    from data_paths import raw_data_root
+def test_archive_output_requires_selected_retained_batch(monkeypatch, tmp_path) -> None:
+    from data.downloaders import tardis_archive as archive
 
-    assert DEFAULT_OUTPUT_ROOT == raw_data_root() / ".incoming" / "tardis"
+    monkeypatch.setattr(archive, "tardis_raw_root", lambda: None)
+    with pytest.raises(ValueError, match="retained purchased archive root"):
+        archive._archive_output_root(None)
+    configured = tmp_path / "raw" / "retained-purchase"
+    explicit = tmp_path / "raw" / "other-purchase"
+    monkeypatch.setattr(archive, "tardis_raw_root", lambda: configured)
+    assert archive._archive_output_root(None) == configured
+    assert archive._archive_output_root(explicit) == explicit
 
 
 def test_contract_and_target_identity() -> None:
@@ -32,6 +38,20 @@ def test_contract_and_target_identity() -> None:
         "binance-futures/incremental_book_L2/2026/01/02/BTCUSDC.csv.zst"
     )
     assert url == f"https://example.test/tardis/{relative}"
+
+
+def test_missing_archive_root_fails_before_network(monkeypatch) -> None:
+    from data.downloaders import tardis_archive as archive
+
+    monkeypatch.setattr(archive, "tardis_raw_root", lambda: None)
+
+    def unexpected_network(**kwargs):
+        raise AssertionError("must not inspect remote files without an output root")
+
+    monkeypatch.setattr(archive, "build_plan", unexpected_network)
+    with pytest.raises(ValueError, match="retained purchased archive root"):
+        archive.main(["--start", "2026-01-02", "--end", "2026-01-02",
+                      "--contract", "binance-futures,trades,BTCUSDC", "--plan-only"])
 
 
 def test_day_range_is_closed_and_chronological() -> None:
@@ -113,7 +133,7 @@ def test_relocated_tardis_path_resolves_only_when_target_exists(
     relocated = direct / "binance-futures/book_ticker/file.csv.zst"
     relocated.parent.mkdir(parents=True)
     relocated.write_bytes(b"payload")
-    monkeypatch.setattr("data.downloaders.tardis_archive.DEFAULT_OUTPUT_ROOT", direct)
+    monkeypatch.setattr("data.downloaders.tardis_archive.HISTORICAL_ARTIFACT_ROOT", direct)
     monkeypatch.setattr("data.downloaders.tardis_archive.LEGACY_OUTPUT_ROOT", legacy)
 
     assert resolve_tardis_artifact_path(

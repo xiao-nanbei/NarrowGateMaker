@@ -47,7 +47,7 @@ export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
 
 ## 当前行情目录
 
-公开入口统一为 `data`，当前合同以[数据指南](../data/README.zh-CN.md)为准。下载地址和账户信息留在私有配置。购买的压缩原件保留在 raw，包括 `.incoming` 下的保留批次；目录名不授予删除权。规范化事实和后续观察、Bar、特征写入独立 derived。
+公开入口统一为 `data`，当前合同以[数据指南](../data/README.zh-CN.md)为准。下载地址和账户信息留在私有配置。已完成购买的压缩原件保留在 `raw/<保留批次>`，内部布局与交付状态不变；`.incoming` 只用于未完成传输，不作常驻原件库。目录名不授予删除权。搬迁前必须处理现有原件读取和冻结来源复用依赖，不引入兼容软链接或全局路径前缀回退。规范化事实和后续观察、Bar、特征写入独立 derived。
 
 ```text
 <market-data-workspace>/
