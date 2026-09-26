@@ -192,3 +192,82 @@ def test_calendar_resume_rejects_modified_original(tmp_path):
     _calendar_raw(tmp_path, "2025-08-01", trade_id=9)
     result = materialize_calendar(root, tmp_path / "out", **kwargs)
     assert result["summary"] == {"failed": 1}
+
+
+def test_explicit_source_location_reuse_preserves_frozen_bundle(tmp_path):
+    from data.facts import _calendar_day_task, calendar_plan, materialize_calendar, read_facts, validate_calendar
+    root = _calendar_raw(tmp_path, "2025-08-01")
+    output = tmp_path / "out"
+    result = materialize_calendar(root, output, start="2025-08-01", end="2025-08-01", symbols=["BTCUSDC"], workers=1)
+    daily = output / "2025-08-01"
+    original = (daily / "manifest.json").read_bytes()
+    calendar_bytes = (output / "manifest.json").read_bytes()
+    events = list(read_facts(daily))
+    new = tmp_path / "retained"
+    root.rename(new)
+    plan = calendar_plan(new, start="2025-08-01", end="2025-08-01", symbols=["BTCUSDC"], channels=["incremental_book_L2", "trades"])
+    plan["build_identity"] = "f" * 64
+    with pytest.raises(ValueError, match="source plan/parser"):
+        _calendar_day_task(plan, daily, "f" * 64)
+    reused = _calendar_day_task(plan, daily, "f" * 64, result["build_identity"])
+    assert reused["source_build_identity"] == result["build_identity"]
+    assert validate_calendar(output, raw_root=new)["dates"] == 1
+    assert list(read_facts(daily)) == events
+    assert (daily / "manifest.json").read_bytes() == original
+    assert (output / "manifest.json").read_bytes() == calendar_bytes
+    assert not root.exists()
+
+
+def test_explicit_source_location_rejects_other_content_identity_and_missing(tmp_path):
+    import copy
+    import os
+    import shutil
+    from pathlib import Path
+    from data.facts import _calendar_day_task, calendar_plan, materialize_calendar
+    root = _calendar_raw(tmp_path, "2025-08-01")
+    result = materialize_calendar(root, tmp_path / "out", start="2025-08-01", end="2025-08-01", symbols=["BTCUSDC"], workers=1)
+    new = tmp_path / "retained"
+    shutil.copytree(root, new)
+    plan = calendar_plan(new, start="2025-08-01", end="2025-08-01", symbols=["BTCUSDC"], channels=["incremental_book_L2", "trades"])
+    plan["build_identity"] = result["build_identity"]
+    for mutation in ("symbol", "file_date", "order", "mapper"):
+        wrong = copy.deepcopy(plan)
+        if mutation == "order":
+            wrong["files"].reverse()
+        elif mutation == "mapper":
+            wrong["mapper_evidence"] = "changed"
+        else:
+            wrong["files"][0][mutation] = "changed"
+        with pytest.raises(ValueError, match="identity|source plan/parser"):
+            _calendar_day_task(wrong, tmp_path / "out/2025-08-01", result["build_identity"])
+    source = Path(plan["files"][0]["path"])
+    stat = source.stat()
+    contents = source.read_bytes()
+    source.write_bytes(bytes([contents[0] ^ 1]) + contents[1:])
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    with pytest.raises(ValueError, match="content changed"):
+        _calendar_day_task(plan, tmp_path / "out/2025-08-01", result["build_identity"])
+    source.unlink()
+    with pytest.raises(FileNotFoundError):
+        _calendar_day_task(plan, tmp_path / "out/2025-08-01", result["build_identity"])
+    assert root.exists()  # An available historical source is deliberately not used.
+
+
+def test_calendar_explicit_historical_reuse_does_not_relabel_new_parser(tmp_path, monkeypatch):
+    from data import facts
+    root = _calendar_raw(tmp_path, "2025-08-01")
+    original = facts.materialize_calendar(root, tmp_path / "out", start="2025-08-01", end="2025-08-01",
+                                         symbols=["BTCUSDC"], workers=1)
+    before = (tmp_path / "out/2025-08-01/manifest.json").read_bytes()
+    monkeypatch.setattr(facts, "_build_identity", lambda: "f" * 64)
+    _calendar_raw(tmp_path, "2025-08-02", trade_id=2)
+    result = facts.materialize_calendar(root, tmp_path / "out", start="2025-08-01", end="2025-08-02",
+                                       symbols=["BTCUSDC"], workers=1,
+                                       reuse_build_identity=original["build_identity"])
+    assert result["status"] == "full_content_scanned"
+    assert [d["source_build_identity"] for d in result["days"]] == [original["build_identity"], "f" * 64]
+    assert (tmp_path / "out/2025-08-01/manifest.json").read_bytes() == before
+    resumed = facts.materialize_calendar(root, tmp_path / "out", start="2025-08-01", end="2025-08-02",
+                                        symbols=["BTCUSDC"], workers=1,
+                                        reuse_build_identity=original["build_identity"])
+    assert resumed["status"] == "full_content_scanned"

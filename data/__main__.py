@@ -37,12 +37,14 @@ def main(argv=None):
     calendar.add_argument("--end", required=True)
     calendar.add_argument("--symbol", action="append", choices=("BTCUSDC", "BTCUSDT"), required=True)
     calendar.add_argument("--workers", type=int, default=4)
+    calendar.add_argument("--reuse-build-identity", help="Explicit frozen parser digest for existing days only; new days use current parser")
     derive = commands.add_parser("derive", help="Build causal Bars, depth observations and model FeatureFrames")
     derive.add_argument("--plan", type=Path, required=True)
     derive.add_argument("--output", type=Path, required=True)
     acceptance = commands.add_parser("validate-calendar", help="Verify every full-scan output and retain all daily findings")
     acceptance.add_argument("--bundle", type=Path, required=True)
     acceptance.add_argument("--output", type=Path, required=True)
+    acceptance.add_argument("--raw-root", type=Path, help="Explicit current original directory; verify moved files against frozen source digests")
     args = parser.parse_args(argv)
     if args.command == "download":
         # Only the private resumable archive route is current. Never enter the
@@ -57,7 +59,7 @@ def main(argv=None):
     from data.facts import calendar_plan, inventory_calendar, materialize, save_private_json, validate_bundle
     if args.command == "validate-calendar":
         from data.facts import validate_calendar
-        result = validate_calendar(args.bundle)
+        result = validate_calendar(args.bundle, raw_root=args.raw_root)
         save_private_json(args.output, result)
         print(json.dumps({"status": result["status"], "dates": result["dates"], "totals": result["totals"]}))
         return 0
@@ -69,7 +71,8 @@ def main(argv=None):
     if args.command == "build-calendar":
         from data.facts import materialize_calendar
         result = materialize_calendar(args.root, args.output, start=args.start, end=args.end,
-                                      symbols=args.symbol, workers=args.workers)
+                                      symbols=args.symbol, workers=args.workers,
+                                      reuse_build_identity=args.reuse_build_identity)
         return 0 if result["status"] == "full_content_scanned" else 2
     if args.command == "validate":
         result = validate_bundle(args.bundle)

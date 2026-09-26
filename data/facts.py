@@ -392,23 +392,51 @@ def _build_identity():
     return hashlib.sha256("".join(_digest(Path(__file__).with_name(n)) for n in names).encode()).hexdigest()
 
 
-def _calendar_day_task(plan, output, build_identity):
+def _check_day_sources(plan, result):
+    """Bind explicit current locations to an immutable ordered source plan.
+
+    No historical path is resolved or searched. Changed locations require the
+    recorded content digest; unchanged locations retain the existing stat check.
+    Parser identity and every non-location plan field must still match.
+    """
+    original = result["plan"]
+    if ({k: v for k, v in original.items() if k != "files"}
+            != {k: v for k, v in plan.items() if k != "files"}
+            or len(original["files"]) != len(plan["files"])
+            or len(plan["files"]) != len(result["files"])):
+        raise ValueError("existing day belongs to another source plan/parser; no overwrite")
+    for old, current, record in zip(original["files"], plan["files"], result["files"], strict=True):
+        if ({k: v for k, v in old.items() if k != "path"}
+                != {k: v for k, v in current.items() if k != "path"}
+                or old["path"] != record["source_path"]
+                or any(current[k] != record[k] for k in ("symbol", "channel"))):
+            raise ValueError("ordered source identity changed")
+        source = _real(Path(current["path"]))
+        stat = source.stat()
+        if (stat.st_size, stat.st_mtime_ns) != (record["source_size_bytes"], record["source_mtime_ns"]):
+            raise ValueError("completed day source changed; no silent cache reuse")
+        if current["path"] != old["path"] and _digest(source) != record["source_sha256"]:
+            raise ValueError("relocated source content changed")
+
+
+def _calendar_day_task(plan, output, build_identity, reuse_build_identity=None):
     output = Path(output)
+    if plan["build_identity"] != build_identity:
+        raise ValueError("worker implementation drift")
     if output.exists():
         result = json.loads((output / "manifest.json").read_text())
-        if result.get("plan") != plan:
+        source_build = result["plan"]["build_identity"]
+        if source_build != build_identity and (reuse_build_identity is None or source_build != reuse_build_identity):
             raise ValueError("existing day belongs to another source plan/parser; no overwrite")
+        reuse_plan = dict(plan, build_identity=source_build)
+        _check_day_sources(reuse_plan, result)
         for record in result["files"]:
-            source = Path(record["source_path"])
-            stat = source.stat()
-            if (stat.st_size != record["source_size_bytes"] or stat.st_mtime_ns != record["source_mtime_ns"]
-                    or _digest(output / record["file"]) != record["sha256"]):
+            if _digest(output / record["file"]) != record["sha256"]:
                 raise ValueError("completed day changed; no silent cache reuse")
     else:
         result = materialize(plan, output)
-    if plan["build_identity"] != build_identity:
-        raise ValueError("worker implementation drift")
     return {"calendar_date": plan["calendar_start"], "status": "content_scanned",
+            "source_build_identity": result["plan"]["build_identity"],
             "bundle": str(output), "manifest_sha256": _digest(output / "manifest.json"),
             "files": result["files"], "research_use": "unchanged_requires_explicit_split_manifest",
             "economic_admission": False}
@@ -476,7 +504,7 @@ def _calendar_boundaries(days):
             "identity_conflicts": 0, "native_sequence_continuity": "unknown"}
 
 
-def materialize_calendar(root, output, *, start, end, symbols, workers=4):
+def materialize_calendar(root, output, *, start, end, symbols, workers=4, reuse_build_identity=None):
     """Resumable fixed-calendar full-content build, one atomic bundle per day.
 
     Workers parse complete originals, never independent partial snapshots.
@@ -485,6 +513,9 @@ def materialize_calendar(root, output, *, start, end, symbols, workers=4):
     """
     if type(workers) is not int or not 1 <= workers <= 32:
         raise ValueError("workers must be between 1 and 32")
+    if reuse_build_identity is not None and (not isinstance(reuse_build_identity, str)
+            or len(reuse_build_identity) != 64 or any(c not in "0123456789abcdef" for c in reuse_build_identity)):
+        raise ValueError("reuse_build_identity must be the explicit frozen parser digest")
     output = _real(Path(output))
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_fd = os.open(output / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
@@ -501,6 +532,8 @@ def materialize_calendar(root, output, *, start, end, symbols, workers=4):
                   "visibility": "local_only_do_not_publish", "start": start, "end": end,
                   "symbols": symbols, "status": "running", "days": [],
                   "training": "not_run", "economic_replay": "not_run"}
+        if reuse_build_identity is not None:
+            result["reuse_build_identity"] = reuse_build_identity
         rows = {r["calendar_date"]: {"calendar_date": r["calendar_date"], "status": "pending",
                 "research_use": r["research_use"], "economic_admission": False} for r in selected}
 
@@ -518,7 +551,8 @@ def materialize_calendar(root, output, *, start, end, symbols, workers=4):
                     plan = calendar_plan(root, start=day, end=day, symbols=symbols,
                                          channels=["incremental_book_L2", "trades"])
                     plan["build_identity"] = identity
-                    futures[executor.submit(_calendar_day_task, plan, output / day, identity)] = day
+                    futures[executor.submit(_calendar_day_task, plan, output / day, identity,
+                                            reuse_build_identity)] = day
                 except Exception as exc:
                     rows[day].update(status="blocked", reason=str(exc))
             for future in as_completed(futures):
@@ -541,12 +575,13 @@ def materialize_calendar(root, output, *, start, end, symbols, workers=4):
         os.close(lock_fd)
 
 
-def validate_calendar(root):
+def validate_calendar(root, *, raw_root=None):
     """Verify every published day's bytes and summarize the complete scan.
 
     The original build already decompressed every source row. This checks its
-    current source stat binding and complete derived checksums, not a second
-    raw parse. Findings remain on their original dates; no economic admission.
+    source binding and complete derived checksums, not a second raw parse.
+    An explicit new raw root additionally verifies moved source digests.
+    Findings remain on their original dates; no economic admission.
     """
     root = _real(Path(root))
     manifest = json.loads((root / "manifest.json").read_text())
@@ -564,6 +599,11 @@ def validate_calendar(root):
         if _digest(bundle / "manifest.json") != row["manifest_sha256"]:
             raise ValueError("daily manifest changed")
         daily = json.loads((bundle / "manifest.json").read_text())
+        if raw_root is not None:
+            current_plan = calendar_plan(raw_root, start=row["calendar_date"], end=row["calendar_date"],
+                                         symbols=manifest["symbols"], channels=["incremental_book_L2", "trades"])
+            current_plan["build_identity"] = daily["plan"]["build_identity"]
+            _check_day_sources(current_plan, daily)
         if [(f["symbol"], f["channel"]) for f in daily["files"]] != [
                 (s, c) for s in manifest["symbols"] for c in ("incremental_book_L2", "trades")]:
             raise ValueError("required channel identity mismatch")
@@ -571,10 +611,11 @@ def validate_calendar(root):
         for item, linked in zip(daily["files"], row["files"], strict=True):
             if any(item.get(k) != linked.get(k) for k in ("file", "sha256", "quality", "source_sha256")):
                 raise ValueError("calendar/daily source binding mismatch")
-            source = _real(Path(item["source_path"]))
-            stat = source.stat()
-            if (stat.st_size, stat.st_mtime_ns) != (item["source_size_bytes"], item["source_mtime_ns"]):
-                raise ValueError("source changed since full content scan")
+            if raw_root is None:
+                source = _real(Path(item["source_path"]))
+                stat = source.stat()
+                if (stat.st_size, stat.st_mtime_ns) != (item["source_size_bytes"], item["source_mtime_ns"]):
+                    raise ValueError("source changed since full content scan")
             shard = _real(bundle / item["file"])
             if shard.parent != bundle or _digest(shard) != item["sha256"]:
                 raise ValueError("normalized fact bytes changed")
@@ -597,11 +638,13 @@ def validate_calendar(root):
                 "status": "readable_with_findings" if findings else "content_verified",
                 "sequence_continuity": "unknown"})
         days.append({"calendar_date": row["calendar_date"], "channels": channels,
+                     "source_build_identity": daily["plan"]["build_identity"],
                      "research_use": row["research_use"], "economic_admission": False})
     return {"schema": "data.calendar_acceptance.v1", "visibility": "local_only_do_not_publish",
         "calendar_manifest_sha256": _digest(root / "manifest.json"), "start": expected[0], "end": expected[-1],
         "dates": len(days), "status": "content_verified_with_disclosed_quality",
-        "verification": "full_source_parse_at_build_plus_current_fact_hash_and_source_stat",
+        "verification": ("full_source_parse_at_build_plus_current_fact_hash_and_explicit_source_binding"
+                         if raw_root is not None else "full_source_parse_at_build_plus_current_fact_hash_and_source_stat"),
         "source_build_identity": manifest["build_identity"], "totals": totals,
         "boundary_checks": manifest.get("boundary_checks"), "days": days,
         "observation_and_replay_acceptance": "separate_required", "economic_admission": False,
