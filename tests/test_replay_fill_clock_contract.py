@@ -2,9 +2,13 @@
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 
 from models import backtest_tick as bt
 from tests.test_python_planned_maintenance_replay import _inputs, _params
+from tests.test_python_planned_maintenance_replay import _ioc_inventory_path, _run
 
 
 def test_cross_order_notification_reordering_preserves_each_match_clock(monkeypatch):
@@ -54,3 +58,32 @@ def test_cross_order_notification_reordering_preserves_each_match_clock(monkeypa
     # Matching inventory is required by settlement even without serial REST.
     assert result["exchange_inventory_at_window_end"] == 0.0
     assert result["economic_match_inventory"] == 0.0
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_mixed_fill_clock_context_parquet_roundtrip(tmp_path, initial_sign):
+    passive = _run(
+        crossing_fill_ts_ms=1_100,
+        param_overrides={"_private_fill_visibility_latency_samples_ms": [20.0]},
+    )["_fill_trace"]
+    ioc = _ioc_inventory_path(initial_sign=initial_sign)["_fill_trace"]
+    rows = passive + ioc
+    clocks = [row["fill_clock_context"] for row in rows]
+    assert {c["path"] for c in clocks} == {"passive", "ioc"}
+    assert all(c.keys() == clocks[0].keys() for c in clocks)
+    for clock in clocks:
+        if clock["path"] == "passive":
+            assert clock["match_processed_ts_ms"] is None
+            assert clock["exchange_reserved"] is True
+        else:
+            assert type(clock["match_processed_ts_ms"]) is int
+            assert clock["exchange_reserved"] is None
+    frame = pd.DataFrame(rows)
+    path = tmp_path / "fills.parquet"
+    frame.to_parquet(path, index=False)
+    assert pd.read_parquet(path).equals(frame)
+    # Nullable timestamps remain integer-valued on disk, not floating clocks.
+    schema = pq.read_schema(path).field("fill_clock_context").type
+    for name in ("match_ts_ms", "visible_ts_ms", "processed_ts_ms",
+                 "match_processed_ts_ms", "indexed_trade_ts_ms", "outer_loop_ts_ms"):
+        assert schema.field(name).type == pa.int64()

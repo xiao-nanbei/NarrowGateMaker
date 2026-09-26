@@ -25621,7 +25621,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             row.update(_order_trace_fields(order))
         if clock_context is not None:
             row["fill_clock_context"] = dict(
-                clock_context,
+                # A single nullable struct for passive and IOC fills. Arrow
+                # otherwise adds absent keys only on Parquet readback.
+                {"exchange_reserved": None, "match_processed_ts_ms": None,
+                 **clock_context},
                 input_event_index=int(idx) + _tick_state.input_event_offset,
                 indexed_trade_ts_ms=int(_tick_state.trade_ts[idx]),
                 outer_loop_ts_ms=int(_tick_state.t),
