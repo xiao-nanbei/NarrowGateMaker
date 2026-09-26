@@ -40,7 +40,7 @@ Last materially synchronized: 2026-09-26
 - [数据](../data/README.zh-CN.md)：`python -m data` 与显式历史适配器。
 - [模型](../models/README.zh-CN.md)：`models/backtest_tick.py` 是 Python 参考执行器，不再并入无关工具。
 - [研究](../research/README.zh-CN.md)：[407日清单](../research/recompute_407.json)及选定实验定义当前输入、方法和权限；旧关闭状态不阻止新研究。
-- F01 参数工具：`research/families/f01_fixed_parameter_racing/` 下的 `campaign_outcome_replay_audit.py`、`parameter_racing_sweep.py`、`parameter_selection.py`。既有配对实验使用 `build_paired_daily_evidence()` 与 `audit/paired_screening.py`；`paired_daily_selection()` 仅供兼容。
+- F01 当前公共输入入口：[`public_input.py`](../research/families/f01_fixed_parameter_racing/public_input.py) 的 `iter_parameter_candidates()` 独立运行各臂，`replay_economic_candidates()` 添加完整统一结算。`campaign_outcome_replay_audit.py`、`parameter_racing_sweep.py`、`parameter_selection.py` 及 `build_paired_daily_evidence()`／`audit/paired_screening.py` 按各自历史或特定执行合同使用，不能把旧默认数据、参数或 `paired_daily_selection()` 当成当前入口。
 - 现有共享检查：`models/audit/experiment_scorecard.py` 与 `panel_promotion_controller.py`；不授予实盘权限，也不向所有新研究强加同一种 campaign 合同。
 - 现有归因／诊断：`models/alpha_evidence_ledger.py`、`research.families.f10_live_replay_attribution.audit.runner` 和 F05 `audit.order_score_fast`／`audit.fill_selection_score`。诊断分桶和评分不是策略或部署证据。
 - [贡献检查与 CI](dev/ci.zh-CN.md)：本地验证与托管检查职责。

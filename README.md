@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-09-25
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-25
+Last materially synchronized: 2026-09-26
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -58,7 +58,7 @@ Generic deployment code and provider examples are public. Only a concrete host, 
 
 ## Current Alpha Version
 
-The owner consolidated history and removed existing tags on 2026-09-13. Public and private `main` now maintain one mutable root commit named `version-alpha-20260913`; subsequent updates amend it until the owner declares the version stable. This is not a stable release. Python and C++ package metadata remain `0.1.2.dev0`, which does not uniquely identify an alpha revision. Start from `main` and record the exact commit/tree for any run:
+The owner consolidated history and removed existing tags on 2026-09-13. `version-alpha-20260913` names that historical consolidation, not a present requirement to retain only one root commit; current `main` has a subsequent commit chain. Save ordinary changes as local commits under current explicit permissions; pushing, tagging and history rewriting need their own authorization, not an inference from the alpha name. This is not a stable release. Python and C++ package metadata remain `0.1.2.dev0`, which does not uniquely identify an alpha revision. Start from `main` and record the exact commit/tree for any run:
 
 ```bash
 git clone --branch main --depth 1 https://github.com/xiao-nanbei/NarrowGateMaker.git narrowgate

@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-23
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-23
+Last materially synchronized: 2026-09-26
 
 ## Questions and entry points
 
@@ -22,6 +22,10 @@ The predeclared existing gamma-axis point was 0.05 versus B0 gamma 0.046. Both u
 | F01 gamma 0.05 | -2.3102 | 1,058 | 0.2831 | -0.0100 | 0 | 0.006 |
 
 The candidate-minus-B0 net difference was +5.4498 USDC: a smaller loss, **not profitability**. Its greater peak absolute inventory failed the risk non-inferiority gate frozen before this account was read. B0 is therefore retained in this first batch; the predeclared conditional shard 074 evaluation was not opened. This account and the F03 base model were previously used in development, so this is not a fresh whole-strategy holdout. The first ordered fill already differs between arms, demonstrating different executed paths, but fill-only traces cannot prove a complete unsubmitted-opportunity or order denominator. Private account and trace evidence is retained in the private evidence store and not distributed here. This single bounded comparison does not close the F01 family or choose a Phase 1 combined strategy.
+
+## Current offline research reference (2026-09-26)
+
+After the four-arm development comparison, the owner selected `B_g050_a000` as the current offline research reference; see the [existing work list](../../recompute_407.json). `g` is only the historical linked-axis label: with `inventory_reference_qty=1`, `eta_inventory`, `a_spread` and `risk_per_order` are each 0.05, `asym_strength=0`, and `ml_enabled=true`. This does not restore the retired gamma key or reverse the first-batch B0/risk-gate conclusion above; A remains the original four-arm reference. `candidate_g050_a010` (a=0.1) is a separate candidate, not a new label for the a=0 B/Final results. Selecting a research reference grants neither live changes nor additional run budget and does not restore fresh-holdout status.
 
 ## Inputs, units and evaluation
 

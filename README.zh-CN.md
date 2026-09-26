@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-09-25
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-25
+Last materially synchronized: 2026-09-26
 
 > 发布说明：`${NARROWGATE_*}` 值和 deployment-epoch 名称是逻辑定位器。所有者侧数据与机器产物保存在私有证据存储中；除非文档提供仓库相对链接，否则这些字节不会随本仓库分发。参见[公开/私有文档合同](docs/public_private_documentation_contract.zh-CN.md)。
 
@@ -58,7 +58,7 @@ SHA 只能证明当前读取的字节与该 digest 指定的字节相同。它�
 
 ## 当前 Alpha 版本
 
-项目所有者于 2026-09-13 合并提交历史并删除现有标签。公有与私有仓库的 `main` 现在各维护一个名为 `version-alpha-20260913` 的可变根提交，后续更新继续 amend，直到所有者确认版本稳定。这不是稳定发行版。Python 与 C++ 包版本仍为 `0.1.2.dev0`，它不能唯一标识某次 alpha 修订。请从 `main` 开始，并为每次运行记录准确的 commit/tree：
+项目所有者于 2026-09-13 合并提交历史并删除现有标签。`version-alpha-20260913` 是该次历史整合的名称，不是今天只能保留一个根提交的要求；当前 `main` 已有后续提交链。普通变更按当前明确权限保存本地提交，推送、标签或历史重写须分别获得授权，不从 alpha 名称推断权限。这不是稳定发行版。Python 与 C++ 包版本仍为 `0.1.2.dev0`，它不能唯一标识某次 alpha 修订。请从 `main` 开始，并为每次运行记录准确的 commit/tree：
 
 ```bash
 git clone --branch main --depth 1 https://github.com/xiao-nanbei/NarrowGateMaker.git narrowgate

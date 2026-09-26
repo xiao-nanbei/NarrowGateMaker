@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Last materially modified: 2026-09-23
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-23
+Last materially synchronized: 2026-09-26
 
 ## 研究问题与入口
 
@@ -22,6 +22,10 @@ Last materially synchronized: 2026-09-23
 | F01 gamma 0.05 | -2.3102 | 1,058 | 0.2831 | -0.0100 | 0 | 0.006 |
 
 候选减 B0 的完整净差额为 +5.4498 USDC：只是亏损减少，**不是盈利**。候选峰值绝对库存更高，未通过读取本账户前冻结的风险不劣门槛，因此首批仍保留 B0；事先登记的条件性 074 评价账户没有打开。该账户和 F03 底座模型均已有开发使用史，不是新的整体策略留出集。两臂的第一笔有序成交已不同，证明真实成交路径发生变化；但仅凭成交轨迹不能证明全部未提交机会或订单分母。私有账户与轨迹证据保存在私有证据库，不随公开仓库分发。这一个有界比较不等于 F01 全族完成，更不是第一阶段组合胜者。
+
+## 当前离线研究参照（2026-09-26）
+
+后续用户在四臂开发比较后选定 `B_g050_a000` 为当前离线研究参照，见[现有台账](../../recompute_407.json)。`g` 只是历史联动轴标签：在 `inventory_reference_qty=1` 下，`eta_inventory`、`a_spread`、`risk_per_order` 均为 0.05，`asym_strength=0` 且 `ml_enabled=true`。这不恢复退役的 gamma 配置键，不推翻上述首批 B0／风险门结论；原四臂实验参照仍是 A。`candidate_g050_a010`（a=0.1）是另一候选，不能将 a=0 的 B/Final 结果改名归给它。选择研究参照不授予 live 变更或额外计算预算，也不恢复已使用样本的新鲜 holdout 身份。
 
 ## 输入、单位与评价
 

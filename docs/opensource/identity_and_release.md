@@ -2,15 +2,15 @@
 
 [English](identity_and_release.md) | [简体中文](identity_and_release.zh-CN.md)
 
-Last materially modified: 2026-09-13
+Last materially modified: 2026-09-26
 
-Last materially synchronized: 2026-09-13
+Last materially synchronized: 2026-09-26
 
 Status: Current public naming and provenance guide.
 
-Current source milestone: `version-alpha-20260913`, a single mutable root commit on public and private `main`. The owner authorized consolidating history and removing all existing Git tags on 2026-09-13. Until the owner declares the version stable and permits a second commit, updates amend this root and do not automatically create release, improvement or execution tags. The Python and C++ package version remains `0.1.2.dev0`; record the exact commit/tree, not the package version or mutable branch name alone.
+Historical event: on 2026-09-13 the owner authorized history consolidation and removal of then-existing Git tags under `version-alpha-20260913`. Current `main` has a subsequent commit chain; retaining one mutable root is not a current requirement. Ordinary work follows current AGENTS and task permissions and is saved as local commits; pushing, tagging, merging and history rewriting are not automatically authorized. Python/C++ package version `0.1.2.dev0` does not uniquely identify execution: record exact commit/tree separately from external inputs/configuration.
 
-This alpha policy supersedes the normal tag workflow below during stabilization. A private local recovery bundle retains prior Git identities; it is not distributed with the repository. Dated historical tag/commit references are not rebound to alpha and may no longer resolve in a fresh clone. This rewrite is source maintenance, not a rerun, research admission or live deployment. Already running or frozen experiments keep their recorded source identities.
+Private recovery material retains earlier Git identities and is not distributed. Historical references must not be rebound to today's commit; frozen experiments retain their identities. The layers below explain evidence; historical tag workflows do not require ordinary documentation edits to rewrite Git history or create tags.
 
 NarrowGateMaker uses several identities because source publication, scientific
 questions, execution attempts, and result bytes answer different audit questions.
@@ -29,7 +29,7 @@ Do not collapse them into one version number or tag.
 | Final or failure receipt | Immutable completion or failure bound back to the pre-run manifest | Authority not explicitly granted by separate governance |
 | Artifact SHA256 | Exact bytes of a named artifact | Public availability or a location from which to obtain it |
 
-## Normal Formal Chain Outside Mutable Alpha
+## Normal Formal Chain (When Explicitly Authorized)
 
 ```text
 development branch
@@ -57,7 +57,7 @@ never edited after the run to make the result fit.
 Negative or inconclusive evidence is not a reason to mint a new research identity.
 Neither is the desire for a cleaner version number.
 
-## Tag Discipline Outside Mutable Alpha
+## Tag Discipline (When Explicitly Authorized)
 
 A version or stability tag and a research execution tag serve different readers.
 The former names a source-release milestone. The latter is an annotated provenance
