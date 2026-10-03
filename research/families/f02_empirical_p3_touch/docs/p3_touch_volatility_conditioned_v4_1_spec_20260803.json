@@ -1,0 +1,64 @@
+{
+  "canonical_spec_identity_sha256": "03b1e6a4c1238eb9c5c8fae0d48e896d2098838133f3b1ee919fdb5a4bca5ccb",
+  "coverage_threshold_adjustment": {
+    "changed_fields": [
+      "evaluation.context_coverage_gate.minimum_fraction"
+    ],
+    "decision_owner": "project_owner",
+    "original_identity_immutable": true,
+    "original_minimum_fraction": 0.98,
+    "outcome_informed": true,
+    "reason": "owner accepts at least 95 percent causal context coverage for this historical Development prediction identity",
+    "requested_at_utc": "2026-08-03T00:00:00Z",
+    "successor_minimum_fraction": 0.95
+  },
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "identity": "p3_touch_volatility_conditioned_v4_1",
+  "identities": {
+    "coverage_override_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_volatility_conditioned_coverage_override.py",
+      "sha256": "a9125d33865e91283264697c40dc2ae6e5eb6ba960724232d779e200f9dc618b"
+    },
+    "current_v2_artifact": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    "original_v4_cache_usage": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/cache_usage.csv",
+      "sha256": "f5c5743d9558751248049e982ca8b5d8ea1cbac86513b3c53252584b15731550"
+    },
+    "original_v4_development_report": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_development_20260803.md",
+      "sha256": "1c62f56d6679cbfb2dcdb343902438eb0a49bf006f8da38deddab5f1dc7345f6"
+    },
+    "original_v4_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/manifest.json",
+      "sha256": "53c283fac31319ff2896c44bff9dfdb0a32c76d86ca52816deb85124873086c6"
+    },
+    "original_v4_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/report.json",
+      "sha256": "bf3fb78215708649b2c42784b64e34783b6440276a16881ded3c7ec57f49423b"
+    },
+    "original_v4_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_spec_20260803.json",
+      "sha256": "9b0badd0c1a0e102530a128082d8bd73531c789b143c6a881b67208f9f5ec9e1"
+    }
+  },
+  "permissions": {
+    "action_authority": false,
+    "historical_development_prediction_support": true,
+    "independent_confirmation": false,
+    "live_authority": false,
+    "operational_prediction_authority": false,
+    "overwrite_current_v2_artifact": false,
+    "quote_mapping_authority": false,
+    "quote_mapping_research_registration_eligible_if_passed": true,
+    "sealed_holdout_read": false
+  },
+  "predecessor_identity": "p3_touch_volatility_conditioned_v4",
+  "retraining": {
+    "performed": false,
+    "reason": "only the owner-governed input coverage acceptance threshold changed"
+  },
+  "schema_version": "narrowgate_p3_touch_volatility_conditioned.v4_1.coverage_override.spec"
+}

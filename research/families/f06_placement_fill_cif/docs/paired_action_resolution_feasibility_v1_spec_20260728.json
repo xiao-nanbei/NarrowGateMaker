@@ -1,0 +1,236 @@
+{
+  "schema_version": "paired_action_resolution_feasibility_spec.v1",
+  "family_id": "paired_action_resolution_feasibility_v1",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "frozen_before_development_outcomes",
+  "purpose": "Determine whether raw paired native-L2 outcomes economically distinguish baseline-relative 1, 2, or 4 tick placement distances before fitting another fill model.",
+  "source_identity": {
+    "placement_panel_root": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement",
+    "placement_panel_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/manifest.json",
+      "size_bytes": 37699,
+      "sha256": "de01eec6c0d6dbf90b2e64741d168a679820def759ad3005a34ffa845ce16fc1"
+    },
+    "placement_panel_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/development_index.csv",
+      "size_bytes": 4767,
+      "sha256": "6105a5172d2be2c2f65c5f5bf12233d71cb8e0b45020d3a5ce47583c774ac275"
+    },
+    "prediction_clock_producer": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "size_bytes": 23872,
+      "sha256": "fc3515cafb70615c920dbc17dffafabde7b7ec345fb63bd5e56bf071512b05f0"
+    },
+    "pending_uncertainty_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/ordered_common_support_fill_surface_v1_development_20260728/report.json",
+      "size_bytes": 105218,
+      "sha256": "66262578a72c8afcb8307c502a4906b91555e329a3789ce401b8a98404af537d"
+    }
+  },
+  "implementation": {
+    "path": "research_06_placement_fill_cif/audit/paired_action_resolution_feasibility.py",
+    "size_bytes": 52300,
+    "sha256": "2a5cb5e31d8c5658bc7142408bde937bc318e723b1c50c21beed0c3131dafdc9",
+    "dependencies": {
+      "paired_lifecycle_contract": {
+        "path": "research_06_placement_fill_cif/audit/paired_lifecycle_contract.py",
+        "size_bytes": 8389,
+        "sha256": "f456f9c75bd394c8ae5f7bfe40b077985ceaedc68c2f24308df036aeb7b96c38"
+      },
+      "paired_order_lifecycle": {
+        "path": "research_06_placement_fill_cif/audit/paired_order_lifecycle.py",
+        "size_bytes": 24348,
+        "sha256": "056f70b277eaa80e2d12804511c6243acfe7bf1f8d317545a2e093b573611b4f"
+      },
+      "sparse_order_lifecycle": {
+        "path": "research_06_placement_fill_cif/audit/sparse_order_lifecycle.py",
+        "size_bytes": 17655,
+        "sha256": "a4f0bf96478dd1ca4bd10e7dc0d755aa080edbebcbe572486536b5899689e1b5"
+      },
+      "active_order_queue_tape_builder": {
+        "path": "data/build_active_order_queue_tape.py",
+        "size_bytes": 49083,
+        "sha256": "0a57cbe2494a9c62d55442316c0933e2661bb0bce880cb14829f0afe0b133b53"
+      },
+      "content_addressed_cache": {
+        "path": "models/audit/content_addressed_cache.py",
+        "size_bytes": 10964,
+        "sha256": "26ca65fc161fab19739a2b71d93f91ee308dc1af8f5fa5b99ccf180b601f8bdf"
+      },
+      "backtest_tick_trade_loader": {
+        "path": "models/backtest_tick.py",
+        "size_bytes": 877771,
+        "sha256": "445bd12b8d5471f4a777b4588a2d10cbc187359bf05a3c0c1828c03dac5a0e73"
+      }
+    },
+    "native_module": {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "size_bytes": 850280,
+      "sha256": "eae3fe36ae34a7c79fd63c00cbd4433e41d24eeadf0ebb4ca8cd08c9aaba0fa1",
+      "required_abi": "sparse_order_lifecycle.v1"
+    }
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13",
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "development_access": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "later_panel_outcomes_forbidden": true
+  },
+  "exchange_contract": {
+    "symbol": "BTCUSDC",
+    "tick_size_usdc_per_btc": 0.1,
+    "lot_size_btc": 0.001,
+    "one_lot_orders_required": true
+  },
+  "action_grid": {
+    "offset_ticks": {
+      "closer_4tick": -4,
+      "closer_2tick": -2,
+      "closer_1tick": -1,
+      "current": 0,
+      "farther_1tick": 1,
+      "farther_2tick": 2,
+      "farther_4tick": 4
+    },
+    "contrasts": [
+      "closer_current",
+      "current_farther",
+      "closer_farther"
+    ],
+    "all_seven_activated_common_support_is_replay_only": true,
+    "activation_gtx_is_reported_separately": true
+  },
+  "common_clock": {
+    "clock_ms": 5000,
+    "unit": "ms_since_activation",
+    "source": "strategy.requote_interval from the hash-frozen live configuration",
+    "classification": "judgmental operational report clock, not a natural or optimal fill horizon",
+    "risk_end": "minimum of activation plus 5000ms, common baseline cancel ACK, and administrative observation end",
+    "action_realized_exposure_forbidden": true
+  },
+  "prediction_clock_contract": {
+    "schema_version": "paired_prediction_clock_contract.v1",
+    "selected_source_id": "baseline_requote_interval_v1",
+    "allowed_sources": {
+      "baseline_requote_interval_v1": {
+        "clock_column": "scheduled_clock_ms",
+        "unit": "ms_since_activation",
+        "causal_cut": "submit_ts_ns",
+        "source_identity_sha256": "fc3515cafb70615c920dbc17dffafabde7b7ec345fb63bd5e56bf071512b05f0",
+        "ex_ante": true,
+        "cohort_common": true,
+        "outcome_dependent": false
+      }
+    }
+  },
+  "estimand": {
+    "raw_first_fill_difference": "E[I(first fill before the common active-exposure clock) for shallower action minus the same indicator for deeper action]",
+    "expected_quantity_difference": "E[filled quantity for shallower action minus filled quantity for deeper action]",
+    "shared_path_price_improvement": "filled quantity shared by both actions times deeper price improvement in USDC",
+    "extra_fill_value_bound": "shallower-only filled quantity times decision mid times a symmetric 100bps value stress",
+    "conservative_value_interval": "deeper-minus-shallower shared execution-price improvement plus or minus the stressed value of shallower-only fills",
+    "activation_probability_is_not_part_of_conditional_fill": true,
+    "keep_replace_is_out_of_scope": true,
+    "campaign_repair_is_out_of_scope": true,
+    "prediction_model_is_forbidden": true
+  },
+  "inference": {
+    "campaign_clustering": "sum decisions attributed to one campaign before daily aggregation; campaign_id=0 openers remain cohort-specific",
+    "outer_cluster": "UTC day",
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260728,
+    "simultaneous_confidence": 0.95,
+    "multiplicity": "metric-wise maximum absolute bootstrap deviation across all side-role-gap-contrast cells",
+    "daily_sign_stability": "reported, not independently gated"
+  },
+  "economic_scale": {
+    "stress_fill_value_bps": 100.0,
+    "stress_fill_value_provenance": "judgmental symmetric bound for the unknown value of marginal fills; not a markout estimate",
+    "pending_nuisance_uncertainty_usdc": 0.0002980355530292383,
+    "pending_nuisance_provenance": "maximum 100bps per-decision pending-fill uncertainty in the hash-frozen ordered_common_support_fill_surface_v1 Development report",
+    "economic_interval_gate": "the simultaneous deeper-minus-shallower value interval must lie entirely above or below zero by more than the pending nuisance bound",
+    "economic_result_is_feasibility_evidence_only": true
+  },
+  "mechanics_gates": {
+    "old_one_tick_source_parity": "activation status, first-fill timestamp, and filled quantity must exactly match the frozen source panel",
+    "observed_common_support_monotonicity": "zero deeper-fill-without-shallower-fill violations",
+    "common_clock": "zero incomplete seven-action cohorts and zero within-cohort clock spread",
+    "native_source_hashes": "every raw snapshot/delta and individual-trade input is reverified before cache admission"
+  },
+  "decision_contract": {
+    "one_tick_economic_resolution": "the ordered model, not raw data resolution, is the current bottleneck",
+    "only_two_or_four_tick_economic_resolution": "close the one-tick grid and preregister a wider action grid under a new identity",
+    "no_economic_resolution": "close the placement fill-surface action-resolution path on Development",
+    "partial_side_role_resolution": "a future decision-time support-score identity is required; post-outcome common-support selection is forbidden"
+  },
+  "storage_gate": {
+    "minimum_free_reserve_gib": 60.0,
+    "estimated_final_gib": 5.0,
+    "required_free_gib_formula": "60 + 2.5 * estimated_final_gib",
+    "content_addressed_sparse_and_mechanics_caches": true
+  },
+  "permissions": {
+    "development_access": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_supported": false,
+    "transport_supported": false,
+    "economic_resolution_supported": false,
+    "action_uplift_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

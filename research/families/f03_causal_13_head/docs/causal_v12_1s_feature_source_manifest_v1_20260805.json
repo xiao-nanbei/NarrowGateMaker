@@ -1,0 +1,56 @@
+{
+  "schema_version": "causal_v12_1s_feature_source_manifest_artifact.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "python_source_contract_frozen_not_training_authorized",
+  "source_manifest_sha256": "f2c473dac79a387e56c4aa1d166cfb511575a2de7f8666c0aef32067e4d1ad7e",
+  "feature_assignment_bound_by": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py:SOURCE_CONTRACTS",
+  "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+  "sources": [
+    {
+      "name": "local_completed_1s_bars",
+      "feature_count": 87,
+      "source_clock": "exchange_bucket_start_ms",
+      "feature_ready_rule": "bar.finalized_ts_ms <= cutoff_exclusive_ms",
+      "freshness_rule": "strict_contiguous_completed_1s_through_cutoff_minus_1s",
+      "missing_policy": "fail_closed_on_gap_duplicate_or_late_bar"
+    },
+    {
+      "name": "execution_l2_completed_1s",
+      "feature_count": 13,
+      "source_clock": "exchange_l2_bucket_start_ms",
+      "feature_ready_rule": "snapshot.feature_ready_ts_ms <= cutoff_exclusive_ms",
+      "freshness_rule": "exact_cutoff_minus_1s_bucket",
+      "missing_policy": "emit_null_unsupported_no_carry"
+    },
+    {
+      "name": "binance_metrics_5m",
+      "feature_count": 13,
+      "source_clock": "metric_event_ts_ms",
+      "feature_ready_rule": "metric.feature_ready_ts_ms <= cutoff_exclusive_ms",
+      "freshness_rule": "past_only_asof_with_max_age_300s",
+      "missing_policy": "emit_null_unsupported_no_default_value"
+    },
+    {
+      "name": "reference_perp_completed_1s",
+      "feature_count": 11,
+      "source_clock": "reference_exchange_bucket_start_ms",
+      "feature_ready_rule": "bar.finalized_ts_ms <= cutoff_exclusive_ms",
+      "freshness_rule": "past_only_contiguous_tail_with_max_age_30s",
+      "missing_policy": "emit_null_unsupported_no_cross_source_forward_fill"
+    },
+    {
+      "name": "canonical_calendar_clock",
+      "feature_count": 49,
+      "source_clock": "cutoff_exclusive_ms",
+      "feature_ready_rule": "deterministic_at_cutoff_exclusive_ms",
+      "freshness_rule": "supported_calendar_year_contract",
+      "missing_policy": "fail_closed_outside_supported_years"
+    }
+  ],
+  "ten_second_feature_rows_accepted_as_input": false,
+  "labels_read": false,
+  "predictions_read": false,
+  "economic_outcomes_read": false
+}

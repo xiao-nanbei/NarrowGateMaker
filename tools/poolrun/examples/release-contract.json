@@ -1,0 +1,9 @@
+{
+  "env_id": "calc-py-v1",
+  "platforms": ["linux-x86_64", "darwin-arm64"],
+  "argv": ["${python}", "${release}/job.py", "--attempt", "${attempt}"],
+  "validator_argv": ["${python}", "${release}/validator.py"],
+  "checkpoint_adapter_argv": ["${python}", "${release}/checkpoint_adapter.py"],
+  "checkpoint_contract": "synthetic-v1",
+  "output_contract": "synthetic-v1"
+}

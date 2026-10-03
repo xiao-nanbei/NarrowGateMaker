@@ -1,0 +1,28 @@
+{
+  "authoritative_two_pass_replay_bound": true,
+  "candidate_role_permission_separation_valid": true,
+  "canonical_spec_identity_sha256": "08f3a971d5d77b9de377e358f92fba121e6c2cef98989db0308dd5cd7b518710",
+  "economic_outcome_columns_read": [],
+  "frozen_v1_1_adapter_bytes_valid": true,
+  "historical_v1_3_bytes_valid": true,
+  "implementation_hashes_valid": true,
+  "permissions": {
+    "action_experiment_authorized": false,
+    "adapter_contract_tests_passed": true,
+    "adapter_registration": true,
+    "development_economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "mechanics_execution_eligible": true,
+    "mechanics_read": false,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "prediction_decision_interfaces_separated": true,
+  "schema_version": "ranked_toxicity_guard_full_path_execution_amendment.v1.4.audit",
+  "single_day_bounded_journal_contract_valid": true,
+  "stable_untreated_lineage_assignment_valid": true,
+  "stage": "v1_4_authoritative_replay_hash_bound_mechanics_not_run",
+  "unchanged_action_contract_valid": true,
+  "unchanged_scorecard_contract_valid": true
+}

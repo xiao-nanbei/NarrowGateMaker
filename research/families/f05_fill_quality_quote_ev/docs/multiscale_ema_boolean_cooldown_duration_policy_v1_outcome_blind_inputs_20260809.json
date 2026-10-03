@@ -1,0 +1,2858 @@
+{
+  "atomic_predicates": [
+    {
+      "feature": "ema_pair_h0p5s_h1s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h1s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h1s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_cross_age_s",
+      "name": "ema_pair_h0p5s_h1s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_cross_age_s",
+      "name": "ema_pair_h0p5s_h1s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h1s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h1s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h1s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.18347475630177143
+    },
+    {
+      "feature": "ema_pair_h0p5s_h1s_distance_expanding",
+      "name": "ema_pair_h0p5s_h1s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h2s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h2s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_cross_age_s",
+      "name": "ema_pair_h0p5s_h2s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_cross_age_s",
+      "name": "ema_pair_h0p5s_h2s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h2s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h2s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h2s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.4349962141841511
+    },
+    {
+      "feature": "ema_pair_h0p5s_h2s_distance_expanding",
+      "name": "ema_pair_h0p5s_h2s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h4s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h4s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_cross_age_s",
+      "name": "ema_pair_h0p5s_h4s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_cross_age_s",
+      "name": "ema_pair_h0p5s_h4s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h4s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h4s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h4s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.7697548909513472
+    },
+    {
+      "feature": "ema_pair_h0p5s_h4s_distance_expanding",
+      "name": "ema_pair_h0p5s_h4s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h8s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h8s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_cross_age_s",
+      "name": "ema_pair_h0p5s_h8s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_cross_age_s",
+      "name": "ema_pair_h0p5s_h8s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h8s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h8s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h8s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.215737803438421
+    },
+    {
+      "feature": "ema_pair_h0p5s_h8s_distance_expanding",
+      "name": "ema_pair_h0p5s_h8s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h16s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h16s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_cross_age_s",
+      "name": "ema_pair_h0p5s_h16s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_cross_age_s",
+      "name": "ema_pair_h0p5s_h16s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h16s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h16s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h16s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.816144500290082
+    },
+    {
+      "feature": "ema_pair_h0p5s_h16s_distance_expanding",
+      "name": "ema_pair_h0p5s_h16s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_cross_age_s",
+      "name": "ema_pair_h0p5s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_cross_age_s",
+      "name": "ema_pair_h0p5s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.633760096002491
+    },
+    {
+      "feature": "ema_pair_h0p5s_h32s_distance_expanding",
+      "name": "ema_pair_h0p5s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_cross_age_s",
+      "name": "ema_pair_h0p5s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_cross_age_s",
+      "name": "ema_pair_h0p5s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.756585226088687
+    },
+    {
+      "feature": "ema_pair_h0p5s_h64s_distance_expanding",
+      "name": "ema_pair_h0p5s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_cross_age_s",
+      "name": "ema_pair_h0p5s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_cross_age_s",
+      "name": "ema_pair_h0p5s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 5.303030686352521
+    },
+    {
+      "feature": "ema_pair_h0p5s_h128s_distance_expanding",
+      "name": "ema_pair_h0p5s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_favorable_ordering",
+      "name": "ema_pair_h0p5s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_last_cross_favorable",
+      "name": "ema_pair_h0p5s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_cross_age_s",
+      "name": "ema_pair_h0p5s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_cross_age_s",
+      "name": "ema_pair_h0p5s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 0.5
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h0p5s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_abs_distance_bps",
+      "name": "ema_pair_h0p5s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 7.440957533207634
+    },
+    {
+      "feature": "ema_pair_h0p5s_h256s_distance_expanding",
+      "name": "ema_pair_h0p5s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_favorable_ordering",
+      "name": "ema_pair_h1s_h2s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_last_cross_favorable",
+      "name": "ema_pair_h1s_h2s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_cross_age_s",
+      "name": "ema_pair_h1s_h2s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_cross_age_s",
+      "name": "ema_pair_h1s_h2s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h2s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h2s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_abs_distance_bps",
+      "name": "ema_pair_h1s_h2s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.2672906499302295
+    },
+    {
+      "feature": "ema_pair_h1s_h2s_distance_expanding",
+      "name": "ema_pair_h1s_h2s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_favorable_ordering",
+      "name": "ema_pair_h1s_h4s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_last_cross_favorable",
+      "name": "ema_pair_h1s_h4s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_cross_age_s",
+      "name": "ema_pair_h1s_h4s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_cross_age_s",
+      "name": "ema_pair_h1s_h4s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h4s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h4s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_abs_distance_bps",
+      "name": "ema_pair_h1s_h4s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.6296090055370983
+    },
+    {
+      "feature": "ema_pair_h1s_h4s_distance_expanding",
+      "name": "ema_pair_h1s_h4s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_favorable_ordering",
+      "name": "ema_pair_h1s_h8s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_last_cross_favorable",
+      "name": "ema_pair_h1s_h8s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_cross_age_s",
+      "name": "ema_pair_h1s_h8s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_cross_age_s",
+      "name": "ema_pair_h1s_h8s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h8s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h8s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_abs_distance_bps",
+      "name": "ema_pair_h1s_h8s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.1063881924852512
+    },
+    {
+      "feature": "ema_pair_h1s_h8s_distance_expanding",
+      "name": "ema_pair_h1s_h8s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_favorable_ordering",
+      "name": "ema_pair_h1s_h16s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_last_cross_favorable",
+      "name": "ema_pair_h1s_h16s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_cross_age_s",
+      "name": "ema_pair_h1s_h16s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_cross_age_s",
+      "name": "ema_pair_h1s_h16s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h16s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h16s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_abs_distance_bps",
+      "name": "ema_pair_h1s_h16s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.7345517091866334
+    },
+    {
+      "feature": "ema_pair_h1s_h16s_distance_expanding",
+      "name": "ema_pair_h1s_h16s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_favorable_ordering",
+      "name": "ema_pair_h1s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_last_cross_favorable",
+      "name": "ema_pair_h1s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_cross_age_s",
+      "name": "ema_pair_h1s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_cross_age_s",
+      "name": "ema_pair_h1s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_abs_distance_bps",
+      "name": "ema_pair_h1s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.5744636390647413
+    },
+    {
+      "feature": "ema_pair_h1s_h32s_distance_expanding",
+      "name": "ema_pair_h1s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_favorable_ordering",
+      "name": "ema_pair_h1s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_last_cross_favorable",
+      "name": "ema_pair_h1s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_cross_age_s",
+      "name": "ema_pair_h1s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_cross_age_s",
+      "name": "ema_pair_h1s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_abs_distance_bps",
+      "name": "ema_pair_h1s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.7141263093797523
+    },
+    {
+      "feature": "ema_pair_h1s_h64s_distance_expanding",
+      "name": "ema_pair_h1s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_favorable_ordering",
+      "name": "ema_pair_h1s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_last_cross_favorable",
+      "name": "ema_pair_h1s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_cross_age_s",
+      "name": "ema_pair_h1s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_cross_age_s",
+      "name": "ema_pair_h1s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_abs_distance_bps",
+      "name": "ema_pair_h1s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 5.272881873241351
+    },
+    {
+      "feature": "ema_pair_h1s_h128s_distance_expanding",
+      "name": "ema_pair_h1s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_favorable_ordering",
+      "name": "ema_pair_h1s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_last_cross_favorable",
+      "name": "ema_pair_h1s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_cross_age_s",
+      "name": "ema_pair_h1s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_cross_age_s",
+      "name": "ema_pair_h1s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h1s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_abs_distance_bps",
+      "name": "ema_pair_h1s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 7.4196427123335775
+    },
+    {
+      "feature": "ema_pair_h1s_h256s_distance_expanding",
+      "name": "ema_pair_h1s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_favorable_ordering",
+      "name": "ema_pair_h2s_h4s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_last_cross_favorable",
+      "name": "ema_pair_h2s_h4s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_cross_age_s",
+      "name": "ema_pair_h2s_h4s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_cross_age_s",
+      "name": "ema_pair_h2s_h4s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h4s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h4s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_abs_distance_bps",
+      "name": "ema_pair_h2s_h4s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.38569017483669626
+    },
+    {
+      "feature": "ema_pair_h2s_h4s_distance_expanding",
+      "name": "ema_pair_h2s_h4s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_favorable_ordering",
+      "name": "ema_pair_h2s_h8s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_last_cross_favorable",
+      "name": "ema_pair_h2s_h8s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_cross_age_s",
+      "name": "ema_pair_h2s_h8s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_cross_age_s",
+      "name": "ema_pair_h2s_h8s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h8s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h8s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_abs_distance_bps",
+      "name": "ema_pair_h2s_h8s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.903094119146804
+    },
+    {
+      "feature": "ema_pair_h2s_h8s_distance_expanding",
+      "name": "ema_pair_h2s_h8s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_favorable_ordering",
+      "name": "ema_pair_h2s_h16s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_last_cross_favorable",
+      "name": "ema_pair_h2s_h16s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_cross_age_s",
+      "name": "ema_pair_h2s_h16s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_cross_age_s",
+      "name": "ema_pair_h2s_h16s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h16s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h16s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_abs_distance_bps",
+      "name": "ema_pair_h2s_h16s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.576420522908707
+    },
+    {
+      "feature": "ema_pair_h2s_h16s_distance_expanding",
+      "name": "ema_pair_h2s_h16s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_favorable_ordering",
+      "name": "ema_pair_h2s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_last_cross_favorable",
+      "name": "ema_pair_h2s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_cross_age_s",
+      "name": "ema_pair_h2s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_cross_age_s",
+      "name": "ema_pair_h2s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_abs_distance_bps",
+      "name": "ema_pair_h2s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.4567912965062826
+    },
+    {
+      "feature": "ema_pair_h2s_h32s_distance_expanding",
+      "name": "ema_pair_h2s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_favorable_ordering",
+      "name": "ema_pair_h2s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_last_cross_favorable",
+      "name": "ema_pair_h2s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_cross_age_s",
+      "name": "ema_pair_h2s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_cross_age_s",
+      "name": "ema_pair_h2s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_abs_distance_bps",
+      "name": "ema_pair_h2s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.628783375430873
+    },
+    {
+      "feature": "ema_pair_h2s_h64s_distance_expanding",
+      "name": "ema_pair_h2s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_favorable_ordering",
+      "name": "ema_pair_h2s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_last_cross_favorable",
+      "name": "ema_pair_h2s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_cross_age_s",
+      "name": "ema_pair_h2s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_cross_age_s",
+      "name": "ema_pair_h2s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_abs_distance_bps",
+      "name": "ema_pair_h2s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 5.211867951558249
+    },
+    {
+      "feature": "ema_pair_h2s_h128s_distance_expanding",
+      "name": "ema_pair_h2s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_favorable_ordering",
+      "name": "ema_pair_h2s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_last_cross_favorable",
+      "name": "ema_pair_h2s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_cross_age_s",
+      "name": "ema_pair_h2s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_cross_age_s",
+      "name": "ema_pair_h2s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 2.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h2s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_abs_distance_bps",
+      "name": "ema_pair_h2s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 7.376348239941906
+    },
+    {
+      "feature": "ema_pair_h2s_h256s_distance_expanding",
+      "name": "ema_pair_h2s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_favorable_ordering",
+      "name": "ema_pair_h4s_h8s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_last_cross_favorable",
+      "name": "ema_pair_h4s_h8s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_cross_age_s",
+      "name": "ema_pair_h4s_h8s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_cross_age_s",
+      "name": "ema_pair_h4s_h8s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h8s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h8s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_abs_distance_bps",
+      "name": "ema_pair_h4s_h8s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.5516430309339764
+    },
+    {
+      "feature": "ema_pair_h4s_h8s_distance_expanding",
+      "name": "ema_pair_h4s_h8s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_favorable_ordering",
+      "name": "ema_pair_h4s_h16s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_last_cross_favorable",
+      "name": "ema_pair_h4s_h16s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_cross_age_s",
+      "name": "ema_pair_h4s_h16s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_cross_age_s",
+      "name": "ema_pair_h4s_h16s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h16s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h16s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_abs_distance_bps",
+      "name": "ema_pair_h4s_h16s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.2841837179483444
+    },
+    {
+      "feature": "ema_pair_h4s_h16s_distance_expanding",
+      "name": "ema_pair_h4s_h16s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_favorable_ordering",
+      "name": "ema_pair_h4s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_last_cross_favorable",
+      "name": "ema_pair_h4s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_cross_age_s",
+      "name": "ema_pair_h4s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_cross_age_s",
+      "name": "ema_pair_h4s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_abs_distance_bps",
+      "name": "ema_pair_h4s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.22999133907444
+    },
+    {
+      "feature": "ema_pair_h4s_h32s_distance_expanding",
+      "name": "ema_pair_h4s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_favorable_ordering",
+      "name": "ema_pair_h4s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_last_cross_favorable",
+      "name": "ema_pair_h4s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_cross_age_s",
+      "name": "ema_pair_h4s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_cross_age_s",
+      "name": "ema_pair_h4s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_abs_distance_bps",
+      "name": "ema_pair_h4s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.460313907861676
+    },
+    {
+      "feature": "ema_pair_h4s_h64s_distance_expanding",
+      "name": "ema_pair_h4s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_favorable_ordering",
+      "name": "ema_pair_h4s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_last_cross_favorable",
+      "name": "ema_pair_h4s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_cross_age_s",
+      "name": "ema_pair_h4s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_cross_age_s",
+      "name": "ema_pair_h4s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_abs_distance_bps",
+      "name": "ema_pair_h4s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 5.089855282078916
+    },
+    {
+      "feature": "ema_pair_h4s_h128s_distance_expanding",
+      "name": "ema_pair_h4s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_favorable_ordering",
+      "name": "ema_pair_h4s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_last_cross_favorable",
+      "name": "ema_pair_h4s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_cross_age_s",
+      "name": "ema_pair_h4s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_cross_age_s",
+      "name": "ema_pair_h4s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 4.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h4s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_abs_distance_bps",
+      "name": "ema_pair_h4s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 7.289170473600091
+    },
+    {
+      "feature": "ema_pair_h4s_h256s_distance_expanding",
+      "name": "ema_pair_h4s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_favorable_ordering",
+      "name": "ema_pair_h8s_h16s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_last_cross_favorable",
+      "name": "ema_pair_h8s_h16s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_cross_age_s",
+      "name": "ema_pair_h8s_h16s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_cross_age_s",
+      "name": "ema_pair_h8s_h16s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h16s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h16s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_abs_distance_bps",
+      "name": "ema_pair_h8s_h16s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 0.7821751628952203
+    },
+    {
+      "feature": "ema_pair_h8s_h16s_distance_expanding",
+      "name": "ema_pair_h8s_h16s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_favorable_ordering",
+      "name": "ema_pair_h8s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_last_cross_favorable",
+      "name": "ema_pair_h8s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_cross_age_s",
+      "name": "ema_pair_h8s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_cross_age_s",
+      "name": "ema_pair_h8s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_abs_distance_bps",
+      "name": "ema_pair_h8s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.8132824659630902
+    },
+    {
+      "feature": "ema_pair_h8s_h32s_distance_expanding",
+      "name": "ema_pair_h8s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_favorable_ordering",
+      "name": "ema_pair_h8s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_last_cross_favorable",
+      "name": "ema_pair_h8s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_cross_age_s",
+      "name": "ema_pair_h8s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_cross_age_s",
+      "name": "ema_pair_h8s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_abs_distance_bps",
+      "name": "ema_pair_h8s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.1374068240593913
+    },
+    {
+      "feature": "ema_pair_h8s_h64s_distance_expanding",
+      "name": "ema_pair_h8s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_favorable_ordering",
+      "name": "ema_pair_h8s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_last_cross_favorable",
+      "name": "ema_pair_h8s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_cross_age_s",
+      "name": "ema_pair_h8s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_cross_age_s",
+      "name": "ema_pair_h8s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_abs_distance_bps",
+      "name": "ema_pair_h8s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 4.850299013071968
+    },
+    {
+      "feature": "ema_pair_h8s_h128s_distance_expanding",
+      "name": "ema_pair_h8s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_favorable_ordering",
+      "name": "ema_pair_h8s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_last_cross_favorable",
+      "name": "ema_pair_h8s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_cross_age_s",
+      "name": "ema_pair_h8s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_cross_age_s",
+      "name": "ema_pair_h8s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 8.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h8s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_abs_distance_bps",
+      "name": "ema_pair_h8s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 7.115769223250088
+    },
+    {
+      "feature": "ema_pair_h8s_h256s_distance_expanding",
+      "name": "ema_pair_h8s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_favorable_ordering",
+      "name": "ema_pair_h16s_h32s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_last_cross_favorable",
+      "name": "ema_pair_h16s_h32s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_cross_age_s",
+      "name": "ema_pair_h16s_h32s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_cross_age_s",
+      "name": "ema_pair_h16s_h32s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h32s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h32s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_abs_distance_bps",
+      "name": "ema_pair_h16s_h32s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.1021263606765104
+    },
+    {
+      "feature": "ema_pair_h16s_h32s_distance_expanding",
+      "name": "ema_pair_h16s_h32s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_favorable_ordering",
+      "name": "ema_pair_h16s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_last_cross_favorable",
+      "name": "ema_pair_h16s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_cross_age_s",
+      "name": "ema_pair_h16s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_cross_age_s",
+      "name": "ema_pair_h16s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_abs_distance_bps",
+      "name": "ema_pair_h16s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.5477416004801445
+    },
+    {
+      "feature": "ema_pair_h16s_h64s_distance_expanding",
+      "name": "ema_pair_h16s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_favorable_ordering",
+      "name": "ema_pair_h16s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_last_cross_favorable",
+      "name": "ema_pair_h16s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_cross_age_s",
+      "name": "ema_pair_h16s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_cross_age_s",
+      "name": "ema_pair_h16s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_abs_distance_bps",
+      "name": "ema_pair_h16s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 4.393860989828146
+    },
+    {
+      "feature": "ema_pair_h16s_h128s_distance_expanding",
+      "name": "ema_pair_h16s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_favorable_ordering",
+      "name": "ema_pair_h16s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_last_cross_favorable",
+      "name": "ema_pair_h16s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_cross_age_s",
+      "name": "ema_pair_h16s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_cross_age_s",
+      "name": "ema_pair_h16s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 16.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h16s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_abs_distance_bps",
+      "name": "ema_pair_h16s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 6.777327660977725
+    },
+    {
+      "feature": "ema_pair_h16s_h256s_distance_expanding",
+      "name": "ema_pair_h16s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_favorable_ordering",
+      "name": "ema_pair_h32s_h64s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_last_cross_favorable",
+      "name": "ema_pair_h32s_h64s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_cross_age_s",
+      "name": "ema_pair_h32s_h64s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_cross_age_s",
+      "name": "ema_pair_h32s_h64s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h64s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h64s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_abs_distance_bps",
+      "name": "ema_pair_h32s_h64s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 1.5462551263714441
+    },
+    {
+      "feature": "ema_pair_h32s_h64s_distance_expanding",
+      "name": "ema_pair_h32s_h64s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_favorable_ordering",
+      "name": "ema_pair_h32s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_last_cross_favorable",
+      "name": "ema_pair_h32s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_cross_age_s",
+      "name": "ema_pair_h32s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_cross_age_s",
+      "name": "ema_pair_h32s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_abs_distance_bps",
+      "name": "ema_pair_h32s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.564167917806845
+    },
+    {
+      "feature": "ema_pair_h32s_h128s_distance_expanding",
+      "name": "ema_pair_h32s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_favorable_ordering",
+      "name": "ema_pair_h32s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_last_cross_favorable",
+      "name": "ema_pair_h32s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_cross_age_s",
+      "name": "ema_pair_h32s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_cross_age_s",
+      "name": "ema_pair_h32s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 32.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h32s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_abs_distance_bps",
+      "name": "ema_pair_h32s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 6.13542078950309
+    },
+    {
+      "feature": "ema_pair_h32s_h256s_distance_expanding",
+      "name": "ema_pair_h32s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_favorable_ordering",
+      "name": "ema_pair_h64s_h128s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_last_cross_favorable",
+      "name": "ema_pair_h64s_h128s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_cross_age_s",
+      "name": "ema_pair_h64s_h128s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_cross_age_s",
+      "name": "ema_pair_h64s_h128s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h64s_h128s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_arrangement_persistence_s",
+      "name": "ema_pair_h64s_h128s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_abs_distance_bps",
+      "name": "ema_pair_h64s_h128s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 2.1598694450016906
+    },
+    {
+      "feature": "ema_pair_h64s_h128s_distance_expanding",
+      "name": "ema_pair_h64s_h128s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_favorable_ordering",
+      "name": "ema_pair_h64s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_last_cross_favorable",
+      "name": "ema_pair_h64s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_cross_age_s",
+      "name": "ema_pair_h64s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_cross_age_s",
+      "name": "ema_pair_h64s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h64s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 64.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h64s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_abs_distance_bps",
+      "name": "ema_pair_h64s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 4.972525338014059
+    },
+    {
+      "feature": "ema_pair_h64s_h256s_distance_expanding",
+      "name": "ema_pair_h64s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_favorable_ordering",
+      "name": "ema_pair_h128s_h256s:favorable",
+      "operator": "eq",
+      "provenance": "ordering",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_last_cross_favorable",
+      "name": "ema_pair_h128s_h256s:last_cross_favorable",
+      "operator": "eq",
+      "provenance": "cross_direction",
+      "threshold": 1.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_cross_age_s",
+      "name": "ema_pair_h128s_h256s:cross_age_le_fast",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_cross_age_s",
+      "name": "ema_pair_h128s_h256s:cross_age_le_slow",
+      "operator": "le",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h128s_h256s:persistence_ge_fast",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 128.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_arrangement_persistence_s",
+      "name": "ema_pair_h128s_h256s:persistence_ge_slow",
+      "operator": "ge",
+      "provenance": "ema_half_life_basis",
+      "threshold": 256.0
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_abs_distance_bps",
+      "name": "ema_pair_h128s_h256s:distance_ge_provider_sigma",
+      "operator": "ge",
+      "provenance": "2025_provider_full_source_grid_standard_deviation",
+      "threshold": 3.0113057700993484
+    },
+    {
+      "feature": "ema_pair_h128s_h256s_distance_expanding",
+      "name": "ema_pair_h128s_h256s:expanding",
+      "operator": "eq",
+      "provenance": "distance_dynamics",
+      "threshold": 1.0
+    }
+  ],
+  "baseline_projection": {
+    "baseline_id": "btc_usdc_current_live_held_ber_replay_baseline_40d_20260809",
+    "baseline_identity_sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+    "daily_fresh_start": true,
+    "economic_fields_present_in_source_identity_but_unused": true,
+    "operational_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "operational_identity_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
+    "ordered_utc_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ]
+  },
+  "duration_source": {
+    "candidate_actions": {
+      "BUY": [
+        {
+          "duration_s": null,
+          "duration_semantics": "current 85 seconds times same-side filled-quantity units",
+          "policy_id": "CONTROL_85N"
+        },
+        {
+          "duration_s": 79,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_79S"
+        },
+        {
+          "duration_s": 173,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_173S"
+        },
+        {
+          "duration_s": 223,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_223S"
+        },
+        {
+          "duration_s": 356,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_356S"
+        },
+        {
+          "duration_s": 640,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_640S"
+        },
+        {
+          "duration_s": 709,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_709S"
+        },
+        {
+          "duration_s": 2048,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_2048S"
+        }
+      ],
+      "SELL": [
+        {
+          "duration_s": null,
+          "duration_semantics": "current 85 seconds times same-side filled-quantity units",
+          "policy_id": "CONTROL_85N"
+        },
+        {
+          "duration_s": 79,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_79S"
+        },
+        {
+          "duration_s": 166,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_166S"
+        },
+        {
+          "duration_s": 211,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_211S"
+        },
+        {
+          "duration_s": 349,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_349S"
+        },
+        {
+          "duration_s": 660,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_660S"
+        },
+        {
+          "duration_s": 686,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_686S"
+        },
+        {
+          "duration_s": 1748,
+          "duration_semantics": "fixed total duration from target fill",
+          "policy_id": "FIXED_1748S"
+        }
+      ]
+    },
+    "clock_quantiles": {
+      "BUY": {
+        "current_control_85n_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 85,
+            "p50": 170,
+            "p75": 170,
+            "p90": 255
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_empirical_quantile",
+          "observed_events": 4499,
+          "right_censored": 0,
+          "rows": 4499
+        },
+        "next_inventory_state_change_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 79,
+            "p50": 173,
+            "p75": 356,
+            "p90": 640
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_Kaplan_Meier",
+          "observed_events": 4479,
+          "right_censored": 20,
+          "rows": 4499
+        },
+        "undo_incremental_inventory_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 79,
+            "p50": 223,
+            "p75": 709,
+            "p90": 2048
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_Kaplan_Meier",
+          "observed_events": 4433,
+          "right_censored": 66,
+          "rows": 4499
+        }
+      },
+      "SELL": {
+        "current_control_85n_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 85,
+            "p50": 170,
+            "p75": 170,
+            "p90": 255
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_empirical_quantile",
+          "observed_events": 4101,
+          "right_censored": 0,
+          "rows": 4101
+        },
+        "next_inventory_state_change_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 79,
+            "p50": 166,
+            "p75": 349,
+            "p90": 686
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_Kaplan_Meier",
+          "observed_events": 4094,
+          "right_censored": 7,
+          "rows": 4101
+        },
+        "undo_incremental_inventory_s": {
+          "day_equal_weighted_quantiles_s": {
+            "p25": 79,
+            "p50": 211,
+            "p75": 660,
+            "p90": 1748
+          },
+          "distinct_utc_days": 40,
+          "estimator": "day_equal_weighted_Kaplan_Meier",
+          "observed_events": 4085,
+          "right_censored": 16,
+          "rows": 4101
+        }
+      }
+    },
+    "columns_read": [
+      "day",
+      "order_id",
+      "side",
+      "fill_ts",
+      "fill_qty",
+      "inventory_before_fill",
+      "inventory_after_fill"
+    ],
+    "cooldown_semantics": {
+      "adaptive_add_cooldown_enabled": false,
+      "buy_fill_selection_live_enabled": false,
+      "clock_mode": "wall_time",
+      "config_path": "${NARROWGATE_LIVE_CONFIG}",
+      "config_sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+      "consecutive_reset_policy": "opposite_fill_only",
+      "fill_cooldown_s": 85.0,
+      "lot_size_btc": 0.001,
+      "order_size_btc": 0.001,
+      "q90_action_enabled": false,
+      "quantity_unit_btc": 0.001,
+      "reducing_cooldown_s": 0.0
+    },
+    "economic_outcomes_read": false,
+    "exposure_increasing_fill_rows": 8600,
+    "fills_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_40d_20260809/fills.parquet",
+    "fills_sha256": "db2f3b2990e781c8ec651b205f392c62b42f63bd7d0cadefdeac486fee4b8c44",
+    "right_censoring": "at the natural UTC day end of the frozen daily-fresh-start Development path; candidate quantiles use weighted Kaplan-Meier",
+    "rounding": "nearest whole second for action serialization only",
+    "weighting": "each UTC day has equal total mass within side and clock"
+  },
+  "ema_source": {
+    "all_pair_count": 45,
+    "half_lives_s": [
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      16.0,
+      32.0,
+      64.0,
+      128.0,
+      256.0
+    ],
+    "pair_distance_scale_bps": {
+      "ema_pair_h0p5s_h128s": 5.303030686352521,
+      "ema_pair_h0p5s_h16s": 1.816144500290082,
+      "ema_pair_h0p5s_h1s": 0.18347475630177143,
+      "ema_pair_h0p5s_h256s": 7.440957533207634,
+      "ema_pair_h0p5s_h2s": 0.4349962141841511,
+      "ema_pair_h0p5s_h32s": 2.633760096002491,
+      "ema_pair_h0p5s_h4s": 0.7697548909513472,
+      "ema_pair_h0p5s_h64s": 3.756585226088687,
+      "ema_pair_h0p5s_h8s": 1.215737803438421,
+      "ema_pair_h128s_h256s": 3.0113057700993484,
+      "ema_pair_h16s_h128s": 4.393860989828146,
+      "ema_pair_h16s_h256s": 6.777327660977725,
+      "ema_pair_h16s_h32s": 1.1021263606765104,
+      "ema_pair_h16s_h64s": 2.5477416004801445,
+      "ema_pair_h1s_h128s": 5.272881873241351,
+      "ema_pair_h1s_h16s": 1.7345517091866334,
+      "ema_pair_h1s_h256s": 7.4196427123335775,
+      "ema_pair_h1s_h2s": 0.2672906499302295,
+      "ema_pair_h1s_h32s": 2.5744636390647413,
+      "ema_pair_h1s_h4s": 0.6296090055370983,
+      "ema_pair_h1s_h64s": 3.7141263093797523,
+      "ema_pair_h1s_h8s": 1.1063881924852512,
+      "ema_pair_h2s_h128s": 5.211867951558249,
+      "ema_pair_h2s_h16s": 1.576420522908707,
+      "ema_pair_h2s_h256s": 7.376348239941906,
+      "ema_pair_h2s_h32s": 2.4567912965062826,
+      "ema_pair_h2s_h4s": 0.38569017483669626,
+      "ema_pair_h2s_h64s": 3.628783375430873,
+      "ema_pair_h2s_h8s": 0.903094119146804,
+      "ema_pair_h32s_h128s": 3.564167917806845,
+      "ema_pair_h32s_h256s": 6.13542078950309,
+      "ema_pair_h32s_h64s": 1.5462551263714441,
+      "ema_pair_h4s_h128s": 5.089855282078916,
+      "ema_pair_h4s_h16s": 1.2841837179483444,
+      "ema_pair_h4s_h256s": 7.289170473600091,
+      "ema_pair_h4s_h32s": 2.22999133907444,
+      "ema_pair_h4s_h64s": 3.460313907861676,
+      "ema_pair_h4s_h8s": 0.5516430309339764,
+      "ema_pair_h64s_h128s": 2.1598694450016906,
+      "ema_pair_h64s_h256s": 4.972525338014059,
+      "ema_pair_h8s_h128s": 4.850299013071968,
+      "ema_pair_h8s_h16s": 0.7821751628952203,
+      "ema_pair_h8s_h256s": 7.115769223250088,
+      "ema_pair_h8s_h32s": 1.8132824659630902,
+      "ema_pair_h8s_h64s": 3.1374068240593913
+    },
+    "price": "canonical decision-visible local mid",
+    "provider_economic_outcomes_read": false,
+    "provider_encoder_manifest_path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid_manifest.json",
+    "provider_encoder_manifest_sha256": "59970d00136c56e7500f50ca4df71ed3487fb3dcec705c371b75f530b0eb4def",
+    "provider_encoder_path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid.npz",
+    "provider_encoder_sha256": "369ee07e5f8568ad0d9b41cf9c407c2d01fe794f072f7af55942fbeba917236d",
+    "provider_sampling_stride": "none_all_admitted_source_rows",
+    "provider_training_days": 66,
+    "provider_training_rows": 112090884
+  },
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "last_materially_modified": "2026-08-09",
+  "permissions": {
+    "action_authorized": false,
+    "development_economic_labels_read": false,
+    "live_authorized": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "research_class": "exploratory",
+  "schema_version": "multiscale_ema_boolean_cooldown_duration_policy_v1.outcome_blind_inputs.v1"
+}

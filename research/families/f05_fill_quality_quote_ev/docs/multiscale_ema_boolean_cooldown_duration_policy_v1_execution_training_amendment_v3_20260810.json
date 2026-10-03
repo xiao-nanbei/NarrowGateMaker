@@ -1,0 +1,152 @@
+{
+  "schema_version": "multiscale_ema_boolean_cooldown_duration_policy.v1.execution_training_amendment.v3",
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "status": "development_closed_no_side_policy_frozen",
+  "last_materially_modified": "2026-08-10",
+  "supersedes_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_execution_amendment_v2_20260809.json",
+    "sha256": "67d9fdf1d22cc08800887aae40d62d9c9d82ecddaf5c1cc7f19d5e0b89064ba3",
+    "historical_identity_unchanged": true
+  },
+  "frozen_sources": {
+    "spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.json",
+      "sha256": "9f8c5abce4817b029d943648a46ab115d6ce7ac7f758b1326a48d75fa446e8ce"
+    },
+    "outcome_blind_inputs": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+      "sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035"
+    },
+    "current_replay_baseline": {
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    }
+  },
+  "formal_execution": {
+    "execution_identity_sha256": "ff4873a18b0f77d2ddd4bbe19bddc18d66a5ff3d3f628d76bc538b0f2bb9eb40",
+    "formal_input_identity_sha256": "0a54c45bab05a7e10f44bbfc28c22f41b52c5ca3dccb380b83b9f4e1f54948ef",
+    "opportunities": 8600,
+    "duration_arms_per_opportunity": 8,
+    "arm_rows": 68800,
+    "joint_censored_opportunities": 171,
+    "training_eligible_opportunities": 8429,
+    "development_days": 40,
+    "outer_folds": 4,
+    "inner_folds_per_outer_fold": 3,
+    "bootstrap_samples": 500,
+    "confidence": 0.95,
+    "sampling": "none_full_cartesian_coverage",
+    "complete_case_filtering_used": false
+  },
+  "implementation_bindings": [
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_study.py",
+      "sha256": "e3482fb458f2831420e2990507c02e46bc97506138bf17341fa30c6f809e8d4d",
+      "role": "formal_study_runner"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration.py",
+      "sha256": "5fcd4afe14dcc226c10663c9a99eb95c7914aba972df107e093f2fdff4019c83",
+      "role": "ema_predicate_contract"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_rule_learner.py",
+      "sha256": "82ebedf74b879c3004300ab339f54d86fbfe5c27fa98c197f415064692921f58",
+      "role": "nested_boolean_rule_learner"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_training.py",
+      "sha256": "3ec4f8289b1f260b11f86b97a90cb3caee992b7d502a2d90bfd00f9e05e76b86",
+      "role": "nested_chronological_training_and_atomic_publication"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration_policy_finalizer.py",
+      "sha256": "81d1e76fc9c2cca671a7cdfa3f048d19d4fae05fc96bb5cd2ea759ef92a501fa",
+      "role": "outer_oof_gate_and_fail_closed_finalizer"
+    },
+    {
+      "path": "models/backtest_tick.py",
+      "sha256": "4b1644c80540dc073518f275eb34fb680a509d7222961d466eb646d920dd8d56",
+      "role": "python_diagnostic_full_path"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "d98955033f198e85057cf67c75d598e689d4ec43e6edd6525a3e4fdfe7e61dc1",
+      "role": "cpp_formal_duration_fork"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "4ba5d3edde3a0c5b13cf53cd30f2cd870fb8acc6a13c8f7d8b4e2d9b98ae2f55",
+      "role": "cpp_formal_duration_fork_abi"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "15c7e87950dd3223c2665cacc251f8140269998b4ef4e9f0e333a23252c6f9d0",
+      "role": "cpp_python_binding"
+    },
+    {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "sha256": "3ea01e6c45235f5a169d552c76d776575268687e2a8901f32096de31a8ec87eb",
+      "role": "loaded_cpp_extension"
+    }
+  ],
+  "authoritative_artifacts": {
+    "training_manifest_sha256": "5ca8fb7292bc95ca49d29034ece2ba47840d8e172c5f05c194fa3122a3cd4cc4",
+    "training_success_sha256": "38d85be45b8bf09a3b88a34450452e529d0f530dc6201bf46786c89a70e655e5",
+    "oof_sha256": "2556bb3d641eb18bd6901a93a2031eb4593f8e558506bc77bc4aff2be5e3fe0e",
+    "outer_policies_sha256": "955503ecbb8b67eaf4e15210c107799f17a280f5cd89b258b6c3a0ee11fd46a9",
+    "chronology_audit_sha256": "9a1b6c2d9ac57a33acd7a7720fe46b589067524105184f06ed463038a139e180",
+    "complexity_evidence_sha256": "707dfa8b85b615965f0651e8edd111dcfe606eeb692ae8ea038f0c3bc161af6d",
+    "development_report_sha256": "4c0314614b1e0c84c979151aad6bed8a4a384bbbc589ca17959adfe29fcd0017",
+    "post_training_manifest_sha256": "aeb04c6655fa733c5d4438fe0ba18ce168f13dfbee362a1b52ac778139909cd8",
+    "post_training_success_sha256": "c2a40c7be4de37d6307d881b62420f24abdb24218d6c8d268a12ae997def2604",
+    "closure_file_sha256": "f591c3ece650389c86a16d4c66dedc83b2ee45d2463e2443d8cb06213a6d34e0",
+    "closure_identity_sha256": "29dc415c9a5d34253c13cf5d0fb1b7876939ef8212564c1c04bc3bfd3132cd07",
+    "orico_root": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810",
+    "orico_admission_manifest": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810/admission_manifest.json",
+    "orico_admission_status": "atomic_admission_complete_and_independently_verified",
+    "orico_admission_identity_sha256": "f168fe4324c7210285b0dfde5a43533a9790bc587749332b9c4b6c7c85a877ed",
+    "orico_admitted_file_count": 17449,
+    "orico_admitted_bytes": 7576857347
+  },
+  "outer_oof_result": {
+    "BUY": {
+      "rows": 2929,
+      "campaigns": 1812,
+      "days": 24,
+      "outer_policy_count": 4,
+      "non_control_action_rate": 0.0,
+      "point_uplift_usdc": 0.0,
+      "lower_confidence_bound_usdc": 0.0,
+      "passed": false
+    },
+    "SELL": {
+      "rows": 2640,
+      "campaigns": 1634,
+      "days": 24,
+      "outer_policy_count": 4,
+      "non_control_action_rate": 0.0,
+      "point_uplift_usdc": 0.0,
+      "lower_confidence_bound_usdc": 0.0,
+      "passed": false
+    }
+  },
+  "closure": {
+    "reason": "BUY_and_SELL_outer_OOF_LCB_not_above_zero",
+    "passing_sides": [],
+    "full_development_refit_sides": [],
+    "validation_or_holdout_may_rescue": false,
+    "scope": "this frozen Boolean cooldown-duration policy identity only",
+    "does_not_establish": "CONTROL_85N is optimal"
+  },
+  "permission_boundary": {
+    "development_economic_outcomes_read": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "policy_level_full_path_replay_authorized": false,
+    "restart_aware_confirmation_authorized": false,
+    "f09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

@@ -1,0 +1,330 @@
+{
+  "canonical_spec_identity_sha256": "fc344adfef2d631a8fb6aee1b84595e6ba9f42b9811384208f3d812c5bd3d010",
+  "chronological_oof": {
+    "folds": [
+      {
+        "fold_id": "fold_01_validation_early",
+        "panel": "historical_2026_validation",
+        "test_days": [
+          "2026-05-12",
+          "2026-05-13",
+          "2026-05-15",
+          "2026-05-17",
+          "2026-05-28",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-01",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-04"
+        ]
+      },
+      {
+        "fold_id": "fold_02_validation_late",
+        "panel": "historical_2026_validation",
+        "test_days": [
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14",
+          "2026-06-15",
+          "2026-06-16"
+        ]
+      },
+      {
+        "fold_id": "fold_03_test_early",
+        "panel": "historical_2026_test_diagnostic",
+        "test_days": [
+          "2026-06-18",
+          "2026-06-19",
+          "2026-06-20",
+          "2026-06-21",
+          "2026-06-22",
+          "2026-06-23",
+          "2026-06-24",
+          "2026-06-25",
+          "2026-06-26",
+          "2026-06-27",
+          "2026-06-28",
+          "2026-06-29"
+        ]
+      },
+      {
+        "fold_id": "fold_04_test_late",
+        "panel": "historical_2026_test_diagnostic",
+        "test_days": [
+          "2026-06-30",
+          "2026-07-01",
+          "2026-07-02",
+          "2026-07-03",
+          "2026-07-04",
+          "2026-07-05",
+          "2026-07-06",
+          "2026-07-07",
+          "2026-07-08",
+          "2026-07-09",
+          "2026-07-10",
+          "2026-07-11"
+        ]
+      }
+    ],
+    "initial_native_panel": "fit_2026_current",
+    "test_fold_days": 12,
+    "training_rule": "all provider Development days plus strictly earlier native days only"
+  },
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "estimand": {
+    "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+    "distance_unit": "USDC_per_BTC",
+    "event_type": "touch",
+    "horizon_s": 10.0,
+    "max_bbo_age_ms": 5000,
+    "order_lifecycle_included": false,
+    "queue_included": false,
+    "windowing": "non_overlapping_utc_10s"
+  },
+  "evaluation": {
+    "bootstrap": {
+      "draws": 20000,
+      "seed": 20260803
+    },
+    "calibration_gate": {
+      "max_iace_worsening": 0.002,
+      "minimum_windows": 20000,
+      "required_slices": [
+        "BUY_and_SELL",
+        "fast_volatility_quartile",
+        "slow_volatility_quartile",
+        "causal_regime"
+      ]
+    },
+    "context_coverage_gate": {
+      "denominator": "8640_windows_minus_six_same_day_60s_warmup_windows",
+      "minimum_fraction": 0.98
+    },
+    "distance_grid": {
+      "maximum": 120.0,
+      "minimum": 0.5,
+      "step": 0.5,
+      "unit": "USDC_per_BTC"
+    },
+    "proper_score_gate": {
+      "both_sides_mean_delta_lte_zero_per_panel_and_metric": true,
+      "metrics": [
+        "uniform_full_distance_integrated_brier",
+        "current_baseline_policy_support_brier"
+      ],
+      "pooled_day_cluster_ci95_upper_lt_zero_per_panel_and_metric": true
+    },
+    "source_transport_gate": {
+      "max_mean_absolute_prediction_difference": 0.01,
+      "metrics": [
+        "uniform_full_distance",
+        "current_baseline_policy_support"
+      ]
+    }
+  },
+  "feature_graph": {
+    "graph_id": "p3_touch_volatility_conditioned.v4",
+    "sha256": "210ba301b14cc134ba4f7c93db973d535f3f8ea10242d5872b7afa0fb542612a"
+  },
+  "identities": {
+    "backtest_config": {
+      "path": "models/backtest_config.py",
+      "sha256": "7cb4e197bf612a85fdfdd05df88d00ee268f8b147e956b7e5d75ff26855ea61d"
+    },
+    "backtest_tick": {
+      "path": "models/backtest_tick.py",
+      "sha256": "81a6bca8451eb0233ea94b886842709b6730aca8ad5b72350c9c594182ed2830"
+    },
+    "base_day_manifest": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_source_aware_expanded_v3_day_manifest_20260803.json",
+      "sha256": "f6f0cb01909746e1760eb700430705aa7a4769b453e94eed2ac2b692d20b3cfa"
+    },
+    "cpp_native_module": {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "sha256": "e84e18f18f561218e28fe144f44e81bd3b1916deb089dec4ad396dc82e8b922e"
+    },
+    "current_v2_artifact": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    "current_v2_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s.json",
+      "sha256": "58c077054a81644c5c04129435edb5e0ac6cc18e4532706f3e2fc63606f6e57e"
+    },
+    "data_windows": {
+      "path": "models/data_windows.py",
+      "sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223"
+    },
+    "feature_dag_source": {
+      "path": "features/feature_dag.py",
+      "sha256": "8fa9df17d31687b9e0747e4bc1de120d6cd752d0b867d2e374b06ecfee1671ee"
+    },
+    "model_bundle": {
+      "path": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802/bundle_meta.json",
+      "sha256": "4bbd2746e360f99c7d58afbfd6b3cfd79b1fbc1f8d1f00fac0768616a50318e3"
+    },
+    "operational_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36"
+    },
+    "source_aware_v3_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_source_aware_expanded.py",
+      "sha256": "8e54199944039524c26975ff5cc8ef97d54404c218c4984a82a24ed0dc7e2742"
+    },
+    "tardis_combined_quality": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/tardis_normalized_l2_100ms_v1_20260731/combined_2025_2026_quality.csv",
+      "sha256": "4ceb426216bbe43a200ae6231bb7c43af3fbf44f2de20b90b6ccfb13697975f4"
+    },
+    "v3_quote_path_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_source_aware_expanded_v3_quote_path_20260803/report.json",
+      "sha256": "03672d5ff18e094af7672ab77bcd17f63f3925327acf79fa88ed40ebabbb005d"
+    },
+    "v3_quote_path_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_source_aware_expanded_v3_quote_path_spec_20260803.json",
+      "sha256": "782f7f1c491041e0715ec95d87def828bdfdf4a293f680f66a0e530b4180afc8"
+    },
+    "v4_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_volatility_conditioned.py",
+      "sha256": "695259ff0ee1295dc0dda46457352e58551fb5532542951d665ba409944cfeac"
+    },
+    "window_context_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_window_context.py",
+      "sha256": "3ded04629658d707c3baaa41a9358daf29f2425fc77ce7d9d5c1b8b3860315b3"
+    }
+  },
+  "identity": "p3_touch_volatility_conditioned_v4",
+  "model": {
+    "distance_sampling": {
+      "maximum": 120.0,
+      "minimum": 0.5,
+      "samples_per_window": 4,
+      "seed": 20260803,
+      "strategy": "deterministic_one_draw_per_equal_width_distance_stratum"
+    },
+    "feature_contract": {
+      "calm_upper": 0.75,
+      "horizon_s": 10.0,
+      "shock_lower": 1.5
+    },
+    "feature_names": [
+      "distance_usdc_per_btc",
+      "distance_z_slow_10s",
+      "side_sell",
+      "spread_usdc_per_btc",
+      "spread_bps",
+      "log_fast_sigma",
+      "log_slow_sigma",
+      "log_fast_slow_ratio",
+      "regime_calm",
+      "regime_shock"
+    ],
+    "lightgbm_parameters": {
+      "bagging_fraction": 1.0,
+      "bagging_freq": 0,
+      "deterministic": true,
+      "feature_fraction": 1.0,
+      "force_col_wise": true,
+      "lambda_l2": 5.0,
+      "learning_rate": 0.04,
+      "max_bin": 127,
+      "max_depth": 6,
+      "metric": "None",
+      "min_data_in_leaf": 10000,
+      "monotone_constraints_method": "advanced",
+      "num_leaves": 31,
+      "num_threads": 6,
+      "objective": "binary",
+      "seed": 20260803,
+      "verbosity": -1
+    },
+    "monotone_constraints": [
+      -1,
+      -1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "nested_calibration": {
+      "calibrator": "shared_positive_slope_platt",
+      "separate_action_calibrators_forbidden": true,
+      "tail_days": 8
+    },
+    "num_boost_round": 96,
+    "source_identity_is_model_feature": false,
+    "source_weights": {
+      "native": 0.5,
+      "provider_translated": 0.5
+    },
+    "year_is_model_feature": false
+  },
+  "permissions": {
+    "action_authority": false,
+    "development_only": true,
+    "historical_panels_previously_read": true,
+    "independent_confirmation": false,
+    "live_authority": false,
+    "overwrite_current_v2_artifact": false,
+    "prediction_authority": false,
+    "quote_mapping_authority": false,
+    "sealed_holdout_read": false
+  },
+  "policy_support": {
+    "distance_field": "final_quote_delta_to_bbo",
+    "one_quote_per_10s_prediction_bucket_side": true,
+    "source": "bound_current_v2_arm_of_v3_historical_native_quote_path",
+    "uses_pnl_or_markout": false
+  },
+  "schema_version": "narrowgate_p3_touch_volatility_conditioned.v4.spec",
+  "source_translation": {
+    "future_touch_outcome_used": false,
+    "method": "median_of_daily_paired_window_medians",
+    "overlap_days": {
+      "excluded_unread_or_embargo": [
+        "2026-05-06",
+        "2026-07-12",
+        "2026-07-15",
+        "2026-07-17",
+        "2026-07-18",
+        "2026-07-20"
+      ],
+      "fit": [
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-05"
+      ],
+      "historical_diagnostic": [
+        "2026-05-30",
+        "2026-06-06",
+        "2026-06-09",
+        "2026-06-11",
+        "2026-06-18",
+        "2026-07-05"
+      ]
+    },
+    "source_identity_use": "translation_calibration_and_transport_only_not_trading_feature"
+  },
+  "window_context": {
+    "fast_window_s": 10,
+    "mid_sampling": "causal_last_known_BBO_at_one_second_boundaries_ending_at_window_start",
+    "slow_window_s": 60,
+    "variance_estimator": "sample_variance_of_one_second_mid_price_differences",
+    "variance_floor": 1e-06
+  }
+}

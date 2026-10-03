@@ -1,0 +1,87 @@
+{
+  "schema_version": "narrowgate_historical_reproduction_registry.v1",
+  "runners": {
+    "f02.conditional_p3_scalar_compression_adapter": {
+      "family": "F02",
+      "supported": true,
+      "authority": "historical_evidence_only",
+      "interpretive_identity": "conditional_p3_scalar_compression_adapter_v1",
+      "specs": [
+        {
+          "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_spec_20260803.json",
+          "sha256": "c88e99fdeb69b0654a4b4a79c3e31bda190ffdfaf61f3b6b82db78298016c59a"
+        }
+      ]
+    },
+    "f06.competing_curve_fill_cif": {
+      "family": "F06",
+      "supported": true,
+      "specs": [
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+          "sha256": "0acc7920f07656af0be2cb55b05f5782aaae4520011ba5a00c400bf739563dac"
+        }
+      ]
+    },
+    "f06.direct_fill_cif": {
+      "family": "F06",
+      "supported": true,
+      "specs": [
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v1_spec_20260726.json",
+          "sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f"
+        },
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v2_spec_20260727.json",
+          "sha256": "54c74b8a5185cfe55ff00cd7bbf95896649133d6093de0707ddf6b3b7ce906e9"
+        },
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v3_spec_20260727.json",
+          "sha256": "18dfc9cea5b0e4da7455370bf5e79d9655b71972676cca3500bbc6df0587462f"
+        },
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+          "sha256": "e2a9ef38aef8ff53493e92ca58852db7b76cd5aa57ce9a7b89d24b706ba7afaf"
+        }
+      ]
+    },
+    "f06.full_curve_fill_cif": {
+      "family": "F06",
+      "reason": "version_specific_frozen_implementation_bytes_absent",
+      "supported": false,
+      "specs": []
+    },
+    "f06.nested_role_calibrated_competing_curve_cif": {
+      "family": "F06",
+      "supported": true,
+      "specs": [
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_nested_role_competing_cif_v6_spec_20260727.json",
+          "sha256": "6db121f8b1240a84c5666e0a843398291778d42cd43fedb2cf036d3ff536fb8d"
+        }
+      ]
+    },
+    "f06.role_calibrated_competing_curve_cif": {
+      "family": "F06",
+      "supported": true,
+      "specs": [
+        {
+          "path": "research/families/f06_placement_fill_cif/docs/placement_fill_role_calibrated_competing_cif_v5_spec_20260727.json",
+          "sha256": "a474b756a3e39c023a915e7628edfb0befe3e3dba20c1eaf0d98813adab166dd"
+        }
+      ]
+    },
+    "f07.queue_value_competing_risk": {
+      "family": "F07",
+      "reason": "complete_frozen_reproduction_contract_absent",
+      "supported": false,
+      "specs": []
+    },
+    "f08.side_taker_hazard_calibration": {
+      "family": "F08",
+      "reason": "complete_frozen_reproduction_contract_absent",
+      "supported": false,
+      "specs": []
+    }
+  }
+}

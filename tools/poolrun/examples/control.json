@@ -1,0 +1,26 @@
+{
+  "socket": "/approved/private-control/master.sock",
+  "heartbeat_timeout": 90,
+  "hosts": {
+    "host-a": {
+      "platform": "linux-x86_64",
+      "network_zone": "cloud",
+      "slots": 3,
+      "cpus": 3,
+      "memory_bytes": 21474836480,
+      "memory_headroom": 4294967296,
+      "disk_bytes": 68719476736,
+      "disk_headroom": 8589934592,
+      "prefetch_bytes": 8589934592,
+      "capabilities": []
+    }
+  },
+  "transfer_policy": {
+    "global_concurrency": 3,
+    "small_file_bytes": 1048576,
+    "routes": {
+      "direct": {"pairs": [["cloud", "cloud"]], "source_concurrency": 2, "link_concurrency": 1},
+      "netdisk": {"account_concurrency": 3, "source_concurrency": 3, "link_concurrency": 1, "rate_bytes_per_second": 10485760}
+    }
+  }
+}

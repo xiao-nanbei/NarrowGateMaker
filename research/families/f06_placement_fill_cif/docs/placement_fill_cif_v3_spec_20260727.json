@@ -1,0 +1,30 @@
+{
+  "extends": "placement_fill_cif_v2_spec_20260727.json",
+  "extends_sha256": "54c74b8a5185cfe55ff00cd7bbf95896649133d6093de0707ddf6b3b7ce906e9",
+  "schema_version": "narrowgate_placement_fill_cif_spec.v3",
+  "family_id": "placement_fill_cif_v3",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v3_formal_development_run",
+  "revision_reason": "v2 Development showed transferable rank but a lagging base rate; add an operationally observable past-only rolling cell intercept",
+  "evidence_scope": "the rolling-window candidate was selected on Development only; Validation and sealed holdout remained unread",
+  "lineage": {
+    "v2_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v2_development_20260727/report.json",
+    "v2_development_report_sha256": "d2cd70eee455347bdffca28fe874e27fa81085cb77d80b210e7e3aa0267b80b0"
+  },
+  "development_fit": {
+    "calibration_revision": "side_affine_logit_then_side_role_horizon_intercept_only_then_rolling_current_action_intercept",
+    "rolling_calibration": {
+      "window_utc_days": 3,
+      "minimum_history_days_before_scoring": 3,
+      "outcome_source_action": "current",
+      "past_only": true,
+      "update_frequency": "once_after_each_completed_UTC_day",
+      "placement_actions_pooled_for_gate": true
+    }
+  },
+  "interpretation": {
+    "prediction_pass_allows": "shadow probability surface and a downstream known-propensity action-value experiment",
+    "prediction_pass_does_not_allow": "direct live quote changes",
+    "economic_gate": "still requires fill value, campaign cost, queue/reset cost, and action uplift"
+  }
+}

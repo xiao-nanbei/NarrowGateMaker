@@ -1,0 +1,96 @@
+{
+  "schema_version": "narrowgate.time_scale_evidence_classification.v1",
+  "identity": "time_scale_evidence_classification_v1",
+  "last_materially_modified": "2026-08-04",
+  "canonical_contract_sha256": "eb526692dfa1ebc1021598d9f8e9a6559949a0f78f2c490ba8f7a0d634c53852",
+  "classes": [
+    {
+      "name": "estimand_horizon",
+      "authoritative_method": "full_first_passage_hazard_or_competing_risk_cif",
+      "examples": [
+        "aggressive_reach_time",
+        "fill_before_cancel_ack",
+        "post_fill_value_time"
+      ],
+      "forbidden_shortcut": "single_empirical_horizon_as_universal_truth"
+    },
+    {
+      "name": "policy_clock",
+      "authoritative_method": "independent_full_path_action_ab",
+      "examples": [
+        "requote_interval",
+        "replace_schedule",
+        "cooldown",
+        "pause"
+      ],
+      "forbidden_shortcut": "derive_policy_duration_directly_from_lifecycle_percentile"
+    },
+    {
+      "name": "transport_limit",
+      "authoritative_method": "latency_tail_sla_and_fail_closed_cost",
+      "examples": [
+        "receive_time_age",
+        "feature_ready_delay",
+        "cancel_ack_latency"
+      ],
+      "forbidden_shortcut": "treat_provider_clock_as_aws_receive_time"
+    },
+    {
+      "name": "feature_basis",
+      "authoritative_method": "preserve_multiscale_basis_and_test_incremental_value_chronologically",
+      "examples": [
+        "rolling_3s",
+        "rolling_5s",
+        "rolling_10s",
+        "rolling_30s",
+        "rolling_60s",
+        "rolling_300s"
+      ],
+      "forbidden_shortcut": "interpret_lookback_window_as_label_horizon_or_policy_clock"
+    },
+    {
+      "name": "governance_threshold",
+      "authoritative_method": "preregistered_risk_and_statistical_contract",
+      "examples": [
+        "coverage_gate",
+        "confidence_lower_bound",
+        "candidate_rate_gate"
+      ],
+      "forbidden_shortcut": "estimate_threshold_from_read_outcomes_without_new_identity"
+    }
+  ],
+  "baseline_epoch_key_fields": [
+    "runtime_code_sha256",
+    "config_sha256",
+    "model_bundle_sha256",
+    "p3_artifact_sha256",
+    "feature_dag_sha256",
+    "execution_abi_identity",
+    "action_enablement_identity",
+    "initial_runtime_state_identity"
+  ],
+  "baseline_epoch_boundary_events": [
+    "code_or_config_deployment",
+    "action_enablement_change",
+    "model_or_p3_artifact_change",
+    "unrecoverable_process_restart",
+    "data_source_change",
+    "feature_dag_or_clock_semantics_change"
+  ],
+  "non_boundary_events": [
+    "utc_midnight"
+  ],
+  "lifecycle_requirements": {
+    "calendar_time_and_risk_time_both_required": true,
+    "inactive_or_terminal_intervals_excluded_from_risk_exposure": true,
+    "competing_risk_event_identity_preserved": true,
+    "pooling_across_baseline_epochs_is_primary": false,
+    "epoch_specific_curves_required_before_pooled_sensitivity": true
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "model_training_authorized": false,
+    "action_authorized": false,
+    "live_policy_authorized": false
+  }
+}

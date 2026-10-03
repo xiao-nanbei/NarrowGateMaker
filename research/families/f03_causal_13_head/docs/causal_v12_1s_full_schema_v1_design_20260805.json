@@ -1,0 +1,65 @@
+{
+  "schema_version": "causal_v12_1s_full_schema_design.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "python_full_schema_engineering_complete_not_training_eligible",
+  "purpose": "map the complete causal-v12 trainable ABI to an independent causal 1s Feature DAG without reusing or forward-filling 10s feature rows",
+  "implementation": {
+    "schema_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py",
+    "generator_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_full_schema.py",
+    "prototype_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_feature_generator.py",
+    "cadence_ms": 1000,
+    "feature_dag_id": "causal_v12_full_trainable_1s.v1",
+    "feature_semantics_identity": "causal_v12_full_trainable_features_canonical_1s.v1"
+  },
+  "feature_schema": {
+    "feature_count": 173,
+    "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+    "trainable_schema_sha256": "c6dd8c62b4dd3cd0098b0c7cf2f98bc2a707919f4407ac2b4e15b5cad47fb1f2",
+    "full_feature_contract_sha256": "99f348864689f5dfef50aeeecf380036240975e42f7d75c09ea7467c1ef93354",
+    "source_manifest_sha256": "f2c473dac79a387e56c4aa1d166cfb511575a2de7f8666c0aef32067e4d1ad7e",
+    "reference_v12_bundle_meta_sha256": "4bbd2746e360f99c7d58afbfd6b3cfd79b1fbc1f8d1f00fac0768616a50318e3",
+    "reference_v12_feature_manifest_sha256": "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+  },
+  "label_contract": {
+    "identity": "causal_v12_13_head_label_contract_v3_preserved",
+    "label_semantics_version": 3,
+    "head_count": 13,
+    "head_linkage_sha256": "378884f18e84dacafb8f6cce95ff50d10fbc4d274a9d1cd7154002cf04acc155",
+    "label_estimand_changed": false,
+    "label_values_read": false
+  },
+  "causal_contract": {
+    "cutoff_rule": "source event time is strictly before cutoff and feature-ready time is at or before cutoff",
+    "next_cutoff_data_visible": false,
+    "raw_local_gap_policy": "fail_closed",
+    "auxiliary_source_missing_policy": "explicit_null_with_reason",
+    "ten_second_feature_rows_accepted_as_input": false,
+    "feature_ready_ts_must_not_exceed_decision_ts": true,
+    "schema_order_is_model_abi": true,
+    "row_fingerprint_binds_order_values_clocks_support_and_contract_hashes": true
+  },
+  "source_categories": {
+    "local_completed_1s_bars": 87,
+    "execution_l2_completed_1s": 13,
+    "binance_metrics_5m": 13,
+    "reference_perp_completed_1s": 11,
+    "canonical_calendar_clock": 49
+  },
+  "authority_boundaries": {
+    "model_training_authorized": false,
+    "prediction_outcomes_read": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "registry_modified": false
+  },
+  "remaining_blockers": [
+    "real-day Python offline parity against a separately rebuilt 1s panel",
+    "C++ node implementation and field-by-field fingerprint parity",
+    "frozen 1s source-day manifest and chronological overlapping-label weighting",
+    "13-head retraining and calibration inside chronological folds",
+    "full-path ML-OFF versus 1s ML-ON economic replay"
+  ]
+}

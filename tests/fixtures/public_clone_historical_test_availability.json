@@ -1,0 +1,66 @@
+{
+  "schema_version": "narrowgate_public_clone_historical_test_availability.v1",
+  "default_policy": "ignore_unavailable_modules_and_deselect_unavailable_nodes",
+  "opt_in_environment_variable": "NARROWGATE_RUN_HISTORICAL_REPRODUCTION_TESTS",
+  "opt_in_required_value": "1",
+  "authority": {
+    "skip_grants_research_authority": false,
+    "skip_grants_action_authority": false,
+    "skip_grants_live_authority": false,
+    "frozen_fail_closed_results_remain_valid": true
+  },
+  "categories": {
+    "ephemeral_release_predecessor_unavailable": {
+      "reason": "requires a retired temporary release/predecessor tree that is not part of the public repository",
+      "modules": []
+    },
+    "exact_historical_source_bytes_unavailable": {
+      "reason": "requires predecessor source/config bytes or artifacts whose frozen SHA intentionally differs from the current public tree",
+      "modules": [
+        "test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+        "test_causal_multichannel_window_boolean_cooldown_v2_preflight.py",
+        "test_cooldown_action_leverage_frontier.py",
+        "test_cooldown_release_one_cycle_mechanics_reaudit.py",
+        "test_decision_visible_negative_fill_value_evidence.py",
+        "test_exact_opener_opportunity_tape_contract_v2_1.py",
+        "test_first_add_external_incremental_preregistration.py",
+        "test_order_lifecycle_v2_40day_input_admission.py",
+        "test_order_lifecycle_v2_40day_journal_authority_amendment.py",
+        "test_order_lifecycle_v2_40day_replay_emitter.py",
+        "test_order_lifecycle_v2_downstream_execution_amendment_v1_5.py",
+        "test_ranked_toxicity_guard_carryover_safe_execution_v2_1.py",
+        "test_ranked_toxicity_guard_carryover_safe_execution_v2_2.py",
+        "test_ranked_toxicity_guard_full_path_adapter_contract.py",
+        "test_ranked_toxicity_guard_full_path_adapter_contract_v1_3.py",
+        "test_ranked_toxicity_registration_linkage_v2.py"
+      ]
+    },
+    "owner_private_execution_config_unavailable": {
+      "reason": "requires an owner-private execution config snapshot that is deliberately not distributed",
+      "modules": [
+        "test_current_live_held_ber_replay_baseline_50d.py"
+      ]
+    },
+    "owner_private_historical_projection_unavailable": {
+      "reason": "requires an exact owner-private source projection, live config, or generated historical execution plan that is deliberately not distributed",
+      "modules": [],
+      "nodeids": [
+        "tests/test_causal_v12_1s_economic_precommit.py::test_precommit_binds_current_v9_and_exact_native_40_days",
+        "tests/test_causal_v12_1s_economic_precommit.py::test_direct_canary_requires_runtime_safety_and_no_long_shadow",
+        "tests/test_conditional_p3_scalar_reproduction_gate.py::test_scalar_adapter_registered_spec_is_historical_evidence_only",
+        "tests/test_conditional_p3_scalar_reproduction_gate.py::test_errata_narrows_scope_without_rewriting_frozen_artifacts",
+        "tests/test_historical_reproduction_governance.py::test_f06_accepts_only_registered_path_and_hash",
+        "tests/test_historical_reproduction_governance.py::test_historical_output_cannot_claim_new_authority",
+        "tests/test_multiscale_ema_boolean_cooldown_duration_policy_study.py::test_execution_dependencies_bind_frozen_specs_without_amendment_cycle",
+        "tests/test_p3_reach_time_hazard_training.py::test_actual_frozen_spec_is_strictly_bound",
+        "tests/test_p3_reach_time_hazard_training.py::test_spec_tamper_fails_before_data_read",
+        "tests/test_p3_reach_time_hazard_training.py::test_cache_catalog_binds_builder_and_node_code_hashes",
+        "tests/test_p3_reach_time_hazard_training.py::test_memmap_materialization_loads_days_incrementally",
+        "tests/test_p3_reach_time_hazard_training.py::test_synthetic_side_model_evaluates_full_cdf_without_economics",
+        "tests/test_p3_reach_time_hazard_training.py::test_fold_models_and_results_publish_as_one_atomic_directory",
+        "tests/test_p3_touch_source_aware_expanded_v3.py::test_frozen_v3_contract_has_source_separation_and_no_authority",
+        "tests/test_p3_touch_volatility_conditioned_v4.py::test_frozen_v4_spec_is_canonical_and_grants_no_authority"
+      ]
+    }
+  }
+}

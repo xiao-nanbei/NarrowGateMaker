@@ -1,0 +1,5 @@
+{
+  "schema_version": "narrowgate.ci_identity_fixture.v1",
+  "scope": "filesystem_identity_only",
+  "contains_market_data": false
+}

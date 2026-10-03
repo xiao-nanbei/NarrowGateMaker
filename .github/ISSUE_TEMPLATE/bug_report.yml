@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a reproducible defect in the public code or documented behavior.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form for vulnerabilities. Follow SECURITY.md instead. Remove credentials, private paths, hosts, account state, datasets, and private evidence from every field and attachment.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Public CLI or package
+        - Data acquisition or normalization
+        - Replay or research mechanics
+        - Read-only venue connector
+        - Build or packaging
+        - Documentation
+        - Other public surface
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Provide a public tag or commit SHA when possible.
+      placeholder: Public tag or commit
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe what happened and why it appears incorrect.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use synthetic or public data and portable placeholders only.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: State the expected result, actual result, and whether the failure is deterministic.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste only the smallest useful public-safe excerpt.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for the same defect.
+          required: true
+        - label: I removed secrets, personal paths, private hosts, account state, datasets, and private evidence.
+          required: true
+        - label: I understand that fixing an implementation bug does not by itself create a new research vXX.
+          required: true

@@ -1,0 +1,142 @@
+{
+  "schema_version": "cross_venue_causal_fair_price.v1",
+  "family_id": "cross_venue_causal_fair_price_v1",
+  "research_family": "F04_external_market_alpha",
+  "frozen_at_utc": "2026-08-01T12:00:00Z",
+  "status": "frozen_evidence_only_before_action_outcome_read",
+  "scope": "Causal two-of-three cross-venue fair-price state for live shadow and historical Development sensitivity. This identity estimates a quote-center coordinate only; it does not predict campaign value, authorize a quote action, read Validation or holdout, or claim that historical one-second trade bars reproduce AWS Tokyo receive-time BBO.",
+  "estimand": {
+    "output": "causally_visible_cross_venue_fair_price_usdc_per_btc",
+    "local_reference": "Binance_USD-M_BTCUSDC_local_mid",
+    "stablecoin_conversion": "Binance_spot_USDCUSDT",
+    "venue_inputs": [
+      "Bitget_BTCUSDT_spot_and_perp",
+      "Bybit_BTCUSDT_spot_and_perp",
+      "OKX_BTCUSDT_spot_and_perp"
+    ],
+    "venue_basis_adjustment": "past_only_exponentially_weighted_log_basis",
+    "within_venue_aggregation": "freshness_and_tracking_error_weighted_mean",
+    "cross_venue_aggregation": "weighted_median_requiring_at_least_two_venues",
+    "gain": "lead_variance_bps2_divided_by_lead_plus_measurement_noise_variance_bps2",
+    "candidate_center": "baseline_reservation_price_plus_gain_times_external_fair_minus_local_mid"
+  },
+  "estimator_config": {
+    "venues": [
+      "bitget",
+      "bybit",
+      "okx"
+    ],
+    "market_types": [
+      "spot",
+      "perp"
+    ],
+    "minimum_valid_venues": 2,
+    "max_source_age_ms": 2000.0,
+    "max_anchor_age_ms": 30000.0,
+    "max_dispersion_bps": 2.0,
+    "maximum_abs_basis_bps": 100.0,
+    "basis_half_life_s": 360.0,
+    "variance_half_life_s": 360.0,
+    "minimum_basis_samples": 30,
+    "minimum_gain_samples": 30,
+    "variance_floor_bps2": 1e-06,
+    "parameter_grid_or_outcome_tuning": "forbidden"
+  },
+  "causal_clock_contract": {
+    "truth_clock": "exchange_event_time",
+    "visibility_clock": "local_receive_plus_feature_compute_ready_time",
+    "admission_rule": "feature_ready_ts_ns_lte_decision_ts_ns",
+    "basis_and_gain_update_order": "read_past_state_then_emit_current_state_then_commit_current_observation",
+    "out_of_order_or_future_input": "fail_closed_or_exclude_source",
+    "live_transport_source": "AWS_Tokyo_receive_time_BBO",
+    "historical_sensitivity_source": "right_edge_one_second_individual_trade_bars",
+    "historical_transport_supported": false
+  },
+  "fallback_contract": {
+    "fewer_than_two_valid_venues": "baseline_local_quote_center",
+    "dispersion_above_gate": "baseline_local_quote_center",
+    "stale_anchor_or_source": "baseline_local_quote_center",
+    "basis_or_gain_warmup_incomplete": "baseline_local_quote_center",
+    "action_authority": false
+  },
+  "historical_cache_identity": {
+    "cache_node": "cross_venue_fair_price_trade_1s_v1",
+    "cache_location": "${NARROWGATE_CACHE_ROOT}/replay_dag/cross_venue_fair_price_trade_1s_v1",
+    "development_day_count": 40,
+    "variant_count": 4,
+    "variants": [
+      "all_venues",
+      "leave_bitget_out",
+      "leave_bybit_out",
+      "leave_okx_out"
+    ],
+    "common_visibility_rule": "all_four_variants_share_the_intersection_validity_mask_and_fallback_to_baseline_elsewhere",
+    "common_valid_fraction": 0.896466724537037,
+    "minimum_daily_common_valid_fraction": 0.667349537037037,
+    "cache_universe_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/manifest.json",
+      "sha256": "3e3365028e551233cdc6fc99321449cdcc003cdf6bf68190d405d52794bae41a",
+      "canonical_manifest_sha256": "4df37cbc18e492a2f4971ac70ec42f9a8d8edd60eb54c918cef34a58b3452629"
+    },
+    "cache_variants": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/cache_variants.csv",
+      "sha256": "f787328924b58a4811695bde7d2659edd63956196d7acc4cd41cf13bde77dfc4",
+      "rows": 160
+    },
+    "common_support": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/common_support.csv",
+      "sha256": "767dc60bd600da10146ce344257c91958100ad470f22f6bbe6abc04129a0d025"
+    },
+    "source_coverage": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cross_venue_causal_fair_price_v1_source_audit_20260801/source_coverage.csv",
+      "sha256": "38503dffe3938b4481d62b7902e8ffa935c146ca37b9fc20f9535d69ec634335"
+    }
+  },
+  "feature_dag_contract": {
+    "graph_id": "cross_venue_fair_price",
+    "nodes": [
+      "external_receive_time_bbo",
+      "stablecoin_anchor",
+      "past_only_basis",
+      "venue_fair_price",
+      "weighted_median_consensus",
+      "online_gain",
+      "shadow_quote_pair"
+    ],
+    "label_dependency_forbidden": true,
+    "live_order_mutation_forbidden": true
+  },
+  "implementation_identity": {
+    "strategy/cross_venue_fair_price.py": "fd72138572382eff3d02f749a1272598a0cf0c0d8b9b80c24d2fd389da45ecaa",
+    "research/families/f04_external_market_alpha/audit/cross_venue_causal_fair_price.py": "4b81ebf4b9ccb2a4667455569af547060f10e6babba89c8cc2754b625b5aebe7",
+    "features/feature_dag.py": "68554be350b225f4ad6af02c4cf9ac4cadc9be92b7f4c7c547d8a10f7f27342f",
+    "strategy/signal.py": "69b84d1f91291957afbd133a9022fef5703367ca213c0725ec93e3b2e98cd7ba",
+    "strategy/maker_engine.py": "e256a4b5921ba5ab67bb503efebb0e6f96a85466aa75dc05ebae94745d8d9706",
+    "live/config.py": "f3399a6cf6e51276ba1b081664d23eddaed1aee7e44032503ede3f3b19b2bbb4",
+    "live/config.yaml": "c423a9089167cc9976c64393874c2f2b6ebd0a9e65a1fe2e129b668b44bb7ff9",
+    "live/main.py": "dfb066f73d223986759abb7227a13cdc75e33bd0d80bdd6a01711133b367f4a8",
+    "tests/test_cross_venue_fair_price.py": "287ee583018126f78db4190d53d7b560c31178578482f2a33fb747a4ad73d789",
+    "tests/test_feature_dag.py": "2db3dcc6295ca3c3c1d4e5fcddcd62b40bf9548368ca488d3be4ee209a3ea22b"
+  },
+  "value_provenance": {
+    "weighted_median_and_basis_conversion": "theory_and_robust_estimation_structure",
+    "online_gain_formula": "empirical_signal_to_noise_shrinkage",
+    "two_of_three_requirement": "judgmental_engineering_resilience_rule",
+    "360_second_half_lives": "judgmental_slow_basis_and_noise_timescale_not_theoretical_constant",
+    "2_bps_dispersion_gate": "judgmental_fail_closed_market_disagreement_threshold",
+    "30_sample_warmup": "judgmental_minimum_support",
+    "historical_trade_bar_adapter": "sensitivity_only_engineering_approximation",
+    "AWS_receive_time_requirement": "live_transport_and_parity_rule"
+  },
+  "permissions": {
+    "historical_development_sensitivity_build_allowed": true,
+    "prediction_supported": false,
+    "action_experiment_authorized": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "live_action_authorized": false,
+    "live_shadow_authorized": true,
+    "live_deployment_authorized": false,
+    "historical_trade_bar_live_transport_authority": false
+  }
+}

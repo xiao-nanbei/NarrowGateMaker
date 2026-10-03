@@ -1,0 +1,108 @@
+{
+  "artifact_identity": "causal_v12_1s_daily_physical_materialization_v2_implementation_20260805",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "real_source_path_executable_for_admitted_2025_provider_day",
+  "scope": {
+    "bulk_materialization_started": false,
+    "cpp_modified": false,
+    "economic_outcomes_read": false,
+    "existing_frozen_spec_modified": false,
+    "labels_read": false,
+    "live_modified": false,
+    "registry_modified": false,
+    "strategy_modified": false,
+    "training_started": false
+  },
+  "code_identities": {
+    "daily_source_reader": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_daily_sources.py",
+      "sha256": "22d00155bbca8d3eaa5cd90b74e015f515e25072da6b2c609cc45c354c26cb01"
+    },
+    "daily_panel_materializer": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_panel_materializer.py",
+      "sha256": "5cfb7905caeb683f04b7d488149f742224506cb86d2021fead5be6b60adc5b4d"
+    },
+    "tests": {
+      "path": "tests/test_causal_v12_1s_panel_materializer.py",
+      "sha256": "5403a33ea0d597f8ca84ce4627612af993013fab8225732e83ac6dba2a447273"
+    }
+  },
+  "target_day_decision_clock": {
+    "authoritative_count": 86400,
+    "bar_support_rule": "completed_local_bar.start_ts_ms == decision_ts_ms - 1000",
+    "first_decision": "D 00:00:00",
+    "first_decision_uses_d_minus_one_235959_bar": true,
+    "interval": "[D 00:00:00, D+1 00:00:00)",
+    "last_decision": "D 23:59:59",
+    "next_day_midnight_included": false
+  },
+  "physical_source_contracts": {
+    "l2": {
+      "actual_depth_levels_validated": 20,
+      "quality_json_hash_bound_to_parquet": true,
+      "quality_json_semantically_validated": true
+    },
+    "local_and_reference_bars": {
+      "maximum_synthetic_gap_seconds": 30,
+      "pandas_index_arrow_metadata_supported": true,
+      "synthetic_lag_state": "synthetic_flat_no_trade_1s_from_prior_observed_close",
+      "ten_second_feature_row_forward_fill": false
+    },
+    "metrics": {
+      "causal_feature_ready_rule": "completed_5m_interval_end",
+      "format": "strict_csv",
+      "rows_per_day": 288,
+      "start_and_end_stamp_layouts_supported": true
+    },
+    "warmup_and_reference": {
+      "btc_usdt_metadata_validated": true,
+      "d_minus_one_required": true,
+      "input_files_sha256_bound": true
+    }
+  },
+  "real_source_smoke": {
+    "artifact_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_real_source_probe_20260805_v2",
+    "bundle_identity_sha256": "bfda22b3b523ce0c4b36e25b2b4e2acdddf67f19c5f645682369fe51cd6b1986",
+    "cache_identity_sha256": "d0ed561236adec7529c7b194745bc12b89c0a483db58dcb748e45368e4ec492b",
+    "durable_research_authority": false,
+    "local_bar_audit": {
+      "maximum_missing_run_seconds": 1,
+      "observed_rows": 172798,
+      "synthesized_seconds": 1
+    },
+    "panel_sha256": "bba932df9feeca0c81bc316ecc38bef95c13781858a2342fdc5fb76259d26cd3",
+    "physical_materialization_eligible": true,
+    "reference_bar_audit": {
+      "maximum_missing_run_seconds": 3,
+      "observed_rows": 170543,
+      "synthesized_seconds": 2256
+    },
+    "rows": 2,
+    "target_day": "2025-08-02",
+    "warmup_day": "2025-08-01"
+  },
+  "real_source_blockers": [
+    {
+      "source": "2026-07-29 provider L2",
+      "reason": "D-1 and target quality records fail internal-gap/provider-normalized replay authority"
+    },
+    {
+      "source": "2026-07-29 native L2",
+      "reason": "matching D-1 and target per-day quality JSON authority is unavailable"
+    }
+  ],
+  "verification": {
+    "pytest": {
+      "command": ".venv/bin/python -m pytest -q tests/test_causal_v12_1s_panel_materializer.py tests/test_causal_v12_1s_full_schema.py",
+      "passed": 28
+    },
+    "ruff_check": "passed",
+    "ruff_format_check": "passed"
+  },
+  "permissions": {
+    "bulk_materialization_authorized": false,
+    "live_authorized": false,
+    "training_authorized": false
+  }
+}

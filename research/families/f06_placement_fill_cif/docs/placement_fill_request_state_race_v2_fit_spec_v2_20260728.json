@@ -1,0 +1,118 @@
+{
+  "schema_version": "narrowgate_placement_fill_request_state_race_fit_spec.v1",
+  "family_id": "placement_fill_request_state_race_v2",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "frozen_before_development_phase_outcomes_after_support_preflight",
+  "supersedes": {
+    "path": "docs/placement_fill_request_state_race_v2_fit_spec_20260728.json",
+    "sha256": "08168e4550d7cb812668829ac9fc7337172524be2224852902a9f316698ef4e5",
+    "status": "aborted_before_oof_predictions",
+    "reason": "five-day inner calibration had only 11 BUY and 22 SELL unique pending-fill events; BUY add=1 and BUY reducing=0 made fully role-specific pending-fill calibration unidentified"
+  },
+  "mechanics_spec": {
+    "path": "docs/placement_fill_request_state_race_v2_spec_20260728.json",
+    "sha256": "5b5c89b5c43ea0ca9f3a186da759551be43effbeaca6eb0936bf4fedfaeb3721"
+  },
+  "source_identity": {
+    "request_state_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/manifest.json",
+      "sha256": "d52ad98d425246cd869e6d3abdeb0711ce95cc3cf4518faa55b8f4fadf510d30"
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1"
+    }
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13", "2026-04-17", "2026-04-18", "2026-04-19",
+      "2026-04-20", "2026-04-22", "2026-04-23", "2026-04-30",
+      "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04",
+      "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08",
+      "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12",
+      "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-16",
+      "2026-05-29", "2026-05-30", "2026-05-31", "2026-06-02",
+      "2026-06-03", "2026-06-05", "2026-06-06", "2026-06-07",
+      "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11",
+      "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15",
+      "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19",
+      "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23",
+      "2026-06-24", "2026-06-25"
+    ],
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "outer_folds": {
+    "type": "expanding_chronological",
+    "minimum_train_days": 20,
+    "embargo_days": 1,
+    "test_days": 5,
+    "expected_oof_days": 29
+  },
+  "inner_calibration": {
+    "type": "fit_size_matched_past_only_tail_with_cause_specific_partial_pooling",
+    "days": 5,
+    "embargo_days": 1,
+    "base_model_refit_after_calibration": false,
+    "roles": ["opener", "add", "reducing"],
+    "actions_pooled_within_role": true,
+    "pre_request_fill_pool": "side x role",
+    "pending_fill_pool": "side, shared across roles",
+    "conditional_ack_pool": "side x role",
+    "base_hazard_remains_role_aware": true,
+    "method": "positive_cause_specific_log_rate_scale",
+    "minimum_events_per_role_cause": 10,
+    "absolute_log_scale_bound": 2.0,
+    "reason": "pending fill is a rare cause at request time; pool only its absolute scale while retaining role in the hazard model and role-specific ACK calibration"
+  },
+  "model": {
+    "maximum_bins": 6,
+    "binning": "outer-base-train empirical duration quantiles",
+    "random_seed": 20260728,
+    "pre_request": "single-cause dynamic fill rate until deterministic request transition",
+    "pending": "competing fill and conditional ACK rates from shared request-time state",
+    "BUY_SELL": "separate models",
+    "actions": ["closer_1tick", "current", "farther_1tick"],
+    "prediction_or_action_authority": false
+  },
+  "reporting": {
+    "duration_quantiles": [0.25, 0.5, 0.75],
+    "horizon_source": "first outer base-train phase-duration distribution",
+    "fixed_1s_5s_10s_are_not_gates": true,
+    "phase_curves": [
+      "pre_request_fill",
+      "pending_cancel_fill",
+      "conditional_cancel_ack"
+    ]
+  },
+  "curve_gate": {
+    "unit": "side x inventory_role x complete phase curve with actions pooled",
+    "required_oof_days": 29,
+    "minimum_events": {
+      "fill": 100,
+      "pending_fill": 25,
+      "ack": 100,
+      "joint": 100
+    },
+    "proper_score": "day-clustered Brier-improvement 95% lower bound above zero versus side-role-action exposure-only baseline",
+    "absolute_calibration": "day-clustered observed-minus-expected 95% interval contains zero",
+    "all_roles_and_phases_required_per_side": true,
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260728,
+    "simplex_tolerance": 1e-9
+  },
+  "implementation": {
+    "evaluator": "models/audit/evaluate_request_state_race.py",
+    "evaluator_sha256": "1fd6579722820400424fe65f1b0601c3ba339640b09df89ef9e5c7336ec65f67",
+    "model": "models/audit/request_state_race.py",
+    "model_sha256": "17a5b5cb4f5713d1e30c9a72a7b2f778569749ce7338185bcafad916d8f38117"
+  },
+  "permissions": {
+    "development_access": true,
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

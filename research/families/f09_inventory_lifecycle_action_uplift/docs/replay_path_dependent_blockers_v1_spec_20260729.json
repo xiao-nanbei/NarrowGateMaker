@@ -1,0 +1,85 @@
+{
+  "schema_version": "narrowgate_replay_path_dependent_blockers_spec.v1",
+  "experiment_identity": "replay_path_dependent_blockers_v1",
+  "frozen_at_utc": "2026-07-28T23:56:09Z",
+  "research_family": "F09_campaign_action_uplift",
+  "purpose": "infrastructure_only",
+  "research_permissions": {
+    "reward_or_pnl_read": false,
+    "development_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "controls": {
+    "buy_q90_cancel_reentry": {
+      "semantics": "active BUY exposure-increasing order only; cancel on the frozen q90 policy; allow fills until cancel ACK; retain the exact native price-level path after terminal state; re-enter only after both terminal state and score recovery",
+      "artifact_requirements": [
+        "dynamic fill-hazard model path and SHA256",
+        "dynamic fill-hazard action-policy path and SHA256",
+        "strict native snapshot/delta exchange-book source",
+        "formal L2 manifest and per-day raw source SHA256 identity"
+      ],
+      "python_authority": "native snapshot/delta exchange-book scheduler",
+      "cpp_authority": "fail_closed_until_native_snapshot_delta_scheduler_is_available",
+      "reducing_side_unchanged": true
+    },
+    "consecutive_loss_cooldown": {
+      "semantics_version": "round_trip_realized_pnl_policy_clock_v1",
+      "round_trip_definition": "full close or flip after proportional open-commission allocation",
+      "trigger_clock": "next strategy policy clock after the threshold-closing fill",
+      "active_behavior": "cancel both sides and suppress all quotes; pending-cancel fills continue to update the state",
+      "expiry_behavior": "clear cooldown and reset the consecutive-loss streak",
+      "python_cpp_parity_required": true
+    },
+    "sync_adjust_degrade": {
+      "semantics_version": "system_event_after_market_same_ms_v1",
+      "allowed_modes": [
+        "frozen_tape",
+        "censor",
+        "stress"
+      ],
+      "promotion_evidence_mode": "frozen_tape_only",
+      "censor_and_stress_scope": "diagnostic_only",
+      "tape_schema": "narrowgate_sync_degrade_event_tape.v1",
+      "tape_requirements": [
+        "exact SHA256",
+        "environment label",
+        "full replay-window coverage",
+        "sorted unique event timestamps",
+        "no outcome, action, reward, uplift, or PnL fields"
+      ],
+      "event_behavior": "cancel all active orders, then block only exposure-increasing sides for the frozen pause duration while leaving reducing quotes eligible",
+      "python_cpp_parity_required": true
+    }
+  },
+  "formal_replay_contract": {
+    "schema_version": "narrowgate_formal_replay_contract.v4",
+    "missing_enabled_control_behavior": "fail_closed",
+    "sync_disabled_while_live_control_enabled": "forbidden",
+    "censor_or_stress_promotion_eligible": false,
+    "q90_cpp_silent_omission": "forbidden"
+  },
+  "same_timestamp_order": [
+    "market and execution event",
+    "fill and path-dependent state update",
+    "system sync-degrade event",
+    "strategy policy clock"
+  ],
+  "implementation_sha256": {
+    "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+    "models/backtest_tick.py": "340df3da876ff1ca3f521929574bc927fa98075f78007b4b979c608d1ac55ddd",
+    "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+    "models/exchange_book_replay.py": "26a44e25a0cc332a2b2b5c286d008ac8401cfe75ddb747e8091ad621b1b15754",
+    "cpp/narrowgate_cpp/tick_replay.hpp": "1229101a7a9e0b75a79ea8d39e8aa040a943c59aff271602c41456fbad89bca8",
+    "cpp/narrowgate_cpp/tick_replay.cpp": "0f936d163c5d28fcc3714e44d9395f811375ea07b7a87ddb797c3b51062e8912",
+    "cpp/narrowgate_cpp/bindings.cpp": "4e58d4475af249a745a2fca6d81ae0bc60cce61a0d48f36cf305a060e73d76d7",
+    "research/families/f01_fixed_parameter_racing/campaign_outcome_replay_audit.py": "5ae0af537c946469c0c25db23a47d57e2983718b8c91a14d7348050044323b73"
+  },
+  "test_sha256": {
+    "tests/test_replay_path_dependent_controls.py": "198082fce218ccea77c5946094d4947b1d17399319b8d1e7e0fbc49289554f45",
+    "tests/test_replay_contract.py": "b80a9de1bf4c14a0c5e8b1afda983ab6176ad0798fed21aac7f63e98c7e2a389"
+  },
+  "decision": "block_formal_pnl_or_uplift_until_a_full_window_environment_matched_sync_event_tape_is_bound_for_each_promotion_run"
+}

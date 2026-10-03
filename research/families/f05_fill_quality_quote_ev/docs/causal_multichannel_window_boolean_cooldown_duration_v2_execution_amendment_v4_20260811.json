@@ -1,0 +1,87 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v4",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v4",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v3_20260811.json",
+    "sha256": "58949b176c9f810881e887a4fcab56debd6941ca22ce9b31d66d065bc0e7e829"
+  },
+  "implementation_binding_replacements": {
+    "study_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "afdaf8b179b73b0c34b2cd88176c8496e523e3d856820d83a54a519b9d99c73d",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "e5e02b99f131703a36ffb4c155803f13b400359a9ff517ae3b9b38d278593fdc"
+    }
+  },
+  "continuous_state_comparator": {
+    "status": "implemented_not_run_on_formal_economics",
+    "purpose": "diagnose information loss from frozen Boolean thresholding on the same outer OOF opportunities",
+    "model_family": "raw_state_multioutput_regression_tree_diagnostic",
+    "target": "seven non-control assignment-to-washout uplifts relative to CONTROL_85N",
+    "control_predicted_uplift": 0.0,
+    "selected_action": "argmax over CONTROL_85N plus seven predicted non-control uplifts",
+    "feature_blocks": ["R0", "M0", "M1", "M2"],
+    "raw_feature_contract": {
+      "numeric_source": "unquantized source fields bound by each fold's predicate artifacts",
+      "categorical_source": "fixed categorical domains bound by predicate definitions",
+      "numeric_missing": "training-fold median plus explicit missing indicator",
+      "categorical_missing": "all category indicators false plus explicit missing indicator",
+      "economic_or_terminal_features_allowed": false
+    },
+    "capacity_grid": {
+      "max_depth": [2, 4],
+      "min_samples_leaf": 20,
+      "random_state": 20260810,
+      "criterion": "squared_error",
+      "splitter": "best"
+    },
+    "selection_contract": {
+      "capacity_selected_in": "inner chronological folds only by campaign-weighted mean uplift",
+      "pre_outer_LCB_required": false,
+      "outer_fold_role": "execute the inner-frozen capacity and score only",
+      "BUY_SELL_pooled": false,
+      "campaign_total_weight": 1.0
+    },
+    "paired_boolean_comparison": {
+      "identity": "same scope, side, feature block, outer opportunity, UTC day, and campaign cluster",
+      "interval": "paired day-clustered continuous-minus-Boolean uplift",
+      "positive_LCB_effect": "blocks freezing the weaker Boolean policy; does not promote the comparator"
+    },
+    "may_replace_boolean_policy": false,
+    "may_grant_research_support": false,
+    "may_grant_action_or_live": false
+  },
+  "runtime_abi": {
+    "sklearn_version": "1.9.0",
+    "decision_tree_module": "sklearn.tree._classes",
+    "decision_tree_module_sha256": "352942e5203638366dfb8860eceed1ee5b7950c996925b522822a0eab09f5aba"
+  },
+  "output_schema_replacements": {
+    "report_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.multiday_label_panel_nested_oof.v1.report.v3",
+    "admission_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.multiday_label_panel_nested_oof.v1.admission.v3",
+    "new_artifact": "continuous_outer_oof_rows.parquet",
+    "boolean_and_continuous_outer_opportunity_sets_must_match": true
+  },
+  "cache_and_label_compatibility": {
+    "raw_native_source_cache_semantics_changed": false,
+    "in_progress_outcome_blind_source_prebuild_reusable": true,
+    "strict_native_label_schema_changed": false,
+    "in_progress_2025_predicate_materialization_reusable": true
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "continuous_state_comparator_run": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

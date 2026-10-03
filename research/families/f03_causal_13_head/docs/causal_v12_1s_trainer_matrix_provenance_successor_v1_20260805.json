@@ -1,0 +1,160 @@
+{
+  "schema_version": "causal_v12_1s_trainer_matrix_provenance_successor.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "current_trainer_matrix_provenance_bound_no_training_or_economic_authority",
+  "purpose": "bind_the_current_1s_trainer_and_matrix_schema_without_rewriting_the_frozen_training_design_or_running_training",
+  "scope": {
+    "training_run_in_scope": false,
+    "prediction_outputs_in_scope": false,
+    "economic_outcomes_in_scope": false,
+    "frozen_predecessor_documents_modified": false
+  },
+  "frozen_training_design": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_training_contract_v1_design_20260805.json",
+    "sha256": "98b57a3fe28263178d9df3df9aee9154bc0e9ae8281535cc26d5afcdb41d70d3",
+    "schema_version": "causal_v12_1s_training_contract.v1",
+    "unchanged": true,
+    "inference_cadence_ms": 1000,
+    "head_count": 13,
+    "chronological_day_counts": {
+      "fit": 52,
+      "embargo": 1,
+      "selection": 13,
+      "refit": 66
+    },
+    "external_2026_panels_diagnostic_only": true,
+    "design_audit_training_execution_eligible": false,
+    "design_audit_missing_execution_artifacts": [
+      "model_output_identity",
+      "one_second_feature_panel_manifest",
+      "training_implementation_sha256"
+    ],
+    "resolution_boundary": "the_current_trainer_may_resolve_only_the_two_pretraining_placeholders_through_a_frozen_execution_amendment_v3;_model_output_identity_remains_an_atomic_training_postcondition"
+  },
+  "current_implementation": {
+    "trainer": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_training.py",
+      "sha256": "df32a740ad35d913149f3bb652a2bfc543642cc80bccff27ff74f3cada2b7124",
+      "trainer_schema_version": "causal_v12_1s_lightgbm_trainer.v2",
+      "bundle_schema_version": "causal_v12_1s_research_bundle.v2",
+      "execution_amendment_schema_version": "causal_v12_1s_training_execution_amendment.v3",
+      "lightgbm_runtime_abi_schema_version": "causal_v12_1s_lightgbm_runtime_abi.v1",
+      "rows_per_day": 86400,
+      "head_count": 13
+    },
+    "training_contract_validator": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_training_contract.py",
+      "sha256": "6eae673e1754f979a00121ede81e031b29e4c2d97279972efaf53c2d71cf5f43"
+    },
+    "trainable_feature_schema": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py",
+      "sha256": "2279a9f1d8bc8043007842429d9e12112097368f15bdd77fa0c12ff280cc775c",
+      "schema_version": "causal_v12_1s_trainable_schema.v1",
+      "feature_count": 173,
+      "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797"
+    },
+    "daily_training_admission": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_training_admission_v3.py",
+      "sha256": "58878d85a540d93a1e84383cb5c5fe63b2c431907cd59a61b7f43695bd340b4a",
+      "daily_admission_schema_version": "causal_v12_1s_daily_training_admission.v3",
+      "training_day_manifest_schema_version": "causal_v12_1s_training_day_manifest.v3"
+    },
+    "parity_gate_validator": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_parity_successor_gate.py",
+      "sha256": "46aec18193bc36cc8532b98eca7280909aed78be2cbf30e00f7e5515988faf33"
+    }
+  },
+  "matrix_contract": {
+    "schema_version": "causal_v12_1s_training_matrix_cache.v2",
+    "artifact_role": "reusable_feature_only_cache",
+    "source": "admitted_daily_feature_panels",
+    "ordered_day_count": 66,
+    "shape": [
+      5702400,
+      173
+    ],
+    "dtype": "float32",
+    "row_order": "utc_day_then_canonical_1s_decision",
+    "labels_embedded": false,
+    "identity_binds": [
+      "ordered_utc_days",
+      "daily_feature_artifact_identities",
+      "feature_order_and_sha256",
+      "dtype_shape_and_row_order",
+      "pipeline_execution_identity",
+      "parity_gate_identity",
+      "f03_component_semantics_identity"
+    ],
+    "atomic_admission_requires": [
+      "manifest_schema_v2",
+      "atomic_admission_true",
+      "manifest_sha256_in_SUCCESS",
+      "reproducible_cache_identity_sha256",
+      "matrix_sha256",
+      "shape_match",
+      "float32_dtype"
+    ],
+    "actual_matrix_artifact_bound_by_this_provenance": false
+  },
+  "runtime_abi_observed": {
+    "schema_version": "causal_v12_1s_lightgbm_runtime_abi.v1",
+    "lightgbm_version": "4.6.0",
+    "numpy_version": "2.4.6",
+    "lightgbm_native_library_sha256": "39cd8a13dc50d615b876b5dbdcacca722469617eec0f1b627697f09d72bdd8ef",
+    "matrix_storage_dtype": "float32",
+    "sequence_input_dtype": "float64"
+  },
+  "parity_gate": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_real_day_parity_training_gate_v6_20260805.json",
+    "sha256": "4bc6399df4325604fec015f8e8673aad9abb627c9ee653402eae33d0b517d564",
+    "schema_version": "causal_v12_1s_real_day_parity_training_gate.v6",
+    "parity_gate_identity_sha256": "3a64af6f6f0bf3cc8b138b43122be50a4a47fb6266c574658123a7067df97b16",
+    "provider_complete_day_count": 2,
+    "native_complete_day_count": 2,
+    "feature_count": 173,
+    "training_authorized": true,
+    "economic_outcomes_read": false,
+    "pnl_authority": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "predecessor_governance": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_training_execution_governance_v2_implementation_20260805.json",
+    "sha256": "60fa2a2c9b1346af0324a943e5183821b9fbd7b4622126ea697595d51d11919f",
+    "status": "historical_frozen_not_applicable_to_current_trainer_or_matrix",
+    "bound_trainer_sha256": "62115a585371c241a2c36dccdc027a2b30e988ac76758dc3a9c494be93902647",
+    "bound_matrix_schema_version": "causal_v12_1s_training_matrix_cache.v1",
+    "current_trainer_sha256": "df32a740ad35d913149f3bb652a2bfc543642cc80bccff27ff74f3cada2b7124",
+    "current_matrix_schema_version": "causal_v12_1s_training_matrix_cache.v2",
+    "not_applicable_reasons": [
+      "the_bound_trainer_file_sha256_no_longer_matches_the_current_trainer",
+      "the_bound_matrix_cache_schema_is_v1_while_the_current_trainer_requires_v2",
+      "the_current_trainer_requires_daily_admission_v3_and_execution_amendment_v3_identity_chains",
+      "using_the_old_governance_as_current_authority_would_leave_the_actual_trainer_and_matrix_contract_unbound"
+    ],
+    "predecessor_document_modified": false,
+    "predecessor_evidence_rewritten": false
+  },
+  "authority": {
+    "implementation_provenance_valid": true,
+    "training_authorized_by_this_artifact": false,
+    "parity_gate_training_authorized": true,
+    "model_training_executed_by_this_audit": false,
+    "predictions_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "holdout_read": false,
+    "pnl_authority": false,
+    "prediction_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "required_before_any_training": [
+      "an_atomically_admitted_matrix_cache_v2_bound_to_the_exact_66_day_manifest",
+      "a_frozen_training_execution_amendment_v3_binding_the_current_trainer_matrix_manifest_day_manifest_parity_gate_and_runtime_abi",
+      "successful_validation_of_all_bound_file_and_canonical_identity_hashes"
+    ]
+  },
+  "provenance_identity_sha256": "dc9b66609d71dfabbe74e793b5662ea49f14faafc89d86485788e90948fb1079"
+}

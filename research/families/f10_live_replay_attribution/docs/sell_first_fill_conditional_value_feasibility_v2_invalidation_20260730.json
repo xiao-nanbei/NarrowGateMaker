@@ -1,0 +1,32 @@
+{
+  "schema_version": "sell_first_fill_conditional_value.invalidation.v2",
+  "identity": "sell_first_fill_conditional_value_feasibility_v2",
+  "status": "invalidated_before_development_outcome_read",
+  "reason": "frozen_denominator_contains_targets_without_a_native_formal_previous_natural_utc_day",
+  "f10_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/sell_first_fill_conditional_value_feasibility_v2_spec_20260730.json",
+    "sha256": "a83cafd2a31ee49016a845626ff4d6b24da6a59f41ba7678528b369f6aeb00fe"
+  },
+  "producer_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/first_opener_decision_to_terminal_native_producer_v2_spec_20260730.json",
+    "sha256": "9e68d2a8b5b69391b317b0f199fd8e647ea252c028c4aeac863d403a07c2c014"
+  },
+  "failed_target_days": {
+    "2026-04-17": "D-1 2026-04-16 sequence_invalid|not_in_normalized_strict_days",
+    "2026-04-22": "D-1 2026-04-21 sequence_invalid|not_in_normalized_strict_days",
+    "2026-05-01": "D-1 2026-04-30 warmup_invalid|sequence_invalid|not_in_normalized_strict_days",
+    "2026-05-13": "D-1 2026-05-12 warmup_invalid|sequence_invalid|not_in_normalized_strict_days",
+    "2026-05-29": "D-1 2026-05-28 warmup_invalid|sequence_invalid|not_in_normalized_strict_days",
+    "2026-06-02": "D-1 2026-06-01 not_in_normalized_strict_days",
+    "2026-06-05": "D-1 2026-06-04 not_in_normalized_strict_days"
+  },
+  "valid_target_days": 33,
+  "invalid_target_days": 7,
+  "development_outcomes_read": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false,
+  "v2_rows_may_be_reused": false,
+  "successor_identity": "sell_first_fill_conditional_value_feasibility_v3"
+}

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poolrun-lite"
+version = "0.1.0"
+description = "Finite, data-aware task pools with immutable code releases"
+requires-python = ">=3.12"
+dependencies = ["psutil==7.2.2"]
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
+
+[project.scripts]
+poolrun = "poolrun.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["poolrun*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

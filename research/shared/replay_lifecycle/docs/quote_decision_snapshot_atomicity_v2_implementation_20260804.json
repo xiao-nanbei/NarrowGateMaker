@@ -1,0 +1,55 @@
+{
+  "schema_version": "quote_decision_snapshot_atomicity_implementation.v2",
+  "identity": "quote_decision_snapshot_atomicity_v2",
+  "date": "2026-08-04",
+  "status": "baseline_integrity_local_verified_not_deployed",
+  "classification": "baseline_integrity_successor",
+  "economic_outcomes_read": false,
+  "strategy_action_changed": false,
+  "scope": {
+    "pricing_mode": "depth_pricing_baseline_with_bar_pricing_snapshot_contract",
+    "depth_clock_gate": "capture_time_ns_minus_receive_time_ns",
+    "source_transport_gate": "receive_time_ns_minus_exchange_time_ns",
+    "book_ticker_guard": "fresh_clocked_book_ticker_else_explicit_depth_fallback",
+    "bar_pricing": "latest_completed_bar_close_frozen_inside_quote_snapshot",
+    "routing": "single_frozen_post_only_guard_through_final_order_route"
+  },
+  "limits": {
+    "max_exec_book_visible_age_s": 5.0,
+    "max_exec_book_source_lag_s": 5.0,
+    "synthetic_lock_wait_p99_us_max": 5000.0,
+    "synthetic_lock_hold_p99_us_max": 5000.0
+  },
+  "artifacts": {
+    "strategy/signal.py": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f",
+    "strategy/maker_engine.py": "d82c741bc6c5f946e151e7e51d7ced0a624f1f4e6456ec5784385d7f7ee87b9e",
+    "live/config.py": "e8c2cda1728b0172d114a20a7d0a1b1bd3a02d06c2b6590d42e94ab970cbece5",
+    "live/main.py": "8dd844cb1a0be607aa7e6e781333886fda88128fdbf5dce001c789064c56c996",
+    "scripts/preflight_live_deploy.py": "b55917f15552848287452388f1eca278f6db739291133eb9f506477a027f72ae",
+    "scripts/audit_quote_snapshot_integrity.py": "182473cc53a6b0f0e643d641c87ba37ff66447ac019b339d8bed14b7d7e09ca3",
+    "tests/test_quote_decision_snapshot_atomicity.py": "e209186818e08fd3e944fae7e48c87d1ea9fb4d813002f4f4fdfa2697ed3eeb3",
+    "tests/test_quote_snapshot_integrity_audit.py": "65befe9e7fd5406f20c477ac4ed5e6215bb80efbde8de08011291b58cf003991",
+    "tests/test_preflight_live_deploy.py": "f12090f81d4dad8574c7419b29ff9cc360632b4165660e04c9f9b145a918434f",
+    "staged_private_config": "94425652b01e67f9285bc91e514413eea9c8b01ab53cbdf740c8802b952151e2",
+    "synthetic_report": "832ce3c75b69eb2cae6698370d4e74b634273884b1be8b98f3c6e2a55e64a91d"
+  },
+  "verification": {
+    "pytest_passed": 1611,
+    "pytest_skipped": 4,
+    "synthetic_iterations": 10000,
+    "invalid_snapshot_count": 0,
+    "mid_identity_violation_count": 0,
+    "microprice_violation_count": 0,
+    "routing_violation_count": 0,
+    "quote_identity_violation_count": 0,
+    "lock_wait_p99_us": 28.08301,
+    "lock_hold_p99_us": 25.08483,
+    "gate_passed": true
+  },
+  "permissions": {
+    "baseline_integrity_deployment_eligible": true,
+    "economic_action_authorized": false,
+    "research_live_authority": false,
+    "exit_urgency_experiment_authorized": false
+  }
+}

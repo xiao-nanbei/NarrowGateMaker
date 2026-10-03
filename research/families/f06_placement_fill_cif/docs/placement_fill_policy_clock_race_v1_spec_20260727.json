@@ -1,0 +1,63 @@
+{
+  "schema_version": "narrowgate_placement_fill_policy_clock_race_spec.v1",
+  "family_id": "placement_fill_policy_clock_race_v1",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "structural_contract_frozen_before_implementation_or_outcome_read",
+  "revision_reason": "v5/v6 showed that calibrating baseline-policy cancel ACK as a stationary interval hazard is structurally inappropriate; separate the deterministic policy request clock, conditional ACK latency, and pending-cancel fill race",
+  "estimand": "P(T_fill <= t and T_fill < T_cancelACK | do(placement_action), x0)",
+  "lineage": {
+    "v4_role": "benchmark fill model and auditable fill/cancel/no-event simplex; all six fill curves calibrated on Development",
+    "v5_status": "closed on Development; trailing role offset redistributed cancel error",
+    "v6_status": "closed on Development; inner-OOF role/cause Platt maps did not transport to full outer-train refits",
+    "not_rejected": "the placement fill estimand and existence of a useful fill ranker",
+    "not_inherited": [
+      "v5 trailing role offsets",
+      "v6 role/cause interval-hazard Platt calibrators"
+    ]
+  },
+  "lifecycle": {
+    "activation": "action-specific exchange activation after new-order latency and post-only acceptance",
+    "fill_before_request": "dynamic order-level fill process while the order is active",
+    "cancel_request": "deterministic replay of the frozen baseline policy schedule and path triggers",
+    "cancel_ack": "cancel request plus an empirical request-to-ACK latency draw conditional on the frozen environment identity",
+    "pending_cancel": "the order remains fillable until ACK; partial/full fill may precede ACK and ACK cancels only remaining quantity",
+    "terminal_states": [
+      "full_fill",
+      "partial_fill_then_cancel_ack",
+      "cancel_ack_without_fill",
+      "administrative_censor"
+    ]
+  },
+  "frozen_gates": {
+    "policy_parity": [
+      "cancel-request time and reason match frozen baseline replay by side, role, action and UTC day",
+      "scheduled TTL/requote and path-trigger requests are reported separately",
+      "request timing is not learned by a stationary cancel hazard"
+    ],
+    "latency_parity": [
+      "request-to-ACK distribution is calibrated on past-only data",
+      "median, upper quantiles and tail exceedance are reported by environment identity",
+      "latency draws are shared across paired actions by fixed seed"
+    ],
+    "fill_cif": [
+      "fill probability uses the policy-derived cancel survival boundary",
+      "probability simplex and time/distance monotonicity pass",
+      "day-clustered fill calibration and proper-score intervals pass",
+      "pending-cancel fills and queue reset are included"
+    ]
+  },
+  "evidence_governance": {
+    "development": "implementation and model fitting only",
+    "validation": "sealed until all three frozen gates pass on Development",
+    "sealed_holdout": "unread until an independent promotion controller authorizes access",
+    "prediction_does_not_authorize_action": true,
+    "keep_replace_requires_separate_active_order_estimand": true,
+    "campaign_repair_is_separate_delayed_entry_transition": true
+  },
+  "permissions": {
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

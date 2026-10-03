@@ -1,0 +1,89 @@
+{
+  "schema_version": "ranked_toxicity_guard_carryover_safe_execution.v2.1.failure.v1",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_1_execution",
+  "status": "one_day_authoritative_smoke_failed_baseline_warmup_parity",
+  "decision": "fail_closed_current_execution_identity_incompatible_with_frozen_v2_baseline_tape",
+  "spec_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_1_execution_spec_20260803.json",
+    "file_sha256": "6602f5823c6b1ae7854662328d8e99ab2db1fcc5494f0ecaedf63dea415ba029",
+    "canonical_sha256": "175d4d4e560a687e5dd8f47300e6561ae3bc1a8bcfb86877613ae5ba8f5ba08a"
+  },
+  "implementation_identities": {
+    "execution_successor_v2_1_sha256": "1c6ae7eca890f3946546cbd33a05aa3b689018503c7e394f02f185d1d654ef04",
+    "window_loader_sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223",
+    "replay_cache_dag_v2_implementation_sha256": "27ecd5bce3777634f890c771c09cccc0c7d92104fcc80605e8f09f6879a55ee3",
+    "replay_cache_dag_v2_identity_sha256": "d4aaf484d1ed8f1419da675d771e9520d944e5c23f8016d81a89fbeb0d69c39c",
+    "authoritative_tick_replay_sha256": "36b47124111770054731f86c7655dd4bdee61cf995b4d51feb009a0203bbb418"
+  },
+  "execution_attempt": {
+    "utc_day": "2026-04-17",
+    "output_root": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_1_preflight_20260803_run4",
+    "output_size_bytes": 0,
+    "report_written": false,
+    "journal_manifest_count": 0,
+    "exception_type": "AdapterContractViolation",
+    "exception_message": "prediction-warmup candidate diverged from untreated baseline",
+    "exception_source": "ranked_toxicity_guard_authoritative_replay_v1_5.py:on_quote_decision",
+    "failure_stage": "no-treatment prediction warmup before the first completed 10s prediction bucket",
+    "operator_interrupted": false
+  },
+  "failed_contract": {
+    "name": "prediction_warmup_exact_baseline_snapshot_parity",
+    "required_relation": "candidate_snapshot == frozen_untreated_baseline_snapshot",
+    "compared_fields": [
+      "decision_id",
+      "utc_day",
+      "decision_ts_ns",
+      "side",
+      "role",
+      "baseline_eligible",
+      "exposure_increasing",
+      "can_post",
+      "allow_exposure_increase",
+      "active_exposure_order_id",
+      "quote_price",
+      "quote_quantity",
+      "blocker_fingerprint",
+      "policy_fingerprint"
+    ],
+    "differing_field": null,
+    "differing_field_reason": "the frozen fail-closed exception does not serialize the candidate and baseline snapshots",
+    "safe_conclusion": "the frozen v2 baseline tape cannot be reused as an exact untreated denominator under the bound v2.1 execution identity",
+    "unsupported_conclusion": "the mismatch cannot be attributed to one specific loader or DAG node from this run alone"
+  },
+  "cache_contract": {
+    "window_component_and_native_cache_writers_replaced_with_fail_fast_guards": true,
+    "cache_write_contract_exception": false,
+    "legacy_v13_read_compatibility_unit_tested": true,
+    "observed_loader_path": [
+      "legacy components_v1 market_context read",
+      "legacy components_v1 model_overlay read",
+      "read-only native-book cache iteration"
+    ],
+    "new_WindowData_persistence_allowed": false,
+    "WindowData_semantics": "ephemeral",
+    "post_run_cache_tree_identity_check_completed": false,
+    "post_run_check_reason": "authoritative replay raised before the post-run audit"
+  },
+  "parity_result": {
+    "expected_decisions": 29072,
+    "decisions_verified": null,
+    "BUY_v2_counts_exact_match": null,
+    "SELL_v2_counts_exact_match": null,
+    "zero_tolerance_counts_exact_match": null,
+    "reason": "baseline warmup parity failed before atomic journals and the binding audit were emitted"
+  },
+  "tests": {
+    "result": "10 passed",
+    "scope": "v2.1 identity, read-only cache flags, exact fail-closed parity comparator, cache-tree mutation detection, frozen-v2 preservation, legacy-v13 read compatibility, and carryover-safe v2 adapter tests"
+  },
+  "permissions": {
+    "formal_40_day_mechanics_run": false,
+    "mechanics_results_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

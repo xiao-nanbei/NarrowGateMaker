@@ -1,0 +1,3025 @@
+{
+  "schema_version": "risk_selection_development_publication.v1",
+  "publication_date": "2026-09-07",
+  "status": "completed_small_Development_diagnostic_no_economic_improvement_or_live_admission",
+  "publication_scope": "Owner-authorized research-only public projection, not a live config or purchased raw market dataset. Original private artifacts unchanged. No replay rerun for publication.",
+  "source_commits": {
+    "training": "02890097c31803df3259f1f9df53eff85a1a7532",
+    "labels": "bc37f1135b642bc4df398bf04a7a356e2594d7ad",
+    "full_path_candidates": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+    "reused_baseline": "743de04927bf7a385bbdef601d846c2ad6ca8788",
+    "publication_time_coverage_reproduction": "70c468f6"
+  },
+  "design": {
+    "training_days": [
+      "2026-04-20",
+      "2026-04-22"
+    ],
+    "training_terminal": "00:59:59.999 UTC on each source day",
+    "evaluation_days": [
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05"
+    ],
+    "evaluation_role": "chronological Development, not T1/T2 or untouched confirmation",
+    "initialization": "Each arm starts at the same flat segment boundary with 24-hour D-1 native/feature warmup, then carries its own state continuously. Not a historical live checkpoint.",
+    "label_semantics": "One E WAIT or C CANCEL intervention, then B0. POST-minus-WAIT or KEEP-minus-CANCEL at the common absolute terminal, including fees and funding. Labels are not additive returns.",
+    "target_selection": "Apr22/May1: first 8 eligible per surface/side by 00:45 UTC, retain fewer when absent; no selection by eventual fill or value. Apr20 prior 23 pilot labels retained unchanged.",
+    "horizon_sensitivity": "First available Apr22 target per surface extended to a two-hour terminal; separate from fit and original one-hour labels.",
+    "baseline_strategy": "Existing private B0 and post-fill protections held fixed; private deployed policy/config/model bundles omitted. This research policy is an extra replay-only E/C filter.",
+    "execution": "Python canonical F01 replay with strict native snapshot/delta modeled queue; REST async GLOBAL FIFO, local private-fill visibility, source/prediction delivery, frozen fees and physical-time funding.",
+    "latency_boundary": "Existing measured pilot L0 plus historical priors, not a stable multi-regime tail qualification. Incremental candidate compute/hosting cost not integrated.",
+    "seed": {
+      "rng": 42,
+      "order_latency": 59,
+      "market_data_latency": 7
+    },
+    "train_parameters": {
+      "validation_start_ns": 1777593600000000000,
+      "alpha": 1.0,
+      "min_train_rows": 8,
+      "policy_id": "ec-development-ridge-apr20-apr22-constantfixed"
+    },
+    "current_scorer_thresholds": {
+      "E": "POST iff prediction > 0, otherwise WAIT",
+      "C": "CANCEL iff prediction < 0, otherwise KEEP",
+      "missing_model": "preserve baseline; do not impute or borrow another side"
+    }
+  },
+  "original_training_report": {
+    "scope": "development_model_fit_not_full_path_economic_validation",
+    "validation_start_ns": 1777593600000000000,
+    "alpha": 1.0,
+    "min_train_rows": 8,
+    "input_labels": 43,
+    "train_rows": 43,
+    "validation_rows": 0,
+    "excluded": {},
+    "surfaces": {
+      "E:BUY": {
+        "train_rows": 14,
+        "validation_rows": 0,
+        "status": "training_only",
+        "train_outcome_windows": 2
+      },
+      "E:SELL": {
+        "train_rows": 14,
+        "validation_rows": 0,
+        "status": "training_only",
+        "train_outcome_windows": 2
+      },
+      "C:BUY": {
+        "train_rows": 0,
+        "validation_rows": 0,
+        "status": "insufficient_training_rows"
+      },
+      "C:SELL": {
+        "train_rows": 15,
+        "validation_rows": 0,
+        "status": "training_only",
+        "train_outcome_windows": 2
+      }
+    },
+    "live_deployment_performed": false,
+    "portfolio_pnl_estimate": null,
+    "fitted_surfaces": [
+      "E:BUY",
+      "E:SELL",
+      "C:SELL"
+    ]
+  },
+  "publication_time_training_coverage": {
+    "source": "70c468f6",
+    "scope": "Descriptive re-fit check using the same 43 rows and parameters; not a new selected policy.",
+    "policy_payload_equal_to_original": true,
+    "report": {
+      "scope": "development_model_fit_not_full_path_economic_validation",
+      "validation_start_ns": 1777593600000000000,
+      "alpha": 1,
+      "min_train_rows": 8,
+      "input_labels": 43,
+      "train_rows": 43,
+      "validation_rows": 0,
+      "excluded": {},
+      "surfaces": {
+        "E:BUY": {
+          "train_rows": 14,
+          "validation_rows": 0,
+          "train_outcome_windows": 2,
+          "train_decision_utc_hours": {
+            "0": 14
+          },
+          "train_feature_support": {
+            "inventory_btc": {
+              "unique_values": 1,
+              "minimum": 0.0,
+              "maximum": 0.0,
+              "constant": true
+            },
+            "quantity_btc": {
+              "unique_values": 1,
+              "minimum": 0.001,
+              "maximum": 0.001,
+              "constant": true
+            },
+            "microprice_shift_bps": {
+              "unique_values": 14,
+              "minimum": -0.18077608973598766,
+              "maximum": 0.0064985419121415455,
+              "constant": false
+            }
+          },
+          "status": "training_only"
+        },
+        "E:SELL": {
+          "train_rows": 14,
+          "validation_rows": 0,
+          "train_outcome_windows": 2,
+          "train_decision_utc_hours": {
+            "0": 14
+          },
+          "train_feature_support": {
+            "inventory_btc": {
+              "unique_values": 1,
+              "minimum": 0.0,
+              "maximum": 0.0,
+              "constant": true
+            },
+            "quantity_btc": {
+              "unique_values": 1,
+              "minimum": 0.001,
+              "maximum": 0.001,
+              "constant": true
+            },
+            "microprice_shift_bps": {
+              "unique_values": 14,
+              "minimum": -0.18077608973598766,
+              "maximum": 0.0064985419121415455,
+              "constant": false
+            }
+          },
+          "status": "training_only"
+        },
+        "C:BUY": {
+          "train_rows": 0,
+          "validation_rows": 0,
+          "train_outcome_windows": 0,
+          "train_decision_utc_hours": {},
+          "train_feature_support": {
+            "inventory_btc": {
+              "unique_values": 0,
+              "minimum": null,
+              "maximum": null,
+              "constant": null
+            },
+            "quantity_btc": {
+              "unique_values": 0,
+              "minimum": null,
+              "maximum": null,
+              "constant": null
+            },
+            "microprice_shift_bps": {
+              "unique_values": 0,
+              "minimum": null,
+              "maximum": null,
+              "constant": null
+            }
+          },
+          "status": "insufficient_training_rows"
+        },
+        "C:SELL": {
+          "train_rows": 15,
+          "validation_rows": 0,
+          "train_outcome_windows": 2,
+          "train_decision_utc_hours": {
+            "0": 15
+          },
+          "train_feature_support": {
+            "inventory_btc": {
+              "unique_values": 2,
+              "minimum": -0.002,
+              "maximum": -0.001,
+              "constant": false
+            },
+            "quantity_btc": {
+              "unique_values": 1,
+              "minimum": 0.001,
+              "maximum": 0.001,
+              "constant": true
+            },
+            "microprice_shift_bps": {
+              "unique_values": 15,
+              "minimum": -0.006011751469513964,
+              "maximum": 0.005975129045077125,
+              "constant": false
+            }
+          },
+          "status": "training_only"
+        }
+      },
+      "live_deployment_performed": false,
+      "portfolio_pnl_estimate": null,
+      "fitted_surfaces": [
+        "E:BUY",
+        "E:SELL",
+        "C:SELL"
+      ]
+    }
+  },
+  "may1_frozen_model_evaluation": {
+    "scope": "frozen_policy_chronological_Development_prediction_diagnostic_not_T1",
+    "policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+    "policy_sha256": "8aaf7adb24be2592172434d49473367a7d6a090aa7c702083fd64641c49a5acf",
+    "scoring_source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+    "label_source_commit": "bc37f1135b642bc4df398bf04a7a356e2594d7ad",
+    "validation_start_ns": 1777593600000000000,
+    "training_days": [
+      "2026-04-20",
+      "2026-04-22"
+    ],
+    "validation_day": "2026-05-01",
+    "validation_outcome_windows": 1,
+    "label_rows": 18,
+    "normalization": "unchanged frozen policy training-only means/scales; no fit or normalization recomputation used for predictions",
+    "target_unit": "USDC_per_action",
+    "target_direction": "POST-minus-WAIT for E; KEEP-minus-CANCEL for C",
+    "metric_contract": "Canonical trainer MSE and past-only training-label mean MSE; descriptive MAE/RMSE, exact three-way sign accuracy and frozen-zero-threshold action direction. No new statistical gate or threshold. Error/sign metrics use supported rows only; all unsupported rows remain listed.",
+    "surfaces": {
+      "E:BUY": {
+        "validation_rows": 5,
+        "supported_rows": 5,
+        "unsupported_rows": 0,
+        "support_fraction": 1,
+        "fallback_reason_counts": {},
+        "actual_positive": 1,
+        "actual_zero": 1,
+        "actual_negative": 3,
+        "mean_label_usdc_all_rows": 0.0039000000000271482,
+        "validation_mse": 0.005081400528932141,
+        "past_only_intercept_mse": 0.004954854244896013,
+        "validation_mae": 0.06553209462304224,
+        "validation_rmse": 0.07128394299512437,
+        "sign_correct_count": 1,
+        "sign_accuracy": 0.2,
+        "action_direction_correct_count": 1,
+        "action_direction_accuracy": 0.2,
+        "mse_improvement_vs_past_mean": -0.0001265462840361279,
+        "mse_skill_vs_past_mean": -0.02553986006076414,
+        "mean_prediction_usdc": 0.02508013236634058,
+        "mean_label_usdc": 0.0039000000000271482,
+        "mean_error_usdc": 0.021180132366313432,
+        "nonbaseline_prediction_fraction": 0,
+        "predicted_positive": 5,
+        "predicted_zero": 0,
+        "predicted_negative": 0,
+        "model_present": true,
+        "train_rows": 14,
+        "status": "frozen_policy_chronological_Development_diagnostic"
+      },
+      "E:SELL": {
+        "validation_rows": 5,
+        "supported_rows": 5,
+        "unsupported_rows": 0,
+        "support_fraction": 1,
+        "fallback_reason_counts": {},
+        "actual_positive": 0,
+        "actual_zero": 0,
+        "actual_negative": 5,
+        "mean_label_usdc_all_rows": -0.026539999999937437,
+        "validation_mse": 0.0012718485556216766,
+        "past_only_intercept_mse": 3.929417346959221e-05,
+        "validation_mae": 0.034892221028851055,
+        "validation_rmse": 0.03566298579229839,
+        "sign_correct_count": 5,
+        "sign_accuracy": 1,
+        "action_direction_correct_count": 5,
+        "action_direction_accuracy": 1,
+        "mse_improvement_vs_past_mean": -0.0012325543821520844,
+        "mse_skill_vs_past_mean": -31.36735737948264,
+        "mean_prediction_usdc": -0.061432221028788495,
+        "mean_label_usdc": -0.026539999999937437,
+        "mean_error_usdc": -0.034892221028851055,
+        "nonbaseline_prediction_fraction": 1,
+        "predicted_positive": 0,
+        "predicted_zero": 0,
+        "predicted_negative": 5,
+        "model_present": true,
+        "train_rows": 14,
+        "status": "frozen_policy_chronological_Development_diagnostic"
+      },
+      "C:BUY": {
+        "validation_rows": 8,
+        "supported_rows": 0,
+        "unsupported_rows": 8,
+        "support_fraction": 0,
+        "fallback_reason_counts": {
+          "no_model": 8
+        },
+        "actual_positive": 0,
+        "actual_zero": 3,
+        "actual_negative": 5,
+        "mean_label_usdc_all_rows": -0.02097499999997332,
+        "validation_mse": null,
+        "past_only_intercept_mse": null,
+        "validation_mae": null,
+        "validation_rmse": null,
+        "sign_correct_count": null,
+        "sign_accuracy": null,
+        "action_direction_correct_count": null,
+        "action_direction_accuracy": null,
+        "model_present": false,
+        "train_rows": 0,
+        "status": "unsupported_absent_model"
+      },
+      "C:SELL": {
+        "validation_rows": 0,
+        "supported_rows": 0,
+        "unsupported_rows": 0,
+        "support_fraction": null,
+        "fallback_reason_counts": {},
+        "actual_positive": 0,
+        "actual_zero": 0,
+        "actual_negative": 0,
+        "mean_label_usdc_all_rows": null,
+        "validation_mse": null,
+        "past_only_intercept_mse": null,
+        "validation_mae": null,
+        "validation_rmse": null,
+        "sign_correct_count": null,
+        "sign_accuracy": null,
+        "action_direction_correct_count": null,
+        "action_direction_accuracy": null,
+        "model_present": true,
+        "train_rows": 15,
+        "status": "not_evaluated_no_validation_rows"
+      }
+    },
+    "supported_aggregate": {
+      "validation_rows": 18,
+      "supported_rows": 10,
+      "unsupported_rows": 8,
+      "support_fraction": 0.5555555555555556,
+      "fallback_reason_counts": {
+        "no_model": 8
+      },
+      "actual_positive": 1,
+      "actual_zero": 4,
+      "actual_negative": 13,
+      "mean_label_usdc_all_rows": -0.015611111111074334,
+      "validation_mse": 0.003176624542276909,
+      "past_only_intercept_mse": 0.0024970742091828023,
+      "validation_mae": 0.05021215782594666,
+      "validation_rmse": 0.05636155198605614,
+      "sign_correct_count": 6,
+      "sign_accuracy": 0.6,
+      "action_direction_correct_count": 6,
+      "action_direction_accuracy": 0.6,
+      "mse_improvement_vs_past_mean": -0.0006795503330941067,
+      "mse_skill_vs_past_mean": -0.2721386215095696,
+      "mean_prediction_usdc": -0.018176044331223957,
+      "mean_label_usdc": -0.011319999999955144,
+      "mean_error_usdc": -0.006856044331268812,
+      "nonbaseline_prediction_fraction": 0.5,
+      "predicted_positive": 5,
+      "predicted_zero": 0,
+      "predicted_negative": 5
+    },
+    "thresholds_unchanged": {
+      "E": "POST if prediction > 0 else WAIT",
+      "C": "CANCEL if prediction < 0 else KEEP",
+      "unsupported": "preserve baseline"
+    },
+    "refit_performed": false,
+    "validation_selection_performed": false,
+    "five_day_candidate_results_read": false,
+    "portfolio_pnl_estimate": null,
+    "live_deployment_performed": false,
+    "new_gate_created": false,
+    "limitations": [
+      "One common one-hour May1 outcome window; labels are correlated and not an independent sample of 18 days.",
+      "May1 is later chronological Development, not untouched confirmation.",
+      "C:BUY has eight labeled outcomes but no frozen model, so prediction error/direction metrics are null and baseline KEEP fallback is explicit.",
+      "C:SELL has a frozen model but no May1 targets under the predeclared cutoff; no time-out score is available.",
+      "Current labels use modeled queue/latency and common terminal MTM, not exact checkpoint branching or additive portfolio PnL.",
+      "Prediction results do not stop the ongoing frozen full-path research or authorize parameter changes."
+    ],
+    "rows": [
+      {
+        "opportunity_id": "BTCUSDC:1777593601101:0:BUY:E:-",
+        "alternative_arm": "E_BUY_001",
+        "day": "2026-05-01",
+        "surface": "E:BUY",
+        "role": "opener",
+        "decision_ts_ns": 1777593601101000000,
+        "feature_ready_ts_ns": 1777593601094025500,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "nonnegative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "POST",
+        "prediction_usdc": 0.025120094358216265,
+        "label_usdc": 0.1360000000000383,
+        "error_usdc": -0.11087990564182204,
+        "sign_correct": true,
+        "label_preferred_action": "POST",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": 0.021628571428525083
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777593601101:0:SELL:E:-",
+        "alternative_arm": "E_SELL_001",
+        "day": "2026-05-01",
+        "surface": "E:SELL",
+        "role": "opener",
+        "decision_ts_ns": 1777593601101000000,
+        "feature_ready_ts_ns": 1777593601094025500,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "negative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "WAIT",
+        "prediction_usdc": -0.061814418256001494,
+        "label_usdc": -0.03049999999991826,
+        "error_usdc": -0.031314418256083235,
+        "sign_correct": true,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": -0.02842142857146054
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777593817661:21:BUY:E:-",
+        "alternative_arm": "E_BUY_002",
+        "day": "2026-05-01",
+        "surface": "E:BUY",
+        "role": "opener",
+        "decision_ts_ns": 1777593817661000000,
+        "feature_ready_ts_ns": 1777593817651983600,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "nonnegative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "POST",
+        "prediction_usdc": 0.025046118610528592,
+        "label_usdc": -0.025699999999929446,
+        "error_usdc": 0.05074611861045804,
+        "sign_correct": false,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": false,
+        "past_only_mean_usdc": 0.021628571428525083
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777593817661:21:SELL:E:-",
+        "alternative_arm": "E_SELL_002",
+        "day": "2026-05-01",
+        "surface": "E:SELL",
+        "role": "opener",
+        "decision_ts_ns": 1777593817661000000,
+        "feature_ready_ts_ns": 1777593817651983600,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "negative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "WAIT",
+        "prediction_usdc": -0.06110691284097642,
+        "label_usdc": -0.025699999999929446,
+        "error_usdc": -0.035406912841046974,
+        "sign_correct": true,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": -0.02842142857146054
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777593913428:50:BUY:E:-",
+        "alternative_arm": "E_BUY_003",
+        "day": "2026-05-01",
+        "surface": "E:BUY",
+        "role": "opener",
+        "decision_ts_ns": 1777593913428000000,
+        "feature_ready_ts_ns": 1777593913394417000,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "nonnegative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "POST",
+        "prediction_usdc": 0.02486320942826856,
+        "label_usdc": -0.04539999999998656,
+        "error_usdc": 0.07026320942825512,
+        "sign_correct": false,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": false,
+        "past_only_mean_usdc": 0.021628571428525083
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777593913428:50:SELL:E:-",
+        "alternative_arm": "E_SELL_003",
+        "day": "2026-05-01",
+        "surface": "E:SELL",
+        "role": "opener",
+        "decision_ts_ns": 1777593913428000000,
+        "feature_ready_ts_ns": 1777593913394417000,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "negative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "WAIT",
+        "prediction_usdc": -0.05935756604892849,
+        "label_usdc": -0.0306999999999249,
+        "error_usdc": -0.02865756604900359,
+        "sign_correct": true,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": -0.02842142857146054
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594177840:130:BUY:E:-",
+        "alternative_arm": "E_BUY_004",
+        "day": "2026-05-01",
+        "surface": "E:BUY",
+        "role": "opener",
+        "decision_ts_ns": 1777594177840000000,
+        "feature_ready_ts_ns": 1777594177822198800,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "nonnegative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "POST",
+        "prediction_usdc": 0.02500779617644185,
+        "label_usdc": -0.04539999999998656,
+        "error_usdc": 0.07040779617642841,
+        "sign_correct": false,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": false,
+        "past_only_mean_usdc": 0.021628571428525083
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594177840:130:SELL:E:-",
+        "alternative_arm": "E_SELL_004",
+        "day": "2026-05-01",
+        "surface": "E:SELL",
+        "role": "opener",
+        "decision_ts_ns": 1777594177840000000,
+        "feature_ready_ts_ns": 1777594177822198800,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "negative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "WAIT",
+        "prediction_usdc": -0.06074039637469094,
+        "label_usdc": -0.03059999999995,
+        "error_usdc": -0.03014039637474094,
+        "sign_correct": true,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": -0.02842142857146054
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594439031:226:BUY:C:118",
+        "alternative_arm": "C_BUY_001",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594439031000000,
+        "feature_ready_ts_ns": 1777594438965111000,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": 0,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "KEEP",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594461672:236:BUY:C:124",
+        "alternative_arm": "C_BUY_002",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594461672000000,
+        "feature_ready_ts_ns": 1777594461604802000,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": -0.04539999999998656,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "CANCEL",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594489418:246:BUY:C:130",
+        "alternative_arm": "C_BUY_003",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594489418000000,
+        "feature_ready_ts_ns": 1777594489368931300,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": -0.03059999999995,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "CANCEL",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594512461:256:BUY:C:136",
+        "alternative_arm": "C_BUY_004",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594512461000000,
+        "feature_ready_ts_ns": 1777594512412719400,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": -0.03059999999995,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "CANCEL",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594522474:260:BUY:C:138",
+        "alternative_arm": "C_BUY_005",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594522474000000,
+        "feature_ready_ts_ns": 1777594522393755400,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": -0.03059999999995,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "CANCEL",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594532589:264:BUY:C:140",
+        "alternative_arm": "C_BUY_006",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594532589000000,
+        "feature_ready_ts_ns": 1777594532577102000,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": -0.03059999999995,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "CANCEL",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594701276:331:BUY:E:-",
+        "alternative_arm": "E_BUY_005",
+        "day": "2026-05-01",
+        "surface": "E:BUY",
+        "role": "opener",
+        "decision_ts_ns": 1777594701276000000,
+        "feature_ready_ts_ns": 1777594701263729200,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "nonnegative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "POST",
+        "prediction_usdc": 0.025363443258247624,
+        "label_usdc": 0,
+        "error_usdc": 0.025363443258247624,
+        "sign_correct": false,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": false,
+        "past_only_mean_usdc": 0.021628571428525083
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594701276:331:SELL:E:-",
+        "alternative_arm": "E_SELL_005",
+        "day": "2026-05-01",
+        "surface": "E:SELL",
+        "role": "opener",
+        "decision_ts_ns": 1777594701276000000,
+        "feature_ready_ts_ns": 1777594701263729200,
+        "model_present": true,
+        "supported_prediction": true,
+        "policy_reason": "negative_value",
+        "baseline_action": "POST",
+        "frozen_policy_action": "WAIT",
+        "prediction_usdc": -0.06414181162334512,
+        "label_usdc": -0.015199999999964575,
+        "error_usdc": -0.04894181162338054,
+        "sign_correct": true,
+        "label_preferred_action": "WAIT",
+        "action_direction_correct": true,
+        "past_only_mean_usdc": -0.02842142857146054
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594875778:391:BUY:C:212",
+        "alternative_arm": "C_BUY_007",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594875778000000,
+        "feature_ready_ts_ns": 1777594875710068200,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": 0,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "KEEP",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      },
+      {
+        "opportunity_id": "BTCUSDC:1777594882879:392:BUY:C:212",
+        "alternative_arm": "C_BUY_008",
+        "day": "2026-05-01",
+        "surface": "C:BUY",
+        "role": "opener_or_add",
+        "decision_ts_ns": 1777594882879000000,
+        "feature_ready_ts_ns": 1777594882780861200,
+        "model_present": false,
+        "supported_prediction": false,
+        "policy_reason": "no_model",
+        "baseline_action": "KEEP",
+        "frozen_policy_action": "KEEP",
+        "prediction_usdc": null,
+        "label_usdc": 0,
+        "error_usdc": null,
+        "sign_correct": null,
+        "label_preferred_action": "KEEP",
+        "action_direction_correct": null,
+        "past_only_mean_usdc": null
+      }
+    ],
+    "policy_path": "policy.json"
+  },
+  "two_hour_sensitivity": [
+    {
+      "alternative_arm": "E_BUY_001",
+      "opportunity_id": "BTCUSDC:1776816000000:0:BUY:E:-",
+      "one_hour_difference_usdc": "0.3675999999999675",
+      "two_hour_difference_usdc": "0.3618999999999488",
+      "change_usdc": "-0.0057000000000187",
+      "trajectories": {
+        "baseline": {
+          "one_hour_value_usdc": "0.3318999999999903",
+          "two_hour_value_usdc": "0.31639999999998736",
+          "value_change_usdc": "-0.01550000000000294",
+          "one_hour_terminal_inventory_btc": "0.001",
+          "two_hour_terminal_inventory_btc": "-0.002",
+          "terminal_inventory_change_btc": "-0.003",
+          "one_hour_fill_rows": 37,
+          "two_hour_fill_rows": 62,
+          "fill_row_change": 25
+        },
+        "alternative": {
+          "one_hour_value_usdc": "-0.035699999999977194",
+          "two_hour_value_usdc": "-0.04549999999996146",
+          "value_change_usdc": "-0.009799999999984266",
+          "one_hour_terminal_inventory_btc": "-0.001",
+          "two_hour_terminal_inventory_btc": "0.0",
+          "terminal_inventory_change_btc": "0.001",
+          "one_hour_fill_rows": 29,
+          "two_hour_fill_rows": 48,
+          "fill_row_change": 19
+        }
+      },
+      "strict_sign_changed": false
+    },
+    {
+      "alternative_arm": "E_SELL_001",
+      "opportunity_id": "BTCUSDC:1776816000000:0:SELL:E:-",
+      "one_hour_difference_usdc": "0.017399999999952342",
+      "two_hour_difference_usdc": "0.01199999999991519",
+      "change_usdc": "-0.005400000000037152",
+      "trajectories": {
+        "baseline": {
+          "one_hour_value_usdc": "0.3318999999999903",
+          "two_hour_value_usdc": "0.31639999999998736",
+          "value_change_usdc": "-0.01550000000000294",
+          "one_hour_terminal_inventory_btc": "0.001",
+          "two_hour_terminal_inventory_btc": "-0.002",
+          "terminal_inventory_change_btc": "-0.003",
+          "one_hour_fill_rows": 37,
+          "two_hour_fill_rows": 62,
+          "fill_row_change": 25
+        },
+        "alternative": {
+          "one_hour_value_usdc": "0.31450000000003797",
+          "two_hour_value_usdc": "0.30440000000007217",
+          "value_change_usdc": "-0.01009999999996580",
+          "one_hour_terminal_inventory_btc": "0.001",
+          "two_hour_terminal_inventory_btc": "0.0",
+          "terminal_inventory_change_btc": "-0.001",
+          "one_hour_fill_rows": 39,
+          "two_hour_fill_rows": 60,
+          "fill_row_change": 21
+        }
+      },
+      "strict_sign_changed": false
+    },
+    {
+      "alternative_arm": "C_SELL_001",
+      "opportunity_id": "BTCUSDC:1776816461550:142:SELL:C:89",
+      "one_hour_difference_usdc": "0.0",
+      "two_hour_difference_usdc": "0.0",
+      "change_usdc": "0.0",
+      "trajectories": {
+        "baseline": {
+          "one_hour_value_usdc": "0.3318999999999903",
+          "two_hour_value_usdc": "0.31639999999998736",
+          "value_change_usdc": "-0.01550000000000294",
+          "one_hour_terminal_inventory_btc": "0.001",
+          "two_hour_terminal_inventory_btc": "-0.002",
+          "terminal_inventory_change_btc": "-0.003",
+          "one_hour_fill_rows": 37,
+          "two_hour_fill_rows": 62,
+          "fill_row_change": 25
+        },
+        "alternative": {
+          "one_hour_value_usdc": "0.3318999999999903",
+          "two_hour_value_usdc": "0.31639999999998736",
+          "value_change_usdc": "-0.01550000000000294",
+          "one_hour_terminal_inventory_btc": "0.001",
+          "two_hour_terminal_inventory_btc": "-0.002",
+          "terminal_inventory_change_btc": "-0.003",
+          "one_hour_fill_rows": 37,
+          "two_hour_fill_rows": 62,
+          "fill_row_change": 25
+        }
+      },
+      "strict_sign_changed": false
+    }
+  ],
+  "matched_participation_control": {
+    "training_window": {
+      "day": "2026-04-22",
+      "start_ts_ms": 1776816000000,
+      "end_ts_ms": 1776819599999
+    },
+    "policy_path": "policy.json",
+    "policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+    "policy_sha256": "8aaf7adb24be2592172434d49473367a7d6a090aa7c702083fd64641c49a5acf",
+    "source_commit": "9d557c4cfe4a029f204076c19fb9cef9f9dcf654",
+    "eligibility": "Within each own E/C/EC trajectory: active-mode surface and finite non-null value_delta_usdc",
+    "veto_definition": "E WAIT / C CANCEL among supported opportunities; no PnL, value magnitude, pooling or Evaluation selection",
+    "random_seed": 71,
+    "random_scope": "current-environment-development-may1-may5-v1",
+    "evaluation_days": [
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05"
+    ],
+    "modes": {
+      "E": {
+        "training_arm": "E",
+        "surfaces": {
+          "E:BUY": {
+            "mode_enabled": true,
+            "opportunity_n": 12,
+            "eligible_n": 12,
+            "veto_n": 0,
+            "veto_rate": 0.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          },
+          "E:SELL": {
+            "mode_enabled": true,
+            "opportunity_n": 12,
+            "eligible_n": 12,
+            "veto_n": 12,
+            "veto_rate": 1.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          },
+          "C:BUY": {
+            "mode_enabled": false,
+            "opportunity_n": 23,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "mode_disabled",
+            "unsupported_reason_counts": {
+              "mode_disabled": 23
+            }
+          },
+          "C:SELL": {
+            "mode_enabled": false,
+            "opportunity_n": 17,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "mode_disabled",
+            "unsupported_reason_counts": {
+              "mode_disabled": 17
+            }
+          }
+        },
+        "rates": {
+          "E:BUY": 0.0,
+          "E:SELL": 1.0
+        },
+        "missing_enabled_surfaces": []
+      },
+      "C": {
+        "training_arm": "C",
+        "surfaces": {
+          "E:BUY": {
+            "mode_enabled": false,
+            "opportunity_n": 7,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "mode_disabled",
+            "unsupported_reason_counts": {
+              "mode_disabled": 7
+            }
+          },
+          "E:SELL": {
+            "mode_enabled": false,
+            "opportunity_n": 7,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "mode_disabled",
+            "unsupported_reason_counts": {
+              "mode_disabled": 7
+            }
+          },
+          "C:BUY": {
+            "mode_enabled": true,
+            "opportunity_n": 20,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "missing_supported_opportunities",
+            "unsupported_reason_counts": {
+              "no_model": 20
+            }
+          },
+          "C:SELL": {
+            "mode_enabled": true,
+            "opportunity_n": 17,
+            "eligible_n": 17,
+            "veto_n": 0,
+            "veto_rate": 0.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          }
+        },
+        "rates": {
+          "C:SELL": 0.0
+        },
+        "missing_enabled_surfaces": [
+          "C:BUY"
+        ]
+      },
+      "EC": {
+        "training_arm": "EC",
+        "surfaces": {
+          "E:BUY": {
+            "mode_enabled": true,
+            "opportunity_n": 12,
+            "eligible_n": 12,
+            "veto_n": 0,
+            "veto_rate": 0.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          },
+          "E:SELL": {
+            "mode_enabled": true,
+            "opportunity_n": 12,
+            "eligible_n": 12,
+            "veto_n": 12,
+            "veto_rate": 1.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          },
+          "C:BUY": {
+            "mode_enabled": true,
+            "opportunity_n": 23,
+            "eligible_n": 0,
+            "veto_n": 0,
+            "veto_rate": null,
+            "status": "missing_supported_opportunities",
+            "unsupported_reason_counts": {
+              "no_model": 23
+            }
+          },
+          "C:SELL": {
+            "mode_enabled": true,
+            "opportunity_n": 17,
+            "eligible_n": 17,
+            "veto_n": 0,
+            "veto_rate": 0.0,
+            "status": "supported",
+            "unsupported_reason_counts": {}
+          }
+        },
+        "rates": {
+          "E:BUY": 0.0,
+          "E:SELL": 1.0,
+          "C:SELL": 0.0
+        },
+        "missing_enabled_surfaces": [
+          "C:BUY"
+        ]
+      }
+    },
+    "missing_surface_rule": "Omit missing rates, retain explicit simulator fallback; never impute zero or borrow another mode",
+    "degenerate_rates": "All observed supported rates are 0 or 1; retain these deterministic boundary controls without retuning",
+    "no_refit": true,
+    "evaluation_outcomes_read_by_this_rate_estimator": false,
+    "evaluation_outcomes_used_to_estimate_rates": false,
+    "action_authority": false,
+    "live_authority": false
+  },
+  "full_path_summary": {
+    "passed": true,
+    "verification_scope": "completed_artifact_monetary_reconciliation_not_source_parity_or_policy_admission",
+    "days": [
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05"
+    ],
+    "observation_unit": "one_continuous_segment",
+    "baseline_recomputed": false,
+    "source_statuses": {
+      "E": {
+        "exit_code": 0,
+        "wall_seconds": 1525.7641541957855,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_E",
+        "arms": [
+          "E"
+        ]
+      },
+      "C": {
+        "exit_code": 0,
+        "wall_seconds": 2312.5375781059265,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_C",
+        "arms": [
+          "C"
+        ]
+      },
+      "EC": {
+        "exit_code": 0,
+        "wall_seconds": 1696.7539801597595,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_EC",
+        "arms": [
+          "EC"
+        ]
+      },
+      "R_E": {
+        "exit_code": 0,
+        "wall_seconds": 1738.4841477870941,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_R_E",
+        "arms": [
+          "R_E"
+        ]
+      },
+      "R_EC": {
+        "exit_code": 0,
+        "wall_seconds": 1818.5296540260315,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_R_EC",
+        "arms": [
+          "R_EC"
+        ]
+      },
+      "Flat": {
+        "exit_code": 0,
+        "wall_seconds": 2142.8539769649506,
+        "source_commit": "c9e955763d3522844cd0366c3a51e4719a56a2bb",
+        "stage": "evaluation_may1_may5_Flat",
+        "arms": [
+          "Flat"
+        ]
+      }
+    },
+    "baseline_source_commit": "743de04927bf7a385bbdef601d846c2ad6ca8788",
+    "arms": [
+      {
+        "arm": "baseline",
+        "metrics": {
+          "replay_pnl": "-17.18334057999995",
+          "funding_cashflow_usdc": "-0.010170457474571437",
+          "replay_net_pnl": "-17.193511037474522",
+          "cash_before_terminal": "-17.18334057999995",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "-17.18334057999995",
+          "fills_total": "3062",
+          "fills_bid_buy": "1531",
+          "fills_ask_sell": "1531",
+          "buy_fill_qty": "1.5309999999999422",
+          "sell_fill_qty": "1.5309999999999422",
+          "campaigns": "1235",
+          "closed_campaigns": "1235",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "346.42495099549",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.760540580007545",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "-17.183340579999970081",
+          "signed_fee_total": "0.960440580000000081",
+          "physical_funding": "-0.0101704574745714363",
+          "terminal_mtm": "-17.183340579999970081",
+          "net": "-17.1935110374745415173",
+          "campaign_sum": "-17.193512",
+          "campaign_minus_reported_net": "-9.62525478E-7",
+          "campaign_csv_rounding_tolerance": "0.00061751"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.193511037474607",
+          "funding": "-0.0101704574745714354",
+          "net_minus_independent": "-6.54827E-14",
+          "funding_minus_physical": "9E-19",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68704",
+          "exchange_book_queue_exact_count": "33740",
+          "exchange_book_queue_known_zero_count": "34960",
+          "exchange_book_queue_missing_count": "4",
+          "exchange_book_queue_invalidated_order_count": "70",
+          "exchange_book_queue_cancel_ahead_event_count": "35558",
+          "exchange_book_queue_cancel_ahead_qty": "4931.243053193548",
+          "exchange_book_queue_ambiguous_event_count": "63",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {},
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "0E-15"
+      },
+      {
+        "arm": "E",
+        "metrics": {
+          "replay_pnl": "-17.200056855999705",
+          "funding_cashflow_usdc": "-0.01759984065120089",
+          "replay_net_pnl": "-17.217656696650906",
+          "cash_before_terminal": "63.665543144000296",
+          "final_inventory": "-0.001",
+          "terminal_mtm_pnl": "-17.200056855999705",
+          "fills_total": "3039",
+          "fills_bid_buy": "1519",
+          "fills_ask_sell": "1520",
+          "buy_fill_qty": "1.5189999999999435",
+          "sell_fill_qty": "1.5199999999999434",
+          "campaigns": "1238",
+          "closed_campaigns": "1237",
+          "open_campaigns": "1",
+          "replay_abs_inventory_time_s": "341.614176995619",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.800056856007187",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "63.665543144000009918",
+          "signed_fee_total": "1.073456856000000082",
+          "physical_funding": "-0.0175998406512008910",
+          "terminal_mtm": "-17.200056855999991082",
+          "net": "-17.2176566966511919730",
+          "campaign_sum": "-17.217659",
+          "campaign_minus_reported_net": "-0.000002303349094",
+          "campaign_csv_rounding_tolerance": "0.00061901"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.217656696651133",
+          "funding": "-0.017599840651200890",
+          "net_minus_independent": "5.89730E-14",
+          "funding_minus_physical": "1.0E-18",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68052",
+          "exchange_book_queue_exact_count": "33662",
+          "exchange_book_queue_known_zero_count": "34388",
+          "exchange_book_queue_missing_count": "2",
+          "exchange_book_queue_invalidated_order_count": "62",
+          "exchange_book_queue_cancel_ahead_event_count": "35316",
+          "exchange_book_queue_cancel_ahead_qty": "4914.90737116961",
+          "exchange_book_queue_ambiguous_event_count": "56",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "2290",
+          "risk_selection_c_opportunities": "6421",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "E",
+          "risk_selection_policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+          "risk_selection_policy_decision_count": "2290",
+          "risk_selection_policy_change_count": "1264",
+          "risk_selection_post_count": "1026",
+          "risk_selection_wait_count": "1264",
+          "risk_selection_keep_count": "0",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "-0.024145659176384"
+      },
+      {
+        "arm": "C",
+        "metrics": {
+          "replay_pnl": "-17.18334057999995",
+          "funding_cashflow_usdc": "-0.010170457474571437",
+          "replay_net_pnl": "-17.193511037474522",
+          "cash_before_terminal": "-17.18334057999995",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "-17.18334057999995",
+          "fills_total": "3062",
+          "fills_bid_buy": "1531",
+          "fills_ask_sell": "1531",
+          "buy_fill_qty": "1.5309999999999422",
+          "sell_fill_qty": "1.5309999999999422",
+          "campaigns": "1235",
+          "closed_campaigns": "1235",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "346.42495099549",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.760540580007545",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "-17.183340579999970081",
+          "signed_fee_total": "0.960440580000000081",
+          "physical_funding": "-0.0101704574745714363",
+          "terminal_mtm": "-17.183340579999970081",
+          "net": "-17.1935110374745415173",
+          "campaign_sum": "-17.193512",
+          "campaign_minus_reported_net": "-9.62525478E-7",
+          "campaign_csv_rounding_tolerance": "0.00061751"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.193511037474607",
+          "funding": "-0.0101704574745714354",
+          "net_minus_independent": "-6.54827E-14",
+          "funding_minus_physical": "9E-19",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68704",
+          "exchange_book_queue_exact_count": "33740",
+          "exchange_book_queue_known_zero_count": "34960",
+          "exchange_book_queue_missing_count": "4",
+          "exchange_book_queue_invalidated_order_count": "70",
+          "exchange_book_queue_cancel_ahead_event_count": "35558",
+          "exchange_book_queue_cancel_ahead_qty": "4931.243053193548",
+          "exchange_book_queue_ambiguous_event_count": "63",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "2449",
+          "risk_selection_c_opportunities": "6259",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "C",
+          "risk_selection_policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+          "risk_selection_policy_decision_count": "6259",
+          "risk_selection_policy_change_count": "0",
+          "risk_selection_post_count": "0",
+          "risk_selection_wait_count": "0",
+          "risk_selection_keep_count": "6259",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{\"no_model\": 1957}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "0E-15"
+      },
+      {
+        "arm": "EC",
+        "metrics": {
+          "replay_pnl": "-17.200056855999705",
+          "funding_cashflow_usdc": "-0.01759984065120089",
+          "replay_net_pnl": "-17.217656696650906",
+          "cash_before_terminal": "63.665543144000296",
+          "final_inventory": "-0.001",
+          "terminal_mtm_pnl": "-17.200056855999705",
+          "fills_total": "3039",
+          "fills_bid_buy": "1519",
+          "fills_ask_sell": "1520",
+          "buy_fill_qty": "1.5189999999999435",
+          "sell_fill_qty": "1.5199999999999434",
+          "campaigns": "1238",
+          "closed_campaigns": "1237",
+          "open_campaigns": "1",
+          "replay_abs_inventory_time_s": "341.614176995619",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.800056856007187",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "63.665543144000009918",
+          "signed_fee_total": "1.073456856000000082",
+          "physical_funding": "-0.0175998406512008910",
+          "terminal_mtm": "-17.200056855999991082",
+          "net": "-17.2176566966511919730",
+          "campaign_sum": "-17.217659",
+          "campaign_minus_reported_net": "-0.000002303349094",
+          "campaign_csv_rounding_tolerance": "0.00061901"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.217656696651133",
+          "funding": "-0.017599840651200890",
+          "net_minus_independent": "5.89730E-14",
+          "funding_minus_physical": "1.0E-18",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68052",
+          "exchange_book_queue_exact_count": "33662",
+          "exchange_book_queue_known_zero_count": "34388",
+          "exchange_book_queue_missing_count": "2",
+          "exchange_book_queue_invalidated_order_count": "62",
+          "exchange_book_queue_cancel_ahead_event_count": "35316",
+          "exchange_book_queue_cancel_ahead_qty": "4914.90737116961",
+          "exchange_book_queue_ambiguous_event_count": "56",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "2290",
+          "risk_selection_c_opportunities": "6421",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "EC",
+          "risk_selection_policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+          "risk_selection_policy_decision_count": "8711",
+          "risk_selection_policy_change_count": "1264",
+          "risk_selection_post_count": "1026",
+          "risk_selection_wait_count": "1264",
+          "risk_selection_keep_count": "6421",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{\"no_model\": 2198}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "-0.024145659176384"
+      },
+      {
+        "arm": "R_E",
+        "metrics": {
+          "replay_pnl": "-17.32185685599977",
+          "funding_cashflow_usdc": "-0.01759984065120089",
+          "replay_net_pnl": "-17.33945669665097",
+          "cash_before_terminal": "-17.32185685599977",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "-17.32185685599977",
+          "fills_total": "3038",
+          "fills_bid_buy": "1519",
+          "fills_ask_sell": "1519",
+          "buy_fill_qty": "1.5189999999999435",
+          "sell_fill_qty": "1.5189999999999435",
+          "campaigns": "1234",
+          "closed_campaigns": "1234",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "341.8733219956075",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.800556856007184",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "-17.321856856000020082",
+          "signed_fee_total": "1.073456856000000082",
+          "physical_funding": "-0.0175998406512008910",
+          "terminal_mtm": "-17.321856856000020082",
+          "net": "-17.3394566966512209730",
+          "campaign_sum": "-17.339459",
+          "campaign_minus_reported_net": "-0.00000230334903",
+          "campaign_csv_rounding_tolerance": "0.00061701"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.339456696651197",
+          "funding": "-0.017599840651200890",
+          "net_minus_independent": "2.39730E-14",
+          "funding_minus_physical": "1.0E-18",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68076",
+          "exchange_book_queue_exact_count": "33671",
+          "exchange_book_queue_known_zero_count": "34403",
+          "exchange_book_queue_missing_count": "2",
+          "exchange_book_queue_invalidated_order_count": "61",
+          "exchange_book_queue_cancel_ahead_event_count": "35325",
+          "exchange_book_queue_cancel_ahead_qty": "4904.124560608026",
+          "exchange_book_queue_ambiguous_event_count": "55",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "2295",
+          "risk_selection_c_opportunities": "6435",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "E",
+          "risk_selection_policy_id": null,
+          "risk_selection_policy_decision_count": "0",
+          "risk_selection_policy_change_count": "0",
+          "risk_selection_post_count": "0",
+          "risk_selection_wait_count": "0",
+          "risk_selection_keep_count": "0",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{}",
+          "risk_selection_control": "random",
+          "risk_selection_control_decision_count": "2295",
+          "risk_selection_control_change_count": "1265",
+          "risk_selection_reference_evaluation_count": "2295",
+          "risk_selection_reference_policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+          "risk_selection_random_seed": "71",
+          "risk_selection_random_scope": "current-environment-development-may1-may5-v1",
+          "risk_selection_control_post_count": "1030",
+          "risk_selection_control_wait_count": "1265",
+          "risk_selection_control_keep_count": "0",
+          "risk_selection_control_cancel_count": "0",
+          "risk_selection_control_fallback_counts": "{}",
+          "risk_selection_random_rates": "{\"E:BUY\": 0.0, \"E:SELL\": 1.0}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "-0.145945659176448"
+      },
+      {
+        "arm": "R_EC",
+        "metrics": {
+          "replay_pnl": "-17.32185685599977",
+          "funding_cashflow_usdc": "-0.01759984065120089",
+          "replay_net_pnl": "-17.33945669665097",
+          "cash_before_terminal": "-17.32185685599977",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "-17.32185685599977",
+          "fills_total": "3038",
+          "fills_bid_buy": "1519",
+          "fills_ask_sell": "1519",
+          "buy_fill_qty": "1.5189999999999435",
+          "sell_fill_qty": "1.5189999999999435",
+          "campaigns": "1234",
+          "closed_campaigns": "1234",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "341.8733219956075",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.800556856007184",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "-17.321856856000020082",
+          "signed_fee_total": "1.073456856000000082",
+          "physical_funding": "-0.0175998406512008910",
+          "terminal_mtm": "-17.321856856000020082",
+          "net": "-17.3394566966512209730",
+          "campaign_sum": "-17.339459",
+          "campaign_minus_reported_net": "-0.00000230334903",
+          "campaign_csv_rounding_tolerance": "0.00061701"
+        },
+        "canonical_ledger_comparison": {
+          "net": "-17.339456696651197",
+          "funding": "-0.017599840651200890",
+          "net_minus_independent": "2.39730E-14",
+          "funding_minus_physical": "1.0E-18",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "68076",
+          "exchange_book_queue_exact_count": "33671",
+          "exchange_book_queue_known_zero_count": "34403",
+          "exchange_book_queue_missing_count": "2",
+          "exchange_book_queue_invalidated_order_count": "61",
+          "exchange_book_queue_cancel_ahead_event_count": "35325",
+          "exchange_book_queue_cancel_ahead_qty": "4904.124560608026",
+          "exchange_book_queue_ambiguous_event_count": "55",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "2295",
+          "risk_selection_c_opportunities": "6435",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "EC",
+          "risk_selection_policy_id": null,
+          "risk_selection_policy_decision_count": "0",
+          "risk_selection_policy_change_count": "0",
+          "risk_selection_post_count": "0",
+          "risk_selection_wait_count": "0",
+          "risk_selection_keep_count": "0",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{}",
+          "risk_selection_control": "random",
+          "risk_selection_control_decision_count": "8730",
+          "risk_selection_control_change_count": "1265",
+          "risk_selection_reference_evaluation_count": "8730",
+          "risk_selection_reference_policy_id": "ec-development-ridge-apr20-apr22-constantfixed",
+          "risk_selection_random_seed": "71",
+          "risk_selection_random_scope": "current-environment-development-may1-may5-v1",
+          "risk_selection_control_post_count": "1030",
+          "risk_selection_control_wait_count": "1265",
+          "risk_selection_control_keep_count": "6435",
+          "risk_selection_control_cancel_count": "0",
+          "risk_selection_control_fallback_counts": "{\"no_model\": 2216}",
+          "risk_selection_random_rates": "{\"C:SELL\": 0.0, \"E:BUY\": 0.0, \"E:SELL\": 1.0}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "-0.145945659176448"
+      },
+      {
+        "arm": "Flat",
+        "metrics": {
+          "replay_pnl": "0.0",
+          "funding_cashflow_usdc": "0.0",
+          "replay_net_pnl": "0.0",
+          "cash_before_terminal": "0.0",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "0.0",
+          "fills_total": "0",
+          "fills_bid_buy": "0",
+          "fills_ask_sell": "0",
+          "buy_fill_qty": "0.0",
+          "sell_fill_qty": "0.0",
+          "campaigns": "0",
+          "closed_campaigns": "0",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "0.0",
+          "replay_max_inventory": "0.0",
+          "replay_inv_adj": "0.0",
+          "loss_tail": "0"
+        },
+        "differences": [],
+        "reconstructed": {
+          "cash_after_signed_fees": "0.00",
+          "signed_fee_total": "0",
+          "physical_funding": "0E-17",
+          "terminal_mtm": "0E-13",
+          "net": "0E-17",
+          "campaign_sum": "0",
+          "campaign_minus_reported_net": "0.0",
+          "campaign_csv_rounding_tolerance": "1E-8"
+        },
+        "canonical_ledger_comparison": {
+          "net": "0.0",
+          "funding": "0.0",
+          "net_minus_independent": "0E-17",
+          "funding_minus_physical": "0E-17",
+          "scope": "existing_F01_helper_not_independent_funding_authority"
+        },
+        "native": {
+          "exchange_book_queue_mode": "strict",
+          "exchange_book_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+          "exchange_book_queue_lookup_count": "0",
+          "exchange_book_queue_exact_count": "0",
+          "exchange_book_queue_known_zero_count": "0",
+          "exchange_book_queue_missing_count": "0",
+          "exchange_book_queue_invalidated_order_count": "0",
+          "exchange_book_queue_cancel_ahead_event_count": "0",
+          "exchange_book_queue_cancel_ahead_qty": "0.0",
+          "exchange_book_queue_ambiguous_event_count": "0",
+          "exchange_book_events_consumed": "8677110",
+          "exchange_book_events_accepted": "8115550",
+          "exchange_book_events_rejected": "561560",
+          "exchange_book_source_gap_events": "0",
+          "exchange_book_invalid_sequence_messages": "0",
+          "exchange_book_sequence_gaps": "0",
+          "exchange_book_message_time_reversals": "0"
+        },
+        "policy_control_counters": {
+          "risk_selection_e_opportunities": "140020",
+          "risk_selection_c_opportunities": "0",
+          "risk_selection_intervention_count": "0",
+          "risk_selection_mode": "E",
+          "risk_selection_policy_id": null,
+          "risk_selection_policy_decision_count": "0",
+          "risk_selection_policy_change_count": "0",
+          "risk_selection_post_count": "0",
+          "risk_selection_wait_count": "0",
+          "risk_selection_keep_count": "0",
+          "risk_selection_cancel_count": "0",
+          "risk_selection_fallback_counts": "{}",
+          "risk_selection_control": "flat",
+          "risk_selection_control_decision_count": "140020",
+          "risk_selection_control_change_count": "140020",
+          "risk_selection_reference_evaluation_count": "0",
+          "risk_selection_reference_policy_id": null,
+          "risk_selection_random_seed": null,
+          "risk_selection_random_scope": null,
+          "risk_selection_control_post_count": "0",
+          "risk_selection_control_wait_count": "140020",
+          "risk_selection_control_keep_count": "0",
+          "risk_selection_control_cancel_count": "0",
+          "risk_selection_control_fallback_counts": "{}",
+          "risk_selection_random_rates": "{}"
+        },
+        "execution": "original_completed_run",
+        "independent_observations": 1,
+        "covered_utc_days": 5,
+        "ci": null,
+        "sharpe": null,
+        "ranking_score": null,
+        "passed": true,
+        "delta_net_vs_baseline": "17.193511037474522"
+      },
+      {
+        "arm": "R_C",
+        "alias_of": "baseline",
+        "execution": "analytical_noop_reuse_of_B0_not_new_run",
+        "reason": "Frozen C SELL cancel probability is zero; C BUY is unsupported and keeps baseline. No E actions. Thus every control intervention is a no-op.",
+        "metrics": {
+          "replay_pnl": "-17.18334057999995",
+          "funding_cashflow_usdc": "-0.010170457474571437",
+          "replay_net_pnl": "-17.193511037474522",
+          "cash_before_terminal": "-17.18334057999995",
+          "final_inventory": "0.0",
+          "terminal_mtm_pnl": "-17.18334057999995",
+          "fills_total": "3062",
+          "fills_bid_buy": "1531",
+          "fills_ask_sell": "1531",
+          "buy_fill_qty": "1.5309999999999422",
+          "sell_fill_qty": "1.5309999999999422",
+          "campaigns": "1235",
+          "closed_campaigns": "1235",
+          "open_campaigns": "0",
+          "replay_abs_inventory_time_s": "346.42495099549",
+          "replay_max_inventory": "0.004",
+          "replay_inv_adj": "-7.760540580007545",
+          "loss_tail": "0"
+        },
+        "delta_net_vs_baseline": "0",
+        "runtime": null,
+        "policy_control_counters": null,
+        "independent_observations": 0
+      }
+    ],
+    "terminal_mark": "80865.600000000001",
+    "terminal_mark_source_arm": "E",
+    "terminal_mark_scope": "inferred_from_completed_cash_inventory_MTM_not_raw_market_reverification",
+    "limitations": [
+      "Five UTC days are one continuous segment, not five independent observations.",
+      "R_C is only a baseline economic alias; no control runtime or reference counters were executed.",
+      "No scorecard profile or OPE adapter is retrofitted; ranking/CI/Sharpe are unavailable.",
+      "Fees are in trading PnL; funding is added once; campaign attribution is not additional PnL.",
+      "Native source counters and modeled queue ambiguity remain separate recorded diagnostics.",
+      "Incremental inference delay is unmodeled; the Mac benchmark is not deployment-host latency."
+    ],
+    "passed_scope_note": "Every passed flag below means completed-artifact monetary reconciliation only, not model quality, exact queue, source parity, or deployment admission."
+  },
+  "full_path_action_counts": [
+    {
+      "arm": "E",
+      "surface": "C:BUY",
+      "opportunities": 2198,
+      "actions": {
+        "KEEP": 2198
+      },
+      "policy_reasons": {
+        "mode_disabled": 2198
+      },
+      "rows_by_day": {
+        "2026-05-01": 382,
+        "2026-05-02": 621,
+        "2026-05-03": 611,
+        "2026-05-04": 260,
+        "2026-05-05": 324
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "E",
+      "surface": "C:SELL",
+      "opportunities": 4223,
+      "actions": {
+        "KEEP": 4223
+      },
+      "policy_reasons": {
+        "mode_disabled": 4223
+      },
+      "rows_by_day": {
+        "2026-05-01": 517,
+        "2026-05-02": 1839,
+        "2026-05-03": 1301,
+        "2026-05-04": 196,
+        "2026-05-05": 370
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "E",
+      "surface": "E:BUY",
+      "opportunities": 1025,
+      "actions": {
+        "POST": 1023,
+        "WAIT": 2
+      },
+      "policy_reasons": {
+        "nonnegative_value": 1023,
+        "negative_value": 2
+      },
+      "rows_by_day": {
+        "2026-05-01": 200,
+        "2026-05-02": 78,
+        "2026-05-03": 105,
+        "2026-05-04": 395,
+        "2026-05-05": 247
+      },
+      "scored_rows": 1025,
+      "score_unit": "USDC_per_action",
+      "score_min": -0.03663121490240453,
+      "score_max": 0.09031979307077814,
+      "negative_scores": 2,
+      "zero_scores": 0,
+      "positive_scores": 1023,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": 0.0,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.3248474264763175,
+          "maximum": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "E",
+      "surface": "E:SELL",
+      "opportunities": 1265,
+      "actions": {
+        "WAIT": 1262,
+        "POST": 3
+      },
+      "policy_reasons": {
+        "negative_value": 1262,
+        "nonnegative_value": 3
+      },
+      "rows_by_day": {
+        "2026-05-01": 226,
+        "2026-05-02": 79,
+        "2026-05-03": 103,
+        "2026-05-04": 606,
+        "2026-05-05": 251
+      },
+      "scored_rows": 1265,
+      "score_unit": "USDC_per_action",
+      "score_min": -0.6853855390495074,
+      "score_max": 0.4188859788861227,
+      "negative_scores": 1262,
+      "zero_scores": 0,
+      "positive_scores": 3,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": 0.0,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.2634339429429309,
+          "maximum": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "C",
+      "surface": "C:BUY",
+      "opportunities": 1957,
+      "actions": {
+        "KEEP": 1957
+      },
+      "policy_reasons": {
+        "no_model": 1957
+      },
+      "rows_by_day": {
+        "2026-05-01": 414,
+        "2026-05-02": 538,
+        "2026-05-03": 439,
+        "2026-05-04": 233,
+        "2026-05-05": 333
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "C",
+      "surface": "C:SELL",
+      "opportunities": 4302,
+      "actions": {
+        "KEEP": 4302
+      },
+      "policy_reasons": {
+        "nonnegative_value": 4302
+      },
+      "rows_by_day": {
+        "2026-05-01": 471,
+        "2026-05-02": 1765,
+        "2026-05-03": 1571,
+        "2026-05-04": 244,
+        "2026-05-05": 251
+      },
+      "scored_rows": 4302,
+      "score_unit": "USDC_per_action",
+      "score_min": 0.05501617847315882,
+      "score_max": 0.07797207522291724,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 4302,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": -0.002,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.006443096869931793,
+          "maximum": 0.007635907858684924
+        }
+      }
+    },
+    {
+      "arm": "C",
+      "surface": "E:BUY",
+      "opportunities": 1264,
+      "actions": {
+        "POST": 1264
+      },
+      "policy_reasons": {
+        "mode_disabled": 1264
+      },
+      "rows_by_day": {
+        "2026-05-01": 178,
+        "2026-05-02": 79,
+        "2026-05-03": 100,
+        "2026-05-04": 621,
+        "2026-05-05": 286
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "C",
+      "surface": "E:SELL",
+      "opportunities": 1185,
+      "actions": {
+        "POST": 1185
+      },
+      "policy_reasons": {
+        "mode_disabled": 1185
+      },
+      "rows_by_day": {
+        "2026-05-01": 197,
+        "2026-05-02": 80,
+        "2026-05-03": 97,
+        "2026-05-04": 512,
+        "2026-05-05": 299
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "C:BUY",
+      "opportunities": 2198,
+      "actions": {
+        "KEEP": 2198
+      },
+      "policy_reasons": {
+        "no_model": 2198
+      },
+      "rows_by_day": {
+        "2026-05-01": 382,
+        "2026-05-02": 621,
+        "2026-05-03": 611,
+        "2026-05-04": 260,
+        "2026-05-05": 324
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "C:SELL",
+      "opportunities": 4223,
+      "actions": {
+        "KEEP": 4223
+      },
+      "policy_reasons": {
+        "nonnegative_value": 4223
+      },
+      "rows_by_day": {
+        "2026-05-01": 517,
+        "2026-05-02": 1839,
+        "2026-05-03": 1301,
+        "2026-05-04": 196,
+        "2026-05-05": 370
+      },
+      "scored_rows": 4223,
+      "score_unit": "USDC_per_action",
+      "score_min": 0.03144884207451087,
+      "score_max": 0.18743691113010494,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 4223,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": -0.002,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.03704577961572182,
+          "maximum": 0.1307998069944642
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "E:BUY",
+      "opportunities": 1025,
+      "actions": {
+        "POST": 1023,
+        "WAIT": 2
+      },
+      "policy_reasons": {
+        "nonnegative_value": 1023,
+        "negative_value": 2
+      },
+      "rows_by_day": {
+        "2026-05-01": 200,
+        "2026-05-02": 78,
+        "2026-05-03": 105,
+        "2026-05-04": 395,
+        "2026-05-05": 247
+      },
+      "scored_rows": 1025,
+      "score_unit": "USDC_per_action",
+      "score_min": -0.03663121490240453,
+      "score_max": 0.09031979307077814,
+      "negative_scores": 2,
+      "zero_scores": 0,
+      "positive_scores": 1023,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": 0.0,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.3248474264763175,
+          "maximum": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "E:SELL",
+      "opportunities": 1265,
+      "actions": {
+        "WAIT": 1262,
+        "POST": 3
+      },
+      "policy_reasons": {
+        "negative_value": 1262,
+        "nonnegative_value": 3
+      },
+      "rows_by_day": {
+        "2026-05-01": 226,
+        "2026-05-02": 79,
+        "2026-05-03": 103,
+        "2026-05-04": 606,
+        "2026-05-05": 251
+      },
+      "scored_rows": 1265,
+      "score_unit": "USDC_per_action",
+      "score_min": -0.6853855390495074,
+      "score_max": 0.4188859788861227,
+      "negative_scores": 1262,
+      "zero_scores": 0,
+      "positive_scores": 3,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": 0.0,
+          "maximum": 0.0
+        },
+        "quantity_btc": {
+          "minimum": 0.001,
+          "maximum": 0.001
+        },
+        "microprice_shift_bps": {
+          "minimum": -0.2634339429429309,
+          "maximum": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "R_E",
+      "surface": "C:BUY",
+      "opportunities": 2216,
+      "actions": {
+        "KEEP": 2216
+      },
+      "policy_reasons": {
+        "mode_disabled": 2216
+      },
+      "rows_by_day": {
+        "2026-05-01": 381,
+        "2026-05-02": 621,
+        "2026-05-03": 611,
+        "2026-05-04": 276,
+        "2026-05-05": 327
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_E",
+      "surface": "C:SELL",
+      "opportunities": 4219,
+      "actions": {
+        "KEEP": 4219
+      },
+      "policy_reasons": {
+        "mode_disabled": 4219
+      },
+      "rows_by_day": {
+        "2026-05-01": 516,
+        "2026-05-02": 1839,
+        "2026-05-03": 1301,
+        "2026-05-04": 193,
+        "2026-05-05": 370
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_E",
+      "surface": "E:BUY",
+      "opportunities": 1030,
+      "actions": {
+        "POST": 1030
+      },
+      "policy_reasons": {
+        "random_baseline": 1030
+      },
+      "rows_by_day": {
+        "2026-05-01": 199,
+        "2026-05-02": 78,
+        "2026-05-03": 105,
+        "2026-05-04": 394,
+        "2026-05-05": 254
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_E",
+      "surface": "E:SELL",
+      "opportunities": 1265,
+      "actions": {
+        "WAIT": 1265
+      },
+      "policy_reasons": {
+        "random_veto": 1265
+      },
+      "rows_by_day": {
+        "2026-05-01": 225,
+        "2026-05-02": 79,
+        "2026-05-03": 103,
+        "2026-05-04": 606,
+        "2026-05-05": 252
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_EC",
+      "surface": "C:BUY",
+      "opportunities": 2216,
+      "actions": {
+        "KEEP": 2216
+      },
+      "policy_reasons": {
+        "no_model": 2216
+      },
+      "rows_by_day": {
+        "2026-05-01": 381,
+        "2026-05-02": 621,
+        "2026-05-03": 611,
+        "2026-05-04": 276,
+        "2026-05-05": 327
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_EC",
+      "surface": "C:SELL",
+      "opportunities": 4219,
+      "actions": {
+        "KEEP": 4219
+      },
+      "policy_reasons": {
+        "random_baseline": 4219
+      },
+      "rows_by_day": {
+        "2026-05-01": 516,
+        "2026-05-02": 1839,
+        "2026-05-03": 1301,
+        "2026-05-04": 193,
+        "2026-05-05": 370
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_EC",
+      "surface": "E:BUY",
+      "opportunities": 1030,
+      "actions": {
+        "POST": 1030
+      },
+      "policy_reasons": {
+        "random_baseline": 1030
+      },
+      "rows_by_day": {
+        "2026-05-01": 199,
+        "2026-05-02": 78,
+        "2026-05-03": 105,
+        "2026-05-04": 394,
+        "2026-05-05": 254
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "R_EC",
+      "surface": "E:SELL",
+      "opportunities": 1265,
+      "actions": {
+        "WAIT": 1265
+      },
+      "policy_reasons": {
+        "random_veto": 1265
+      },
+      "rows_by_day": {
+        "2026-05-01": 225,
+        "2026-05-02": 79,
+        "2026-05-03": 103,
+        "2026-05-04": 606,
+        "2026-05-05": 252
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "Flat",
+      "surface": "E:BUY",
+      "opportunities": 70010,
+      "actions": {
+        "WAIT": 70010
+      },
+      "policy_reasons": {
+        "flat_no_new_risk": 70010
+      },
+      "rows_by_day": {
+        "2026-05-01": 14244,
+        "2026-05-02": 13292,
+        "2026-05-03": 13536,
+        "2026-05-04": 14504,
+        "2026-05-05": 14434
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    },
+    {
+      "arm": "Flat",
+      "surface": "E:SELL",
+      "opportunities": 70010,
+      "actions": {
+        "WAIT": 70010
+      },
+      "policy_reasons": {
+        "flat_no_new_risk": 70010
+      },
+      "rows_by_day": {
+        "2026-05-01": 14244,
+        "2026-05-02": 13292,
+        "2026-05-03": 13536,
+        "2026-05-04": 14504,
+        "2026-05-05": 14434
+      },
+      "scored_rows": 0,
+      "score_unit": "USDC_per_action",
+      "score_min": null,
+      "score_max": null,
+      "negative_scores": 0,
+      "zero_scores": 0,
+      "positive_scores": 0,
+      "scored_feature_ranges": {
+        "inventory_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "quantity_btc": {
+          "minimum": null,
+          "maximum": null
+        },
+        "microprice_shift_bps": {
+          "minimum": null,
+          "maximum": null
+        }
+      }
+    }
+  ],
+  "score_extrema_examples": [
+    {
+      "arm": "E",
+      "surface": "E:BUY",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1778021543935:132427:BUY:E:-",
+        "decision_ts_ns": 1778021543935000000,
+        "feature_ready_ts_ns": 1778021543911995546,
+        "kind": "E",
+        "side": "BUY",
+        "role": "opener",
+        "action": "WAIT",
+        "policy_reason": "negative_value",
+        "value_delta_usdc": -0.03663121490240453,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.3248474264763175
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1778025010252:133691:BUY:E:-",
+        "decision_ts_ns": 1778025010252000000,
+        "feature_ready_ts_ns": 1778025010224849867,
+        "kind": "E",
+        "side": "BUY",
+        "role": "opener",
+        "action": "POST",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.09031979307077814,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "E",
+      "surface": "E:SELL",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1778025010252:133691:SELL:E:-",
+        "decision_ts_ns": 1778025010252000000,
+        "feature_ready_ts_ns": 1778025010224849867,
+        "kind": "E",
+        "side": "SELL",
+        "role": "opener",
+        "action": "WAIT",
+        "policy_reason": "negative_value",
+        "value_delta_usdc": -0.6853855390495074,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.353701357490181
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1777892674856:88275:SELL:E:-",
+        "decision_ts_ns": 1777892674856000000,
+        "feature_ready_ts_ns": 1777892674781239269,
+        "kind": "E",
+        "side": "SELL",
+        "role": "opener",
+        "action": "POST",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.4188859788861227,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.2634339429429309
+        }
+      }
+    },
+    {
+      "arm": "C",
+      "surface": "C:SELL",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1777752049638:47118:SELL:C:23048",
+        "decision_ts_ns": 1777752049638000000,
+        "feature_ready_ts_ns": 1777752049523739266,
+        "kind": "C",
+        "side": "SELL",
+        "role": "add",
+        "action": "KEEP",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.05501617847315882,
+        "features": {
+          "inventory_btc": -0.002,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.006308924936917165
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1777889954634:87861:SELL:C:43075",
+        "decision_ts_ns": 1777889954634000000,
+        "feature_ready_ts_ns": 1777889954594065772,
+        "kind": "C",
+        "side": "SELL",
+        "role": "opener",
+        "action": "KEEP",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.07797207522291724,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.007635907858684924
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "C:SELL",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1777965480602:112809:SELL:C:56463",
+        "decision_ts_ns": 1777965480602000000,
+        "feature_ready_ts_ns": 1777965480562115059,
+        "kind": "C",
+        "side": "SELL",
+        "role": "opener_or_add",
+        "action": "KEEP",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.03144884207451087,
+        "features": {
+          "inventory_btc": -0.001,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.03704577961572182
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1777638119214:14095:SELL:C:7209",
+        "decision_ts_ns": 1777638119214000000,
+        "feature_ready_ts_ns": 1777638119186090261,
+        "kind": "C",
+        "side": "SELL",
+        "role": "opener_or_add",
+        "action": "KEEP",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.18743691113010494,
+        "features": {
+          "inventory_btc": -0.001,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.1307998069944642
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "E:BUY",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1778021543935:132427:BUY:E:-",
+        "decision_ts_ns": 1778021543935000000,
+        "feature_ready_ts_ns": 1778021543911995546,
+        "kind": "E",
+        "side": "BUY",
+        "role": "opener",
+        "action": "WAIT",
+        "policy_reason": "negative_value",
+        "value_delta_usdc": -0.03663121490240453,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.3248474264763175
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1778025010252:133691:BUY:E:-",
+        "decision_ts_ns": 1778025010252000000,
+        "feature_ready_ts_ns": 1778025010224849867,
+        "kind": "E",
+        "side": "BUY",
+        "role": "opener",
+        "action": "POST",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.09031979307077814,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.353701357490181
+        }
+      }
+    },
+    {
+      "arm": "EC",
+      "surface": "E:SELL",
+      "selection": "minimum_and_maximum_score_over_complete_segment_not_random_samples",
+      "minimum": {
+        "opportunity_id": "BTCUSDC:1778025010252:133691:SELL:E:-",
+        "decision_ts_ns": 1778025010252000000,
+        "feature_ready_ts_ns": 1778025010224849867,
+        "kind": "E",
+        "side": "SELL",
+        "role": "opener",
+        "action": "WAIT",
+        "policy_reason": "negative_value",
+        "value_delta_usdc": -0.6853855390495074,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": 0.353701357490181
+        }
+      },
+      "maximum": {
+        "opportunity_id": "BTCUSDC:1777892674856:88275:SELL:E:-",
+        "decision_ts_ns": 1777892674856000000,
+        "feature_ready_ts_ns": 1777892674781239269,
+        "kind": "E",
+        "side": "SELL",
+        "role": "opener",
+        "action": "POST",
+        "policy_reason": "nonnegative_value",
+        "value_delta_usdc": 0.4188859788861227,
+        "features": {
+          "inventory_btc": 0.0,
+          "quantity_btc": 0.001,
+          "microprice_shift_bps": -0.2634339429429309
+        }
+      }
+    }
+  ],
+  "E_minus_B0_accounting_decomposition": {
+    "scope": "arithmetic_difference_between_reconstructed_complete_paths_not_causal_per_trade_attribution",
+    "price_and_terminal_mtm_before_fees_and_funding_usdc": "0.0962999999999790000",
+    "signed_fee_cost_increase_usdc": "0.113016276000000001",
+    "funding_cashflow_difference_usdc": "-0.0074293831766294547",
+    "net_difference_usdc": "-0.0241456591766504557",
+    "identity": "price_and_terminal_mtm_before_fees_and_funding_usdc - signed_fee_cost_increase_usdc + funding_cashflow_difference_usdc = net_difference_usdc"
+  },
+  "not_published": [
+    "credentials, keys, account identifiers, host/network/local filesystem locators",
+    "private live/baseline configs and deployed policy/model bundles",
+    "purchased raw market data and full simulated order/fill/opportunity tapes",
+    "ongoing later coverage run and uncompleted experiments"
+  ],
+  "reproducible_from_this_package": [
+    "43-row research model fit and normalization",
+    "all 18 frozen-model one-hour prediction checks",
+    "complete-arm aggregate arithmetic and action/support counts as published",
+    "three predeclared horizon comparisons"
+  ],
+  "not_reproducible_from_this_package": [
+    "Original market replay and every order/fill without private input/runtime bundles",
+    "exact historical live queue or transport",
+    "independent raw-market verification of published summaries"
+  ],
+  "sources": [
+    {
+      "source_artifact_id": "training-label-part-1",
+      "source_sha256": "83f31542b7de1b3dc4db46fd267857deace49febf17d685afbd45f56feb13be5",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "training_labels.jsonl",
+      "transformation": "Complete rows concatenated in original fit input order; no row or feature filtering. Public file is not byte-identical to this individual input."
+    },
+    {
+      "source_artifact_id": "training-label-part-2",
+      "source_sha256": "e4bec391fde1762d3a5049afa905293fc965c00a8c553a030f804e4cbf4482ca",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "training_labels.jsonl",
+      "transformation": "Complete rows concatenated in original fit input order; no row or feature filtering. Public file is not byte-identical to this individual input."
+    },
+    {
+      "source_artifact_id": "training-label-part-3",
+      "source_sha256": "7eeee468d152a429188d43fefdc53a925571dc3541d96c8f34949ec54c3e22f2",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "training_labels.jsonl",
+      "transformation": "Complete rows concatenated in original fit input order; no row or feature filtering. Public file is not byte-identical to this individual input."
+    },
+    {
+      "source_artifact_id": "training-label-part-4",
+      "source_sha256": "95c082d0a32d8a04071c9cd2a0cbe0944fc81ce6c1e2a2adeb93343c21681424",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "training_labels.jsonl",
+      "transformation": "Complete rows concatenated in original fit input order; no row or feature filtering. Public file is not byte-identical to this individual input."
+    },
+    {
+      "source_artifact_id": "may1-single-intervention-labels",
+      "source_sha256": "af0bc049c917986dab5cda2f63ea61c03144c8343122c899d9feeffa1fb23670",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "evaluation_labels.jsonl",
+      "transformation": "Byte-identical JSONL copy; all 18 rows."
+    },
+    {
+      "source_artifact_id": "apr22-two-hour-sensitivity-labels",
+      "source_sha256": "b0303033b82dcfa36666120709a9f54a4e3ff0b57dd7ab55caf977dd57be409e",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "horizon_labels.jsonl",
+      "transformation": "Byte-identical JSONL copy; all 3 rows; excluded from training."
+    },
+    {
+      "source_artifact_id": "frozen-research-policy",
+      "source_sha256": "8aaf7adb24be2592172434d49473367a7d6a090aa7c702083fd64641c49a5acf",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "policy.json",
+      "transformation": "Byte-identical research policy; not a live policy or runtime default."
+    },
+    {
+      "source_artifact_id": "original-training-report",
+      "source_sha256": "cea3adf8da1d423e2b6baf962802b3e35abd1e9c41b6fe73d5fa8f54b9faabef",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "Included as original_training_report; publication-time coverage report is separately identified."
+    },
+    {
+      "source_artifact_id": "completed-full-path-monetary-summary",
+      "source_sha256": "77fbaad1b98fcfb904cbb308463f29f56e7f3612c16f9da282e2e534a476bb81",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "Structured projection: remove private source_stems and visibility; retain all eight arm summaries unchanged."
+    },
+    {
+      "source_artifact_id": "training-only-participation-rates",
+      "source_sha256": "facd2e85c81aee3acbc1e922e2edbea19b6643049debc32120bd6e274559800f",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "Remove private filesystem paths and replace policy locator with public policy.json; retain rates and support counts."
+    },
+    {
+      "source_artifact_id": "frozen-model-may1-diagnostic",
+      "source_sha256": "649e3fddfd10d631abbf073c67004f8b9622047e5a0d59fc09f6a039cd397109",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "Remove private policy locator and visibility; retain all 18 evaluated rows and support diagnostics."
+    },
+    {
+      "source_artifact_id": "full-path-E-opportunities",
+      "source_sha256": "a140ef8075d33bb2f386f9053255ee3dca1599d302dd384c3afe9719520c4f08",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    },
+    {
+      "source_artifact_id": "full-path-C-opportunities",
+      "source_sha256": "a4687bcf604f5b9752fede5ea8bb6cf4ee4acb5d49131602a93c693569425273",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    },
+    {
+      "source_artifact_id": "full-path-EC-opportunities",
+      "source_sha256": "62e44b081474cb5feb64a685f75854a9d643760d1414de7215f6334c32f98320",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    },
+    {
+      "source_artifact_id": "full-path-R_E-opportunities",
+      "source_sha256": "360c26dd68900168a10887b028bb15f2961a8a43f50e27e789186938971b57c3",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    },
+    {
+      "source_artifact_id": "full-path-R_EC-opportunities",
+      "source_sha256": "c075034aaab3040edbd48281d172fcb18ff250ca99624b22fe5d26f7692639f9",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    },
+    {
+      "source_artifact_id": "full-path-Flat-opportunities",
+      "source_sha256": "b285b10cc5b0bee3cf3f9625484f86a141bb58986eee495d9ef95d54af678db7",
+      "source_availability": "private evidence store; not distributed with the public repository",
+      "public_artifact": "study.json",
+      "transformation": "All final (not partial) rows aggregated by surface; no outcome filtering. Full traces remain private; extremal score examples retain only fitted features and simulated identifiers."
+    }
+  ]
+}

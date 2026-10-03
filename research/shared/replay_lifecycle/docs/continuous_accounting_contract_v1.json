@@ -1,0 +1,20 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "continuous_accounting": true
+  },
+  "contract_id": "continuous_accounting_contract.v1",
+  "implementation": {
+    "path": "models/replay/continuous_accounting.py",
+    "sha256": "ad04ea1ca8557bae1c58a4b16ce0b0d9bfb4867754860141960a5a5f387893e6"
+  },
+  "last_materially_modified": "2026-08-03",
+  "requirements": [
+    "equity equals cash plus marked inventory",
+    "daily slices add to continuous equity change",
+    "UTC midnight does not flatten or reset state",
+    "inventory remains marked through offline intervals",
+    "final open inventory is retained and marked"
+  ],
+  "schema_version": "continuous_accounting_contract.v1"
+}

@@ -1,0 +1,143 @@
+{
+  "feature_contract_id": "data.execution_features.v1",
+  "heads": {
+    "absolute_price_variance_rate_10000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "801382d366406d3679bc1962fa202b5d0bdb7a1518c91aab3b9691a222e7d7e8",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "absolute_price_variance_rate_30000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "69b83d311fae60d55ac075d838d6f7247d9872e6539d1c92150ee156a8c1924e",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "absolute_price_variance_rate_60000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "e56ec45772c8d53fc71a60ff6a886073d1226b782b9b38575de0e6802c2d41c6",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_price_change_fraction_10000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "92abeff8bea608d075aa32f1b156d01b688af37e1fdb9ed744c4972b9cb62721",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_price_change_fraction_30000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "425de8d5510977319645e44b67069398909a86ca9ab2a6c7aec43c78fb6205f8",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_price_change_fraction_60000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "e9c9cfab76b5e0994b4ceb68ddbcf5544e300d6d92c08164a7477f7d9c9a2b34",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_up_probability_10000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "181c0ab723c37f36e05c353ec0901f69fc00501df3c4a619083e4905652457a4",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_up_probability_30000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "f0a4bf5396ee2aba5b227713813c4eeb473e3b0b8037f5d0d9e3bc009f03bee6",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_conditioned_up_probability_60000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "0ff03a4b06c482ebe06563f07fac7cef380abc110e791788f9ebd53fb38aefed",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_side_adverse_probability_ask_10000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "49c791166dbc6e4537449cd45c50df10d550c9e9ce1c4c473cb2ce3888ba96cf",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_side_adverse_probability_ask_5000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "058bae4af944ba985993eed2d6f50265d1c2aa0fb994274b7087e1b4ccb97409",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_side_adverse_probability_bid_10000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "1b4575613aa6cac6e3bcf53bb7a20f747181dad6496f736a2fe4aadbc2a0d482",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    "touch_side_adverse_probability_bid_5000ms": {
+      "feature_cols": [
+        "close"
+      ],
+      "metadata_sha256": "718d6c89d1296df32dc208cee318b90b38db24f81495f291a3b07055bb9293d8",
+      "missing_policy": "native_nan",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    }
+  },
+  "input_contract_id": "tardis_source_facts.v1",
+  "label_contract_id": "synthetic_fixture_no_research_labels",
+  "observation_contract_id": "data.observation.v1",
+  "reference_market": null,
+  "schema": "narrowgate.semantic_model_bundle.v1",
+  "split_manifest_id": "synthetic_fixture_no_research_split",
+  "symbol": "BTCUSDC",
+  "training_identity": {
+    "feature_contract_id": "data.execution_features.v1",
+    "input_contract_id": "tardis_source_facts.v1",
+    "label_contract_id": "synthetic_fixture_no_research_labels",
+    "observation_contract_id": "data.observation.v1",
+    "selection": {
+      "external_panel_read_during_fit": false,
+      "feature_dag_sha256": "synthetic-fixture",
+      "feature_manifest_sha256": "synthetic-fixture",
+      "fit_days": [
+        "synthetic-not-a-market-day"
+      ],
+      "refit_days": [
+        "synthetic-not-a-market-day"
+      ],
+      "sample_weight_policy": {
+        "half_life_days": "inf"
+      },
+      "selection_days": [
+        "synthetic-not-a-market-day"
+      ],
+      "source_manifest_sha256": "synthetic-fixture",
+      "spec_sha256": "synthetic-fixture",
+      "train_source_identity_sha256": "synthetic-fixture"
+    },
+    "split_manifest_id": "synthetic_fixture_no_research_split"
+  }
+}

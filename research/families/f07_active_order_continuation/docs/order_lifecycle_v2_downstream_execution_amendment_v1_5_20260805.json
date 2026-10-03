@@ -1,0 +1,140 @@
+{
+  "canonical_amendment_sha256": "49f6d66517ded635a7987eed5e1736d6665a497fff8b271310c8243a9e9dfa90",
+  "compiled_cpp_module": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+    "size_bytes": 1298120
+  },
+  "execution_plan": {
+    "canonical_plan_sha256": "6a83e033cd143b20aeefc657938a3c32fb5eae237783e351b58023512e717d0a",
+    "global_execution_identity_sha256": "b82c1982125c15fdcf550f9d10d7c80c6f705c4f95cae3b34ea46cda3ed1ad61",
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4/execution_plan.json",
+    "sha256": "30693fe79f423d2c563aa705219a0069ee290c3a1c0e972a66a4121525158bd2",
+    "size_bytes": 1086305
+  },
+  "identity": "f07_order_lifecycle_v2_downstream_execution_amendment_v1_5",
+  "implementation_artifacts": [
+    {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_downstream_execution_amendment_v1_5.py",
+      "role": "amendment_builder_validator",
+      "sha256": "543f0798d8a0bf71c5d7b85851e14f350530834895fa2083bda5a3e75ee449b8",
+      "size_bytes": 32604
+    },
+    {
+      "path": "cpp/CMakeLists.txt",
+      "role": "cpp_build_contract",
+      "sha256": "acc2243c14bdec8838f802ba1cd3768f13c9a365717ab26f5e6285409890a66c",
+      "size_bytes": 2486
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.hpp",
+      "role": "cpp_cif_header",
+      "sha256": "506c96bfcc31e9034521e530484946662e0804291caac6695eed1a5dfd151ef6",
+      "size_bytes": 1031
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.cpp",
+      "role": "cpp_cif_source",
+      "sha256": "912c53d708abcc54c7e23c7de0f000a362867beccb93b3e62f546162a84766c4",
+      "size_bytes": 8872
+    },
+    {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "role": "cpp_pybind_source",
+      "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0",
+      "size_bytes": 221376
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_cpp_lockstep.py",
+      "role": "lockstep_wrapper",
+      "sha256": "b432462da42fa19cc2b49fd536488db3aef58d468a77921547387aa634e31580",
+      "size_bytes": 11320
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_cpp_parity_v1_5.py",
+      "role": "parity_implementation",
+      "sha256": "77685f9db0290c83a42a6135fa3484fe632c504c7658a1bf7d3e11fad2e53bc6",
+      "size_bytes": 14391
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif.py",
+      "role": "python_cif_base",
+      "sha256": "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72",
+      "size_bytes": 18352
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif_inference_v1_1.py",
+      "role": "python_cif_inference",
+      "sha256": "be12918c22d01e1e33cdba3466a38b870dce90a52877f7fe9be03d4e969250ee",
+      "size_bytes": 6476
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_100ms_training_v1_5.py",
+      "role": "training_implementation",
+      "sha256": "ec6a387470df2a971abba65d87e529e20156c1bc7cfb075f9dcc6e867536362e",
+      "size_bytes": 23519
+    }
+  ],
+  "output_contracts": {
+    "cpp_parity": {
+      "identity": "active_order_lifecycle_cif_cpp_inference_parity_v1_5_provenance_v1",
+      "schema_version": "active_order_lifecycle_cif_cpp_inference_parity_report.v1_5_provenance_v1"
+    },
+    "lockstep": {
+      "identity": "f07_order_lifecycle_v2_40day_cpp_event_lockstep_v1_5_provenance_v1",
+      "schema_version": "f07_order_lifecycle_v2_40day_cpp_event_lockstep_report.v1_5_provenance_v1"
+    },
+    "training_artifact": {
+      "identity": "active_order_lifecycle_competing_risk_cif_100ms_v1_5_provenance_v1",
+      "schema_version": "active_order_lifecycle_competing_risk_cif_artifact.v1_5_provenance_v1"
+    },
+    "training_report": {
+      "identity": "active_order_lifecycle_competing_risk_cif_100ms_v1_5_provenance_v1_training",
+      "schema_version": "active_order_lifecycle_competing_risk_cif_training_report.v1_5_provenance_v1"
+    }
+  },
+  "permissions": {
+    "action": false,
+    "economic_evaluation": false,
+    "live_deployment": false,
+    "live_transport": false,
+    "q90_action": false
+  },
+  "runtime_versions": {
+    "numpy": {
+      "version": "2.4.6"
+    },
+    "pyarrow": {
+      "version": "24.0.0"
+    },
+    "python": {
+      "cache_tag": "cpython-312",
+      "implementation": "CPython",
+      "version": "3.12.13",
+      "version_info": [
+        3,
+        12,
+        13
+      ]
+    }
+  },
+  "schema_version": "f07_order_lifecycle_v2_downstream_execution_amendment.v1_5",
+  "scope": {
+    "economic_outcomes_read": false,
+    "markout_read": false,
+    "mechanics_only": true,
+    "q90_adverse_score_available": false
+  },
+  "stage_contract": {
+    "complete_canonical_panel_required": true,
+    "lockstep_report_required_for_training": true,
+    "ordered_stages": [
+      "formal_40day_cpp_event_lockstep",
+      "mechanics_only_cif_training",
+      "trained_artifact_cpp_parity"
+    ],
+    "report_artifact_plan_closure_required": true,
+    "training_report_required_for_parity": true
+  },
+  "status": "frozen_mechanics_only_execution_chain_no_economic_or_live_authority"
+}

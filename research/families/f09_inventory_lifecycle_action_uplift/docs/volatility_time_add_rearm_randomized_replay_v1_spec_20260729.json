@@ -1,0 +1,309 @@
+{
+  "schema_version": "volatility_time_add_rearm_randomized_replay.v1",
+  "family_id": "volatility_time_add_rearm_randomized_replay_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-07-29T08:03:21Z",
+  "scope": "Development-only randomized full-path replay of fixed-wall versus variance-time add rearm; registration and execution do not authorize an action, later panel, shadow, or live deployment",
+  "canonical_spec_identity_sha256": "f9cd59bcef6f37bc30d238eca5e4bb240ab1aa18443906fb4e860d5c472bed29",
+  "permissions": {
+    "randomized_action_identity_created": true,
+    "development_randomized_replay_execution_allowed": true,
+    "development_reward_or_pnl_read": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "aws_receive_time_transport_supported": false,
+    "full_cpp_tick_replay_authority": false
+  },
+  "base_full_path_contract": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+    "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5"
+  },
+  "predecessor_cpp_q90_report": {
+    "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/development/report.json",
+    "sha256": "e3e792f5fdb5b534615fa11cbe1ed8ccb986eb5948c7c9c698637897d872fc15"
+  },
+  "predecessor_cpp_q90_postrun_audit": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_cpp_q90_parity_v1_postrun_audit_20260729.json",
+    "sha256": "efee4986d48db68f9030b6d89ecaf3b5c4c1f34d24f06964e7d703a6a164ec2d"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ],
+    "source_split": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/evidence_split_dynamic_fill_hazard_m0_native_strict_frozen_v3.json",
+      "sha256": "8d9688f0d8a6b8883421a0853ffc9d533f6fd59222cda9f87f2fc83d0e410967"
+    },
+    "denominator_authority": "F09 frozen native-strict split; the 50-day F06 placement lifecycle denominator is a different identity and is not borrowed"
+  },
+  "quality_ledger": {
+    "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/minimal_good_day_reaudit_20260727/daily_quality_20260101_20260725.csv",
+    "sha256": "ab1d34fef572aaba59a42ec1f216726ac5f6c1d9a75b18a582fcd6c508489958"
+  },
+  "quality_contract": {
+    "expected_quality_grade_counts": {
+      "A": 24,
+      "B": 16
+    },
+    "require_all_native_sequence_eligible": true,
+    "require_all_normalized_formal_eligible": true,
+    "grade_b_is_reported_not_silently_pooled": true,
+    "formal_day_count": 40
+  },
+  "behavior_policy": {
+    "assignment_unit": "same_side_fill_cooldown_lineage",
+    "assignment_time": "immediately_after_first_eligible_exposure_increasing_fill_and_before_any_downstream_quote_cancel_ack_queue_or_fill_path",
+    "probabilities": {
+      "fixed_wall_time_85n": 0.5,
+      "variance_time_rearm": 0.5
+    },
+    "random_seed_base": 2026072901,
+    "known_propensity": true,
+    "assignment_fixed_until_lineage_terminal": true,
+    "subsequent_same_side_fill_updates_budget_without_rerandomization": true,
+    "path_dependent_new_lineages_are_not_force_paired_across_arms": true
+  },
+  "lineage_contract": {
+    "start": "first eligible exposure-increasing fill",
+    "terminal_events": [
+      "opposite_side_fill",
+      "explicit_reset",
+      "daily_fresh_start_end_censor"
+    ],
+    "consecutive_state": "consecutive_same_side_fill_units_not_integer_fill_count",
+    "reset_policy": "opposite_fill_only_with_daily_fresh_start_censor",
+    "reducing_fill_semantics": "increments same-side fill units but does not start an add clock",
+    "trigger_fill_excluded_from_reward": true,
+    "one_complete_attribution_per_lineage": true
+  },
+  "actions": {
+    "control": {
+      "id": "fixed_wall_time_85n",
+      "ready_clock": "85000ms * consecutive_same_side_fill_units"
+    },
+    "candidate": {
+      "id": "variance_time_rearm",
+      "ready_clock": "episode-start frozen reference variance budget consumed by causal realized variance time",
+      "budget": "reference_rate_bps2_per_s * 85s * consecutive_same_side_fill_units",
+      "minimum_wall_time_ms": 5000,
+      "maximum_wall_time_ms": 600000,
+      "stale_variance_behavior": "freeze_qv"
+    },
+    "held_equal": [
+      "reducing_quote",
+      "BUY_q90_cancel_ACK_recovery_reentry",
+      "inventory_limit",
+      "order_size",
+      "loss_cooldown",
+      "sync_degrade_stress_path",
+      "P3",
+      "queue_calibration",
+      "latency_distribution"
+    ]
+  },
+  "reward_contract": {
+    "unit": "USDC_per_lineage_decision",
+    "authoritative_reward": "decision_to_lineage_terminal_equity_change_usdc",
+    "accounting_identity": "reward = maker_signed_30s_fill_value - campaign_path_cost_accounting_residual - explicit_queue_reset_cost",
+    "fill_value_horizon_ms": 30000,
+    "fill_value": "quantity_weighted maker-signed fill-price to causal exchange-time BBO/L2 mid change, net of fill fee",
+    "markout_max_book_age_ms": 2000,
+    "campaign_path_cost": "accounting residual only; not separately identified and not a second causal estimand",
+    "queue_reset_cost": "zero until an independently identified USDC queue-priority cost exists; reset counts remain diagnostics",
+    "maker_signed_markout_already_contains_execution_price": true,
+    "half_spread_added_again": false,
+    "campaign_terminal_mtm_is_secondary_gate_not_duplicated_in_primary_reward": true,
+    "secondary_consistency_and_tail_metrics": [
+      "campaign_terminal_mtm",
+      "negative_terminal_protection",
+      "development_q10_shortfall",
+      "campaign_MAE",
+      "inventory_time",
+      "repair_probability",
+      "repair_time",
+      "campaign_duration",
+      "censoring"
+    ]
+  },
+  "replay_contract": {
+    "engine": "python_authoritative_full_path",
+    "cpp_scope": "native-book BUY-q90 score and lifecycle lockstep kernel only",
+    "full_cpp_tick_replay_authority": false,
+    "initial_state": "daily_fresh_start",
+    "clock": "merged_100ms",
+    "execution_trade_source": "Binance_USDM_individual_trades",
+    "native_orderbook": "CryptoHFT snapshot_delta strict exact-level",
+    "native_warmup_hours": 24,
+    "window_cache_mode": "read_existing_no_write_on_miss",
+    "trace_lineages_max_per_day": 5000,
+    "cpp_q90_mismatch_trace_max": 100,
+    "fail_on_first_historical_q90_fill_before_cancel_ACK": true,
+    "q90_mismatch_tolerance": 0,
+    "future_control_path_not_reused_by_candidate": true,
+    "sync_degrade": "frozen deterministic stress path; unsupported intervals are censored",
+    "diagnostic_subset_allowed": false,
+    "promotion_eligible": false
+  },
+  "bootstrap": {
+    "cluster": "UTC_day",
+    "draws": 5000,
+    "seed": 20260729,
+    "interval": "two_sided_95_percent"
+  },
+  "scorecard_profile": {
+    "schema_version": "narrowgate_score_profile.v1",
+    "profile_id": "action_execution_v1",
+    "profile_sha256": "f8ffd88cb86dc581f931f865b75f2d6244f1bb26a817abc4691e68a110c2ab8c"
+  },
+  "family_gates": {
+    "BUY_and_SELL_scored_separately": true,
+    "both_sides_must_pass": true,
+    "minimum_actual_action_change_days_per_side": 10,
+    "actual_action_change_rate_lcb_min": 0.0,
+    "minimum_fills_retention": 0.9,
+    "inventory_time_avoidance_lcb_min": 0.0,
+    "conditional_reward_day_cluster_lcb_must_exceed": 0.0,
+    "minimum_reward_daily_positive_rate": 0.55,
+    "maximum_unsupported_mass": 0.05,
+    "ranking_score_non_null_only_after_all_hard_gates": true,
+    "campaign_terminal_and_tail_must_not_deteriorate": true,
+    "participation_collapse_is_not_alpha": true,
+    "increased_inventory_budget_is_not_alpha": true
+  },
+  "storage_gate": {
+    "estimated_new_output_gib": 0.5,
+    "absolute_minimum_free_gib": 50.0,
+    "reserve_free_gib": 60.0,
+    "output_multiple": 2.5,
+    "required_free_gib": 61.25
+  },
+  "native_module_identity": {
+    "path": "${NARROWGATE_EPHEMERAL_ROOT}/narrowgate_btcusdc_cpp_q90_build/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "65c5007e66978b2e36bb80ed89c3bb61edfdd051ffcfb3c8832a6630479aca5e",
+    "python": "3.12.13",
+    "authority": "BUY-q90 native kernel parity only"
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "100c1775be1b12a0ca60833b09ab9a7bf0b91499635d9e053b962dff491a94fa",
+    "source_sha256": {
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_full_path_preflight.py": "80400ff27bff0c796f354b81d7eedb9f38accf9128aad9efea128517582e1fe7",
+      "research/families/f09_campaign_action_uplift/audit/randomized_action_contrast.py": "379a72d7f120d1342808703752f6a9ccac4c68e7a8e3c1db844b765ab04a9607",
+      "models/backtest_tick.py": "390b7d169ecbcc4fcf04e85abbe1e9b86de274249cc5ad7ae269f6036620933d",
+      "models/audit/experiment_scorecard.py": "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6",
+      "models/backtest_config.py": "bd3214ea40a53266c2f16128c2b18a0881feeca4dd2fc93e52e34029f1fca12a",
+      "models/data_windows.py": "6edc935d7505699ddff4bebeb80b5d48b31c5f1e09f3c4811f131cd06f330139",
+      "models/exchange_book_replay.py": "30592c41eb1ab526c4b110c78c3943fd1e155013a833beb5d4e15f6953ed2a4b",
+      "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "strategy/fill_cooldown.py": "712f697dfdbca4cad6175096b8f3fe7d6ef89f414e07c3db066d9260aeb735ac",
+      "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+      "strategy/dynamic_fill_hazard_model.py": "71734cd82a7728814aea2707cec5bb3fc35b177ad652e0fd163fa6394932719a",
+      "live/config.py": "8d1354ca9761d6364c949fff977906022a149e36070accc370b2034f074060a7",
+      "cpp/CMakeLists.txt": "150385c900cc69c4cb6ae8fbe80c96b14493d80c951eb64c3e513e35e14edef4",
+      "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "0d10a2519e32b2a31f58050e6647224b1c8dd6c691d87c33053a254c6d661c2d",
+      "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "b056d5ad9dd64ef6e3f619b4a5bfb15ae2231b59e31d0110718388486b53cde1",
+      "cpp/narrowgate_cpp/bindings.cpp": "880dbae8fbdf1220d3eed222b03052627af579abb4575a22ca69882b9f5cebb6",
+      "tests/test_volatility_time_add_rearm_randomized_replay.py": "b171d2fbae51bfb8ff3ac5fb5d8ef6cfa80ee3cb86c96a5c3bfe540ab4626d75",
+      "tests/test_variance_time_rearm.py": "d3f73ee974befc038c7b2d0b6c325bb908ab9822a757fca05661d18bcf3ff7d6",
+      "tests/test_volatility_time_add_rearm_full_path_preflight.py": "d5918db1da557725bf7266f4f984316eaf716017e6e346acff4dca43c391e057"
+    }
+  },
+  "test_identity": {
+    "junit_xml": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/inputs/randomized_contract_tests.xml",
+      "sha256": "066a2846ebf85578766d3891948b8513778ae589db70e7b2061d7de141c36450"
+    },
+    "required_test_names": [
+      "test_canonical_spec_identity_excludes_only_identity_field",
+      "test_lineage_randomization_is_exact_two_arm_and_pre_path",
+      "test_lineage_panel_requires_exact_half_propensity_and_unique_lineage",
+      "test_randomized_lineage_assignment_precedes_and_regenerates_path",
+      "test_opposite_fill_terminates_one_assignment_without_rerandomizing",
+      "test_scorecard_requires_actual_final_action_change_per_side",
+      "test_scorecard_can_rank_only_after_all_hard_gates_pass",
+      "test_randomized_replay_config_keeps_q90_and_full_cpp_fail_closed",
+      "test_explicit_wall_time_control_reproduces_legacy_default",
+      "test_variance_time_full_path_fails_closed_on_contract_drift",
+      "test_cpp_variance_time_matches_python"
+    ]
+  },
+  "authority_contract": {
+    "registration_unblocked_means_only_new_randomized_experiment_may_run": true,
+    "prediction_or_mechanics_pass_does_not_authorize_action": true,
+    "Development_pass_only_unlocks_a_separate_validation_read_decision": true,
+    "full_cpp_tick_replay_authority_remains_false": true,
+    "AWS_receive_time_is_a_separate_transport_and_live_gate": true,
+    "frozen_variance_budget_must_not_be_tuned_after_outcomes": true,
+    "q90_historical_pre_ACK_fill_requires_lockstep_fail_fast": true,
+    "no_pooled_side_rescue": true
+  },
+  "frozen_decision": "run_exactly_40_Development_days_then_close_or_mark_Development_passed_with_Validation_locked"
+}

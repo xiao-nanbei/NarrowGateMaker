@@ -1,0 +1,38 @@
+name: Commercial license inquiry
+description: Ask publicly how to seek separate commercial-use authorization.
+title: "[Commercial license] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository publishes no dedicated licensing email. This public issue is an inquiry channel only: filing it does not grant permission, amend LICENSE, or create a confidential relationship. Do not include security details or commercially sensitive information.
+  - type: input
+    id: requester
+    attributes:
+      label: Requester
+      description: Provide the public name of the person or organization making the inquiry.
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: Proposed use
+      description: Describe the intended commercial use at a level suitable for a public issue.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Requested scope
+      description: Identify the software components, distribution model, and approximate timeline.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I reviewed LICENSE and understand that this issue is not commercial-use authorization.
+          required: true
+        - label: I included no confidential information, security details, credentials, private infrastructure, data, or owner-side evidence.
+          required: true

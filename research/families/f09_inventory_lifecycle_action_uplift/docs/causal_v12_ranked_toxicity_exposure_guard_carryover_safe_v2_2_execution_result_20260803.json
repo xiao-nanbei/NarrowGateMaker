@@ -1,0 +1,97 @@
+{
+  "schema_version": "ranked_toxicity_guard_carryover_safe_execution.v2.2.result.v1",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_2_execution",
+  "status": "one_day_plumbing_smoke_passed_formal_mechanics_not_run",
+  "decision": "current_identity_baseline_and_candidate_plumbing_contract_passed",
+  "spec_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_2_execution_spec_20260803.json",
+    "file_sha256": "9d1c65b6f5729532349cba989113ba66d991a3842157db9144c53e03972e5be4",
+    "canonical_sha256": "578b4a2d51ef39869713761db1af9bd10bdfb6b8e2304f919545b4b090c8e884"
+  },
+  "implementation_identity": {
+    "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_carryover_safe_execution_v2_2.py",
+    "sha256": "f9142533890f6feecdf2bc6f45639fd8ba4db3558ae6a83642402672944f38a9"
+  },
+  "test_identity": {
+    "path": "tests/test_ranked_toxicity_guard_carryover_safe_execution_v2_2.py",
+    "sha256": "6f3b46259a55a9dcec5f12434ad28b3e7c30cfe95edbe2fd2b0eb51a695ec49a"
+  },
+  "one_day_smoke": {
+    "utc_day": "2026-04-17",
+    "output_root": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_2_plumbing_smoke_20260803_run1",
+    "report": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_2_plumbing_smoke_20260803_run1/report.json",
+      "file_sha256": "05e4bb59224989ff877f95cdd8f396dc8876d87b9e8d2db68f6dfe7fbf99645a",
+      "canonical_sha256": "3a6f1b3632f8d74b9c7c920e3d209a3879ec368d6c76e2daaff32b4cdb27833b"
+    },
+    "baseline_manifest": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_2_plumbing_smoke_20260803_run1/baseline_current_identity/manifest.json",
+      "sha256": "a912e56b87ab1292da511921ee4b568d3dfbfdb4f022b8fe153d2b6abc2fb6d6",
+      "rows": 29072,
+      "consumed": 29072,
+      "unconsumed": 0,
+      "complete": true
+    },
+    "candidate_manifests": {
+      "BUY": {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_2_plumbing_smoke_20260803_run1/candidate_current_identity/buy/manifest.json",
+        "sha256": "9484d84bcdd86545790965fda1ab881647e279bc0fc1b7eaeb2606e1fcadeeee"
+      },
+      "SELL": {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_2_plumbing_smoke_20260803_run1/candidate_current_identity/sell/manifest.json",
+        "sha256": "ae0687c42c1483c2635de3e57461306a82f97d37bc2dc5c4aa9375c43e78b7c3"
+      }
+    },
+    "contract_counters": {
+      "BUY": {
+        "baseline_shadow_mismatch_count": 0,
+        "cross_arm_order_ownership_count": 0,
+        "forced_washout_cancel_count": 0,
+        "order_owner_mismatch_count": 0,
+        "role_lifecycle_valid": true,
+        "active_order_role_transition_to_exposure_count": 0,
+        "carryover_lifecycle_valid": true,
+        "carryover_transition_count": 58
+      },
+      "SELL": {
+        "baseline_shadow_mismatch_count": 0,
+        "cross_arm_order_ownership_count": 0,
+        "forced_washout_cancel_count": 0,
+        "order_owner_mismatch_count": 0,
+        "role_lifecycle_valid": true,
+        "active_order_role_transition_to_exposure_count": 1,
+        "carryover_lifecycle_valid": true,
+        "carryover_transition_count": 50
+      }
+    },
+    "all_hard_gates_passed": true,
+    "old_v2_episode_counts_used_as_gate": false
+  },
+  "cache_contract": {
+    "cache_writes_enabled": false,
+    "cache_write_attempt_count": 0,
+    "baseline_cache_tree_unchanged": true,
+    "candidate_cache_tree_unchanged": true,
+    "same_read_only_cache_identity": true,
+    "legacy_v13_read_compatible": true,
+    "window_data_materialization": "ephemeral"
+  },
+  "tests": {
+    "command_scope": "v2.2 successor, v2.1 read-only execution, and frozen carryover-safe v2 assignment contracts",
+    "result": "21 passed"
+  },
+  "preservation": {
+    "v2_modified": false,
+    "v2_1_modified": false,
+    "registry_modified_by_v2_2": false
+  },
+  "permissions": {
+    "formal_40_day_mechanics_run": false,
+    "mechanics_results_read_beyond_contract_counters": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

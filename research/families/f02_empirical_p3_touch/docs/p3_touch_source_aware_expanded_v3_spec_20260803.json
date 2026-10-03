@@ -1,0 +1,146 @@
+{
+  "canonical_spec_identity_sha256": "9f7233dea232d87b3f9c3d310a14ab5f20c6878508e38579db4d56f1fee34953",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "decision_frozen_before_2025_touch_outcomes": "fit source-separated 2025 provider, current 2026 train, and pooled expanded curves; evaluate expanded only as historical native transport evidence",
+  "estimand": {
+    "d_minus_one_required": false,
+    "distance_grid": {
+      "maximum": 120.0,
+      "minimum": 0.1,
+      "step": 0.1
+    },
+    "distance_origin": "same_side_best_bid_or_ask_at_window_start",
+    "distance_unit": "USDC_per_BTC",
+    "event_type": "touch",
+    "horizon_s": 10.0,
+    "lifecycle_included": false,
+    "max_bbo_age_ms": 5000,
+    "queue_included": false,
+    "windowing": "non_overlapping_utc"
+  },
+  "evaluation": {
+    "bootstrap": {
+      "draws": 20000,
+      "interval": 0.95,
+      "seed": 20260803
+    },
+    "calibration_output": "every_distance_by_panel_side_model",
+    "candidate_models_scored": [
+      "current_v2",
+      "2025_provider",
+      "2026_train",
+      "expanded"
+    ],
+    "current_reproduction_gate": {
+      "max_abs_probability_difference": 1e-12
+    },
+    "daily_score_output": true,
+    "expanded_static_successor_evidence_gate": {
+      "all_historical_panel_side_mean_brier_deltas_lte_zero": true,
+      "automatic_operational_promotion": false,
+      "each_historical_panel_pooled_day_cluster_ci95_upper_lt_zero": true,
+      "quote_path_comparison_required": true
+    },
+    "historical_panels": [
+      "historical_2026_validation",
+      "historical_2026_test_diagnostic"
+    ],
+    "historical_panels_previously_read": true,
+    "paired_cluster_unit": "UTC_day",
+    "panel_empirical_refits": {
+      "may_create_candidate_artifact": false,
+      "panels": [
+        "fit_2025_provider",
+        "fit_2026_current",
+        "historical_2026_validation",
+        "historical_2026_test_diagnostic"
+      ],
+      "purpose": "drift_diagnostic_only"
+    },
+    "proper_score": "uniform_distance_integrated_brier_on_frozen_0.1_to_120.0_grid"
+  },
+  "fit_models": {
+    "2025_provider": {
+      "panels": [
+        "fit_2025_provider"
+      ],
+      "weighting": "pooled_valid_10s_windows"
+    },
+    "2026_train": {
+      "panels": [
+        "fit_2026_current"
+      ],
+      "weighting": "pooled_valid_10s_windows"
+    },
+    "expanded": {
+      "panels": [
+        "fit_2025_provider",
+        "fit_2026_current"
+      ],
+      "weighting": "pooled_valid_10s_windows"
+    }
+  },
+  "identities": {
+    "current_v2_artifact": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    "current_v2_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s.json",
+      "sha256": "58c077054a81644c5c04129435edb5e0ac6cc18e4532706f3e2fc63606f6e57e"
+    },
+    "day_manifest": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_source_aware_expanded_v3_day_manifest_20260803.json",
+      "sha256": "f6f0cb01909746e1760eb700430705aa7a4769b453e94eed2ac2b692d20b3cfa"
+    },
+    "fill_probability_loader": {
+      "path": "research/families/f02_empirical_p3_touch/fill_probability.py",
+      "sha256": "d540e4fb9b1b0e03a88822e04d49a0f73bccc9e98d192a856a981a1eaeb2d10c"
+    },
+    "frozen_v2_estimator": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_calibration.py",
+      "sha256": "cee08bd65c7cdd1a16f3163b8b1f187cd604f8e19df07fa3e9fe38f4126872d2"
+    }
+  },
+  "identity": "p3_touch_source_aware_expanded_v3",
+  "outcome_routing": {
+    "if_expanded_gate_fails": "retain source and drift evidence; do not patch weighting or reuse historical panels to tune a static curve",
+    "if_expanded_gate_passes": "retain as prediction candidate requiring a new independent confirmation identity before any operational replacement",
+    "if_material_year_or_panel_drift_persists": "close static expanded replacement and preregister conditional P3 using raw distance and volatility-normalized distance"
+  },
+  "permissions": {
+    "action_authority": false,
+    "development_only": true,
+    "live_authority": false,
+    "overwrite_current_v2_artifact": false,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_previously_read": true
+  },
+  "quote_path_comparison": {
+    "arms": [
+      "current_v2",
+      "expanded"
+    ],
+    "economic_outputs_are_historical_diagnostic_only": true,
+    "only_changed_input": "P3 empirical touch artifact",
+    "phase": "after_calibration_without_changing_fit_or_score_contract",
+    "required_outputs": [
+      "quote_decisions",
+      "bid_ask_coordinate_changes",
+      "floor_binding_rate",
+      "cancel_replace_path_changes",
+      "fills_and_terminal_pnl_diagnostic"
+    ],
+    "same_model_features_config_queue_latency_cooldown_inventory_and_market_path_inputs": true
+  },
+  "schema_version": "narrowgate_p3_touch_source_aware_expanded.v3.spec",
+  "source_contract": {
+    "2025_bbo": "Tardis provider-local causal normalized 100ms BBO",
+    "2026_bbo": "current normalized_l2_100ms_v2 BBO",
+    "buy_sell_curves_required": true,
+    "mixed_source_fit_allowed_only_for_expanded": true,
+    "source_specific_curves_required": true,
+    "trade_label_all_panels": "Binance Futures official BTCUSDC aggTrades"
+  }
+}

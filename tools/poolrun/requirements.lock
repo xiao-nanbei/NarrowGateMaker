@@ -1,0 +1,7 @@
+# Tested Python 3.12 environment; install this, then `pip install --no-deps .`.
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+psutil==7.2.2
+Pygments==2.21.0
+pytest==9.1.1

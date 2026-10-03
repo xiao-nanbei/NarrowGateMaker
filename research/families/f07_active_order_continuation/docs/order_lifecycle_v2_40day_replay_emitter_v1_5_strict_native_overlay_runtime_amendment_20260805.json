@@ -1,0 +1,121 @@
+{
+  "identity": "order_lifecycle_v2_40day_replay_emitter_v1_5_strict_native_overlay_runtime_amendment",
+  "last_materially_modified": "2026-08-05",
+  "status": "implemented_not_executed",
+  "successor_of": [
+    {
+      "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_3_native_queue_authority_amendment_20260805.json",
+      "sha256": "73adfd14e7d401fe4562cfff201db738280de8cd5e2fc28f3dddaff8a2141c84"
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_4_model_overlay_dag_binding_amendment_20260805.json",
+      "sha256": "176a477acb6376252f46449de3c406a686e9d62179e80e2dfb7c910bf8d976f1"
+    }
+  ],
+  "execution_contract": {
+    "identity": "f07_order_lifecycle_v2_40day_replay_emitter_v1_5",
+    "strict_native_only": true,
+    "native_unsupported_policy": "explicit_journal_censor_keep_baseline_trajectory",
+    "journal_queue_authority_fields": [
+      "simulator_queue_source",
+      "exact_queue_path_valid"
+    ],
+    "cif_eligibility": "exact_native_spells_only",
+    "process_lock": "exclusive_flock_scoped_by_canonical_plan_sha256",
+    "internal_day_parallelism": {
+      "owner": "single_plan_lock_holder",
+      "workers_min": 1,
+      "workers_max": 8,
+      "day_staging": "independent",
+      "day_publish": "atomic",
+      "panel_publish": "single_parent_after_day_validation"
+    },
+    "cpp_event_stream_mirror_abi": "order_lifecycle_journal_v2_cpp_event_stream_mirror.v2",
+    "worker_runtime_revalidation": [
+      "source_contract",
+      "operational_config",
+      "model_bundle",
+      "p3_artifact",
+      "feature_dag",
+      "runtime_code_artifacts",
+      "cpp_module_and_abi",
+      "latency_profile",
+      "queue_calibration"
+    ]
+  },
+  "book_contract": {
+    "required_leaf_roles": [
+      "normalized_bbo",
+      "normalized_l2"
+    ],
+    "leaf_hash_bound": true,
+    "independent_reload_output_fingerprint_parity": true,
+    "market_context_may_supply_queue_authority": false
+  },
+  "model_overlay_contract": {
+    "canonical_cadence_ms": 10000,
+    "canonical_timestamp_unique_and_strictly_increasing": true,
+    "row_alignment_required": true,
+    "main_arrays_finite": true,
+    "feature_map_infinity_allowed": false,
+    "feature_map_nan_policy": "model_native_missing_allowed_in_features_only",
+    "required_heads": 13,
+    "required_feature_map_bound_to_bundle": true,
+    "maximum_supported_gap_ms": 20000,
+    "gap_policy": "causal_sample_hold_previous_prediction_up_to_20s",
+    "larger_gap": "fail_closed_day",
+    "independent_reinference_exact_array_parity_minimum_bound_days": 1
+  },
+  "implementation_artifacts": [
+    {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py",
+      "sha256": "54efaae1c2b6df6cf1e630241a6bc0407903b2be3d22670a254cb4ad18159e19"
+    },
+    {
+      "path": "execution/order_lifecycle_journal_v2_strict_native.py",
+      "sha256": "edba96fa6b2c556d5f786ee0011d1d8daa5db176f0daf620de13e8365661c44c"
+    },
+    {
+      "path": "execution/order_lifecycle_journal_writer_v2_strict_native.py",
+      "sha256": "607443341fc967a9381d70f24e1ab1ddcd49c74aa0700df57873c9465dfd04ad"
+    },
+    {
+      "path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+      "sha256": "3f78b5b39d980d2dec024f37e026f8b0887c501f9e14859d012b5b3bb8930e0d"
+    },
+    {
+      "path": "models/backtest_tick.py",
+      "sha256": "bbec62c6cdd0fbf92ae76e0c1588bfd3f6e910539d738c4c4f854a27a90de36f"
+    },
+    {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0"
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp",
+      "sha256": "b73db8d7e967144d99c5ee49232d778d515e5c62d1371d693c69bf9e450b41f0"
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp",
+      "sha256": "256de756267de1abcf7efe8bf64609540b3f06e02a1bc36e2cf0246f7f1c6eb5"
+    },
+    {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+      "sha256": "727df6b20cf60b083c718fe9ba33c45034f9d4409efb2d46f3592e7ad57e9e82"
+    }
+  ],
+  "scope": {
+    "mechanics_only": true,
+    "economic_outcomes_read": false,
+    "formal_40day_replay_executed": false,
+    "formal_40day_lockstep_executed": false
+  },
+  "permissions": {
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "live_transport": false,
+    "live_deployment": false
+  },
+  "canonical_amendment_sha256": "fe8e086faaf6fac8182cd5232f6114727e47d848248e1c4b6d58da77ad5a7d40"
+}
