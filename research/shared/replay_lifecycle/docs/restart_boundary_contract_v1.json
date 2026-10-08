@@ -1,0 +1,20 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "planned_restart_mechanics": true
+  },
+  "contract_id": "restart_boundary_contract.v1",
+  "implementation": {
+    "path": "models/replay/restart_boundary.py",
+    "source_identity": "enclosing_execution_git_commit_or_tree"
+  },
+  "last_materially_modified": "2026-08-31",
+  "requirements": [
+    "stop new quotes before the observed gap",
+    "drain cancel requests through observable terminal events",
+    "fail closed on unresolved orders or cancel rejects",
+    "clear transient order, queue, cursor, cooldown, and feature runtime",
+    "restart from a fresh snapshot and past-only warmup"
+  ],
+  "schema_version": "restart_boundary_contract.v1"
+}

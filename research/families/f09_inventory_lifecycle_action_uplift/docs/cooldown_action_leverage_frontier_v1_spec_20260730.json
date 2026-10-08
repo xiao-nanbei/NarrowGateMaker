@@ -1,0 +1,182 @@
+{
+  "schema_version": "cooldown_action_leverage_frontier.v1",
+  "identity": "cooldown_action_leverage_frontier_v1",
+  "created_at_utc": "2026-07-30T00:00:00+00:00",
+  "canonical_spec_sha256": "9b741e26da9c48c8f90f91ef96e5b5d5ff56926641178e7c2bc4b0cf174956b0",
+  "audit_contract": {
+    "classification": "retrospective_governance_mechanism_audit",
+    "purpose": "place completed cooldown temporal-permission actions on one leverage/economic evidence frontier",
+    "cross_source_pooled_estimate_allowed": false,
+    "may_register_action": false,
+    "scorecard_required": false,
+    "reason_scorecard_not_required": "this identity estimates no new strategy effect and cannot rank or promote an action"
+  },
+  "evidence_boundary": {
+    "current_authoritative": "metric values and closure decision retain current authority",
+    "withdrawn_old_denominator_closure_authoritative": "exact metric values are scale diagnostics only; the frozen closure decision remains authoritative",
+    "withdrawn_metrics_may_be_pooled_with_current": false,
+    "descriptive_reward_per_fill_divergence_is_causal_value": false,
+    "one_cycle_mde_ratio_is_effect_estimate": false
+  },
+  "source_identities": {
+    "one_cycle_current": {
+      "evidence_status": "current_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/cooldown_release_one_cycle_mechanics_reaudit_v1_20260730/development/report.json",
+      "report_sha256": "4b347f0298a96a83c228cb0d99f8285030e30a0482bb499954bc76451033b68b",
+      "report_schema_version": "cooldown_release_one_cycle_mechanics_reaudit_report.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/cooldown_release_one_cycle_mechanics_reaudit_v1_development_20260730.md",
+      "documentation_sha256": "77202890e9ad561c72c3e4bb6d6edc0ca096ba04556005b3ae91c17ed41b78c3"
+    },
+    "variance_time_current": {
+      "evidence_status": "current_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/report.json",
+      "report_sha256": "6f940b2d5994d0e647d5c6fda0550ab509fbb894372283417ad7447349f60df7",
+      "report_schema_version": "volatility_time_add_rearm_randomized_replay.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_development_20260729.md",
+      "documentation_sha256": "11169a64aef75830d9a85af87abfe49aeee7294d7cbdb580bbccbc09752f2450"
+    },
+    "state_conditioned_buy_historical": {
+      "evidence_status": "withdrawn_old_denominator_closure_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/buy_state_conditioned_rearm_after85_v1_20260722/development_ope_v1.summary.json",
+      "report_sha256": "d1a3d16f1aec05573b379ef2a06c9ee9e996043c374ac7e882334235f5b06625",
+      "report_schema_version": "state_conditioned_rearm_ope.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md",
+      "documentation_sha256": "7ad03ccaaaa7eed939e220927e3c5c18858c30f544364290de3043196c981289"
+    },
+    "state_conditioned_sell_historical": {
+      "evidence_status": "withdrawn_old_denominator_closure_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/sell_state_conditioned_rearm_after85_v1_20260722/development_ope_v1.summary.json",
+      "report_sha256": "46be934dac076a3136ba51e7245b3c4309c4c8eab8cf95c17c771d921f189360",
+      "report_schema_version": "state_conditioned_rearm_ope.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md",
+      "documentation_sha256": "7ad03ccaaaa7eed939e220927e3c5c18858c30f544364290de3043196c981289"
+    },
+    "recovery_event_sell_historical": {
+      "evidence_status": "withdrawn_old_denominator_closure_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/recovery_event_rearm_v1_20260722/sell/development_ope_v2.summary.json",
+      "report_sha256": "440af6d8bc563971060d66e7492bf3f178346f385eeac92d0ed1bb94bf6414d5",
+      "report_schema_version": "state_conditioned_rearm_ope.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/recovery_event_rearm_v1_20260722.md",
+      "documentation_sha256": "901f6e8cfafe3e632053ddba6b1d3fe651fdb5514f5c3fa25c8d9cc28ce7d279"
+    },
+    "stop_add_until_flat_sell_historical": {
+      "evidence_status": "withdrawn_old_denominator_closure_authoritative",
+      "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/sell_campaign_add_permission_v1_20260722/development_cate_v1.summary.json",
+      "report_sha256": "ff1bc7301db10c025dd52de25b9486ecd30b11c2470e1e5ca34130afad85887c",
+      "report_schema_version": "sell_campaign_add_permission_cate.v1",
+      "documentation_path": "research/families/f09_campaign_action_uplift/docs/sell_campaign_add_permission_v1_20260722.md",
+      "documentation_sha256": "441feeaeba1e0a49849ae5bc5225903d95fad95004a1770cf9eca65f4682c0bf"
+    }
+  },
+  "frontier_rows": [
+    {
+      "row_id": "one_cycle_buy",
+      "source_id": "one_cycle_current",
+      "extractor": "one_cycle_current_v1",
+      "action_identity": "closed_one_cycle_skip_composite",
+      "side": "BUY",
+      "intervention": "skip exactly one baseline-eligible exposure-increasing add cycle after cooldown release",
+      "frontier_class": "weak_fill_path_leverage",
+      "closure_reason": "selected cycle fill-rate upper bound remains below 10 percent and required conditional value scale exceeds observed first-add loss scale",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "one_cycle_sell",
+      "source_id": "one_cycle_current",
+      "extractor": "one_cycle_current_v1",
+      "action_identity": "closed_one_cycle_skip_composite",
+      "side": "SELL",
+      "intervention": "skip exactly one baseline-eligible exposure-increasing add cycle after cooldown release",
+      "frontier_class": "weak_fill_path_leverage",
+      "closure_reason": "selected cycle fill-rate upper bound remains below 10 percent and required conditional value scale exceeds observed first-add loss scale",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "state_conditioned_buy",
+      "source_id": "state_conditioned_buy_historical",
+      "extractor": "state_conditioned_historical_v1",
+      "action_identity": "buy_state_conditioned_rearm_after85_v1",
+      "side": "BUY",
+      "intervention": "continue blocking multiple add cycles while the frozen adverse state remains active",
+      "frontier_class": "persistent_action_sparse_support_economics_unsupported",
+      "closure_reason": "active support, reward lower bound, repair, duration and daily consistency failed",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "state_conditioned_sell",
+      "source_id": "state_conditioned_sell_historical",
+      "extractor": "state_conditioned_historical_v1",
+      "action_identity": "sell_state_conditioned_rearm_after85_v1",
+      "side": "SELL",
+      "intervention": "continue blocking multiple add cycles while the frozen adverse state remains active",
+      "frontier_class": "persistent_action_sparse_support_economics_unsupported",
+      "closure_reason": "active support, reward, campaign, lifecycle and daily consistency failed",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "recovery_event_sell",
+      "source_id": "recovery_event_sell_historical",
+      "extractor": "recovery_event_historical_v1",
+      "action_identity": "sell_recovery_event_rearm_v1",
+      "side": "SELL",
+      "intervention": "continue blocking until shock, refill, microprice and queue recovery score exits",
+      "frontier_class": "moderate_fill_suppression_economically_harmful",
+      "closure_reason": "reward, campaign cost, negative terminal and MAE intervals were below zero",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "stop_add_until_flat_sell",
+      "source_id": "stop_add_until_flat_sell_historical",
+      "extractor": "stop_until_flat_historical_v1",
+      "action_identity": "sell_campaign_add_permission_v1",
+      "side": "SELL",
+      "intervention": "block all subsequent exposure-increasing SELL adds until flat",
+      "frontier_class": "overbroad_participation_shutdown",
+      "closure_reason": "fill retention fell to about 10.8 percent while reward lower bound and lifecycle gates failed",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "variance_time_buy",
+      "source_id": "variance_time_current",
+      "extractor": "variance_time_current_v1",
+      "action_identity": "volatility_time_add_rearm_randomized_replay_v1",
+      "side": "BUY",
+      "intervention": "replace the fixed 85n wall clock with a frozen realized-variance clock",
+      "frontier_class": "material_action_change_economics_unsupported",
+      "closure_reason": "primary reward lower bound and lifecycle/tail consistency gates failed",
+      "historical_action_closed": true
+    },
+    {
+      "row_id": "variance_time_sell",
+      "source_id": "variance_time_current",
+      "extractor": "variance_time_current_v1",
+      "action_identity": "volatility_time_add_rearm_randomized_replay_v1",
+      "side": "SELL",
+      "intervention": "replace the fixed 85n wall clock with a frozen realized-variance clock",
+      "frontier_class": "material_action_change_economics_unsupported",
+      "closure_reason": "primary reward lower bound and terminal/lifecycle consistency gates failed",
+      "historical_action_closed": true
+    }
+  ],
+  "decision_rule": {
+    "scope": "tested_cooldown_temporal_permission_actions",
+    "positive_economic_gate": "reward_lcb_gt_zero_and_lifecycle_supported",
+    "activity_gate": "action-specific frozen activity or fill-retention contract",
+    "exhausted_when": "all tested action identities remain closed and no row combines acceptable activity, positive reward lower bound and supported lifecycle evidence",
+    "claims_all_possible_cooldown_actions_exhausted": false,
+    "f09_family_remains_open_for_distinct_economic_interventions": true
+  },
+  "permissions": {
+    "new_replay_run": false,
+    "new_outcome_contrast_estimated": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_family_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "implementation_identity": {
+    "research/families/f09_campaign_action_uplift/audit/cooldown_action_leverage_frontier.py": "1e27cdd12315f189c01c17f23783a36a162780619376b9522b27e28c3e59d827",
+    "tests/test_cooldown_action_leverage_frontier.py": "6bc577ab53542be6227293036b6ee4a2685c49c4791fb9e188f826f33f543070"
+  }
+}

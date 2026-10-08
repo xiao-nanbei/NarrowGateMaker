@@ -1,0 +1,45 @@
+{
+  "schema_version": "order_lifecycle_clock_registry_contract.v1",
+  "identity": "order_lifecycle_clock_registry_v1",
+  "last_materially_modified": "2026-08-04",
+  "input_journal_schema": "order_lifecycle_journal.v1",
+  "baseline_epoch_schema": "narrowgate_baseline_epoch_manifest.v1",
+  "economic_outcomes_read": false,
+  "calendar_time_output": true,
+  "risk_time_output": true,
+  "estimands": [
+    "first_fill",
+    "exchange_terminal"
+  ],
+  "competing_risks": [
+    "partial_fill",
+    "full_fill",
+    "cancel_request",
+    "cancel_ack",
+    "cancel_reject",
+    "reject",
+    "expiry",
+    "shutdown"
+  ],
+  "state_transitions_not_absorbed": [
+    "jump",
+    "post_cancel_recovery",
+    "reentry_eligible"
+  ],
+  "risk_grid_ms": 100,
+  "right_censor_s": 30.0,
+  "right_censor_is_policy_clock": false,
+  "epoch_specific_estimation_required": true,
+  "pooled_estimation_authorized": false,
+  "implementation": {
+    "path": "models/replay/order_lifecycle_clock_registry.py",
+    "sha256": "d42fec28827980b61fadffa55a639c68d24696e5d3b8f33ce3c00af860dfcaaa"
+  },
+  "current_status": "implemented_waiting_for_fully_bound_live_epochs",
+  "permissions": {
+    "live_curve_execution_authorized": false,
+    "economic_estimation_authorized": false,
+    "action_authorized": false,
+    "live_policy_authorized": false
+  }
+}

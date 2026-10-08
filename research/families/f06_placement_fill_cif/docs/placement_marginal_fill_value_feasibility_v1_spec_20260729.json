@@ -1,0 +1,267 @@
+{
+  "schema_version": "placement_marginal_fill_value_feasibility_spec.v1",
+  "family_id": "placement_marginal_fill_value_feasibility_v1",
+  "created_at_utc": "2026-07-29T00:00:00Z",
+  "last_materially_modified": "2026-07-29",
+  "research_status": "frozen_before_marginal_value_outcomes_after_schema_feasibility_audit",
+  "purpose": "Determine on Development whether the shallower-only fills created by paired two- or four-tick placement changes have quantity-weighted USDC value that remains identifiable after differential pending, campaign-tail, and sampling uncertainty.",
+  "research_boundary": {
+    "f06_fill_surface_remains_closed": true,
+    "trains_fill_probability_model": false,
+    "ordered_surface_v2_forbidden": true,
+    "one_tick_is_negative_control_only": true,
+    "principal_stratum_is_feasibility_diagnostic_only": true,
+    "campaign_terminal_value_is_no_policy_feedback_overlay": true,
+    "value_identity_creation_requires_this_family_to_pass": true,
+    "action_or_live_authority_forbidden": true,
+    "development_days_have_prior_fill_resolution_outcome_exposure": true,
+    "marginal_value_outcomes_were_not_read_before_this_spec": true
+  },
+  "source_identity": {
+    "placement_panel_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/manifest.json",
+      "size_bytes": 37699,
+      "sha256": "de01eec6c0d6dbf90b2e64741d168a679820def759ad3005a34ffa845ce16fc1"
+    },
+    "placement_panel_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/development_index.csv",
+      "size_bytes": 4767,
+      "sha256": "6105a5172d2be2c2f65c5f5bf12233d71cb8e0b45020d3a5ce47583c774ac275"
+    },
+    "request_state_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/manifest.json",
+      "size_bytes": 2447,
+      "sha256": "d52ad98d425246cd869e6d3abdeb0711ce95cc3cf4518faa55b8f4fadf510d30"
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "size_bytes": 20673,
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1"
+    },
+    "paired_action_resolution_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_action_resolution_feasibility_v1_development_20260728/report.json",
+      "size_bytes": 7263,
+      "sha256": "a6c36d5bb46a284a177b247dc3b8b99d96db92939cf2746abb366e907f578098"
+    },
+    "bbo_registry_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_minimal141_20260727/manifest.json",
+      "size_bytes": 264076,
+      "sha256": "61b219e212f43fa8de942637354603f906a25d9b6f5a22a8950989e4d09e5064"
+    }
+  },
+  "implementation": {
+    "path": "research/families/f06_placement_fill_cif/audit/placement_marginal_fill_value_feasibility.py",
+    "size_bytes": 54709,
+    "sha256": "fa2d48eb7db8e43a0f552b07c84d00ee34655257674f64ae9a22d8679cc493c4",
+    "test_contract": {
+      "path": "tests/test_placement_marginal_fill_value_feasibility.py",
+      "size_bytes": 7337,
+      "sha256": "e2668c821a94ebed7b86f7e7995afdec05029a3830de0b2fad57bffe054b9d54"
+    }
+  },
+  "paths": {
+    "placement_root": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement",
+    "paired_resolution_root": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_action_resolution_feasibility_v1_development_20260728",
+    "request_state_index": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+    "bbo_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_minimal141_20260727/bbo",
+    "output_root": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_marginal_fill_value_feasibility_v1_development_20260729"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13",
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "development_access": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "later_panel_outcomes_forbidden": true
+  },
+  "exchange_contract": {
+    "symbol": "BTCUSDC",
+    "tick_size_usdc_per_btc": 0.1,
+    "lot_size_btc": 0.001,
+    "one_lot_orders_required": true,
+    "one_tick_one_lot_usdc": 0.0001
+  },
+  "action_grid": {
+    "negative_control_gap_ticks": [
+      1
+    ],
+    "formal_feasibility_gap_ticks": [
+      2,
+      4
+    ],
+    "contrasts": [
+      "closer_current",
+      "current_farther"
+    ],
+    "reported_direction": "deeper_minus_shallower",
+    "same_paired_market_path_required": true,
+    "all_actions_successfully_activated_common_support_is_post_outcome_diagnostic_only": true,
+    "post_outcome_stratum_cannot_be_a_live_eligibility_rule": true
+  },
+  "common_clock": {
+    "clock_ms": 5000,
+    "unit": "ms_since_activation",
+    "classification": "judgmental common active-exposure diagnostic clock",
+    "not_an_economic_markout_horizon": true,
+    "action_specific_realized_exposure_forbidden_for_paired_comparison": true
+  },
+  "market_marks": {
+    "mechanism_horizons_ms": [
+      1000,
+      5000,
+      30000
+    ],
+    "mechanism_horizons_are_report_slices_only": true,
+    "max_bbo_age_ms": 250.0,
+    "bbo_age_threshold_provenance": "judgmental freshness bound frozen before marginal-value outcomes",
+    "value_unit": "USDC_per_decision",
+    "buy_value": "quantity_btc * (future_mid_usdc_per_btc - fill_price_usdc_per_btc)",
+    "sell_value": "quantity_btc * (fill_price_usdc_per_btc - future_mid_usdc_per_btc)",
+    "execution_price_already_contains_spread_capture": true,
+    "half_spread_must_not_be_added_again": true
+  },
+  "campaign_overlay": {
+    "opener_start_match_tolerance_ms": 100.0,
+    "opener_match_tolerance_provenance": "empirical source audit found approximately 97 percent of current opener fills map within 100ms",
+    "terminal_definition": "first baseline reducing fill that leaves absolute inventory no larger than the fill quantity",
+    "terminal_pnl_reconstruction": "campaign_pnl_so_far plus inventory mark-to-fill-mid plus maker execution edge",
+    "hypothetical_action_does_not_feed_back_into_later_policy": true,
+    "classification": "no-policy-feedback marginal-inventory overlay",
+    "primary_feasibility_metric": "campaign_terminal_overlay_delta_usdc",
+    "cannot_be_interpreted_as_randomized_action_value": true
+  },
+  "pending_differential": {
+    "estimand": "paired deeper-minus-shallower difference in pending-fill probability, expected pending quantity, 30s value, and campaign terminal overlay",
+    "uses_shared_market_path_and_request_clock": true,
+    "fresh_book_sell_max_age_ms": 250.0,
+    "fresh_book_sell_is_reported_separately": true,
+    "side_action_is_primary_hierarchy": true,
+    "request_reason_and_role_use_partial_pooling_diagnostic": true,
+    "partial_pooling_prior_strength": 20.0,
+    "prior_strength_provenance": "judgmental stabilization for a secondary rare-event diagnostic, not a promotion metric",
+    "posterior_probability": 0.99,
+    "old_absolute_100bps_bound_is_not_reused_as_the_authoritative_gate": true,
+    "direct_day_clustered_differential_interval_is_authoritative": true
+  },
+  "estimands": {
+    "strata": [
+      "shared_fill",
+      "shallower_only_marginal_fill",
+      "neither_fill"
+    ],
+    "shared_execution_improvement": "shared filled quantity times the gap in price ticks",
+    "marginal_fill_value": "quantity-weighted maker-signed future-mid value for shallower-only fills",
+    "primary_value": "deeper-minus-shallower campaign terminal overlay in USDC per decision",
+    "secondary_values": [
+      "deeper-minus-shallower 1s maker-signed value",
+      "deeper-minus-shallower 5s maker-signed value",
+      "deeper-minus-shallower 30s maker-signed value",
+      "deeper-minus-shallower common-clock value"
+    ],
+    "partial_fill_quantity_is_preserved": true,
+    "buy_sell_must_not_be_pooled_for_promotion": true,
+    "opener_add_reducing_must_not_be_pooled_for_promotion": true
+  },
+  "inference": {
+    "unit_of_analysis": "decision",
+    "inner_cluster": "campaign; campaign_id zero openers remain cohort-specific",
+    "outer_cluster": "UTC day",
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260729,
+    "simultaneous_confidence": 0.95,
+    "multiplicity": "metric-wise maximum absolute day-bootstrap deviation across side-role-gap-contrast cells",
+    "effective_sample_size_is_not_the_raw_cohort_count": true
+  },
+  "economic_gates": {
+    "epsilon_usdc_per_decision": 0.0001,
+    "epsilon_provenance": "exchange-derived one tick times one lot, used as a preregistered minimum economic resolution budget",
+    "minimum_supported_days": 30,
+    "minimum_supported_days_provenance": "judgmental chronological stability requirement",
+    "minimum_informative_campaign_coverage": 0.95,
+    "minimum_campaign_coverage_provenance": "judgmental fail-closed attribution requirement",
+    "minimum_daily_direction_fraction": 0.65,
+    "minimum_daily_direction_provenance": "judgmental cross-day sign-stability requirement",
+    "tail_threshold_usdc": -5.0,
+    "tail_threshold_provenance": "existing project downside diagnostic threshold, not a theoretical constant",
+    "primary_interval": "day-clustered simultaneous band for campaign terminal overlay delta",
+    "primary_lcb_rule": "the interval must be one-sided and its lower bound on absolute value must exceed epsilon",
+    "pending_rule": "differential pending uncertainty radius must be strictly smaller than the primary economic lower bound",
+    "tail_rule": "the simultaneous campaign-tail event difference must not worsen in the selected value direction",
+    "at_least_one_formal_side_role_cell_required": true,
+    "pooling_cannot_rescue_a_failed_side_role_cell": true
+  },
+  "decision_contract": {
+    "pass": "permit registration of a separate placement_action_value_surface_v1 identity; do not create action or live authority",
+    "fail": "close and archive the placement-distance marginal-value path on Development",
+    "one_tick_result": "negative-control evidence only and cannot trigger pass",
+    "validation_access_on_this_run": false,
+    "scorecard_promotion_is_out_of_scope": true
+  },
+  "storage_gate": {
+    "minimum_free_reserve_gib": 60.0,
+    "estimated_final_gib": 0.5,
+    "required_free_gib_formula": "60 + 2.5 * estimated_final_gib",
+    "output_must_not_exist_before_first_authoritative_run": true
+  },
+  "permissions": {
+    "development_access": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_supported": false,
+    "transport_supported": false,
+    "economic_resolution_supported": false,
+    "action_uplift_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

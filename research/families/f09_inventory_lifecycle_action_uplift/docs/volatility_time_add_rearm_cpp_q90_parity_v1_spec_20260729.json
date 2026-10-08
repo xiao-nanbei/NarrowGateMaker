@@ -1,0 +1,171 @@
+{
+  "schema_version": "volatility_time_add_rearm_cpp_q90_parity.v1",
+  "family_id": "volatility_time_add_rearm_cpp_q90_parity_v1",
+  "created_at_utc": "2026-07-29T12:00:00Z",
+  "research_family": "F09_campaign_action_uplift",
+  "estimand": "event-level Python/C++ agreement for the native snapshot/delta book and BUY q90 cancel/ACK/recovery/re-entry kernel inside authoritative full-path replay",
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "parity_days": [
+      "2026-04-17",
+      "2026-06-21"
+    ],
+    "selection_contract": "mechanism-stratified from the frozen Development-only predecessor checkpoints without reading reward, PnL, markout, Validation, or holdout",
+    "selection_reason": {
+      "2026-04-17": "full-day native scheduler, activation, cancel-ACK and re-entry coverage",
+      "2026-06-21": "maximum candidate recovery coverage in the predecessor Development checkpoints"
+    },
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "replay_contract": {
+    "authority": "python_authoritative_full_path_with_lockstep_cpp_q90_kernel",
+    "arms": [
+      "control_wall_time",
+      "candidate_variance_time"
+    ],
+    "cpp_parity_strict": true,
+    "mismatch_trace_max": 10,
+    "event_order": "native book -> exact-level path -> q90 evaluation -> cancel request -> ACK race -> fill/recovery/re-entry",
+    "full_cpp_tick_replay_authority": false,
+    "reward_or_pnl_fields_read": false
+  },
+  "mechanism_coverage": {
+    "historical_development_pre_ack_fill_count": 0,
+    "historical_development_pre_ack_fill_source": "all 40 frozen predecessor checkpoints, both arms",
+    "pre_ack_fill_synthetic_test": true,
+    "synthetic_test_name": "test_q90_cancel_pending_fill_recovery_ack_and_queue_reset",
+    "required_real_paths": [
+      "native_snapshot_delta_sequence",
+      "exact_level_activation_and_queue_reset",
+      "cancel_request",
+      "cancel_ack",
+      "recovery",
+      "reentry"
+    ]
+  },
+  "gates": {
+    "maximum_mismatch_count": 0,
+    "minimum_native_book_events": 10000000,
+    "minimum_activations": 15000,
+    "minimum_evaluation_calls": 2000000,
+    "minimum_cancel_requests": 10,
+    "minimum_cancel_acks": 10,
+    "minimum_recoveries": 5,
+    "minimum_reentries": 10,
+    "both_arms_required": true,
+    "full_cpp_tick_replay_authority_must_remain_false": true
+  },
+  "source_identity": {
+    "market_source_manifest_canonical_sha256": "d0f25c9b0f51668d8f5d80417a0f7e1b10b2b887fbd864a8c648e8bac9586a70"
+  },
+  "predecessor_identity": {
+    "family_id": "volatility_time_add_rearm_full_path_preflight_v1",
+    "decision": "full_path_action_support_pass_develop_cpp_q90_parity",
+    "spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+      "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5"
+    },
+    "report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/report.json",
+      "sha256": "d4c47dfcc04dcc29db94e0117612f3af2950a7b18c157aded5aa198f6aa5252a"
+    }
+  },
+  "buy_q90_identity": {
+    "model": {
+      "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json",
+      "sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6"
+    },
+    "policy": {
+      "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+      "sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a"
+    },
+    "abi_version": "dynamic_fill_hazard_native_book_q90.v1"
+  },
+  "native_module_identity": {
+    "path": "${NARROWGATE_EPHEMERAL_ROOT}/narrowgate_btcusdc_cpp_q90_build/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "65c5007e66978b2e36bb80ed89c3bb61edfdd051ffcfb3c8832a6630479aca5e"
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "d4ae2a12103a9f7a5659b83e6bc48a3957616b7e518caa14f6c2fb46f88273c4",
+    "source_sha256": {
+      "cpp/CMakeLists.txt": "150385c900cc69c4cb6ae8fbe80c96b14493d80c951eb64c3e513e35e14edef4",
+      "cpp/narrowgate_cpp/bindings.cpp": "880dbae8fbdf1220d3eed222b03052627af579abb4575a22ca69882b9f5cebb6",
+      "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "b056d5ad9dd64ef6e3f619b4a5bfb15ae2231b59e31d0110718388486b53cde1",
+      "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "0d10a2519e32b2a31f58050e6647224b1c8dd6c691d87c33053a254c6d661c2d",
+      "models/backtest_tick.py": "26590961ddea1acaf3f5b65c64edf1f243f0f90ff03751443aae0030a7c880e6",
+      "models/exchange_book_replay.py": "30592c41eb1ab526c4b110c78c3943fd1e155013a833beb5d4e15f6953ed2a4b",
+      "models/tick_data_types.py": "2a5b00fcf59fcbff976163a0a5ef5baf6db0e30877c58fe0a077ce83e353cacc",
+      "strategy/dynamic_fill_hazard_model.py": "71734cd82a7728814aea2707cec5bb3fc35b177ad652e0fd163fa6394932719a",
+      "strategy/fill_cooldown.py": "0aedc148e15ba34de0a13a0a8789d3d3706e94e272875402f9df6fb39e0324b7",
+      "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79"
+    }
+  },
+  "test_identity": {
+    "junit_xml": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_cpp_q90_parity_v1_20260729/cpp_q90_contract_tests.xml",
+      "sha256": "f22d9f74dd530e5e7061cf8b676d73a34ad3781ed77e766ab752681cdc9d8a3b"
+    },
+    "required_test_names": [
+      "test_real_artifact_python_cpp_probabilities_match",
+      "test_native_snapshot_delta_sequence_and_exact_lookup_match_python",
+      "test_q90_cancel_pending_fill_recovery_ack_and_queue_reset",
+      "test_ack_before_recovery_retains_path_until_reentry",
+      "test_hash_bound_adapter_refuses_to_claim_full_cpp_replay_authority",
+      "test_advance_preserves_each_source_message_receive_timestamp",
+      "test_variance_time_rearm_regenerates_downstream_orders_and_fills",
+      "test_decision_requires_both_arms_and_lifecycle_branch_coverage"
+    ]
+  },
+  "permissions": {
+    "reward_or_pnl_read": false,
+    "markout_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "randomized_action_identity_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "aws_receive_time_transport_supported": false
+  }
+}

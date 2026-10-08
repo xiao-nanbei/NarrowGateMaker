@@ -1,0 +1,173 @@
+{
+  "cancel_reject_support_contract": {
+    "empirical_cancel_reject_count": 0,
+    "empirical_cancel_reject_route_count": 0,
+    "empirical_cancel_reject_support": false,
+    "empirical_cancel_reject_transport_support": false,
+    "empirical_panel_day_count": 40,
+    "synthetic_branch_contract_is_not_transport_support": true,
+    "synthetic_branch_contract_required": true
+  },
+  "canonical_amendment_sha256": "6c2d413da02a1278b87f53ea8f5e066a264c9099404fec18e203ec706d109a0f",
+  "compiled_cpp_module": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+    "size_bytes": 1298120
+  },
+  "full_40day_fingerprint_equivalence": {
+    "canonical_report_sha256": "773335122493ee3c8329189c2abf17b3af853dc147390e430717350452a8550b",
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_runtime_compatibility_40day_fingerprint_v1_6_20260805.json",
+    "sha256": "f04ba33fad638cc16885f65eff728e20180c3df0dbc458901800893c93a3a762",
+    "size_bytes": 46817
+  },
+  "generated_at_utc": "2026-08-08T03:58:22.009368+00:00",
+  "identity": "f07_order_lifecycle_v2_downstream_execution_successor_amendment_v1_6",
+  "implementation_artifacts": {
+    "cif_cpp_header": {
+      "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.hpp",
+      "sha256": "506c96bfcc31e9034521e530484946662e0804291caac6695eed1a5dfd151ef6",
+      "size_bytes": 1031
+    },
+    "cif_cpp_source": {
+      "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.cpp",
+      "sha256": "912c53d708abcc54c7e23c7de0f000a362867beccb93b3e62f546162a84766c4",
+      "size_bytes": 8872
+    },
+    "cif_parity_core": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_cpp_parity_v1_5.py",
+      "sha256": "77685f9db0290c83a42a6135fa3484fe632c504c7658a1bf7d3e11fad2e53bc6",
+      "size_bytes": 14391
+    },
+    "cif_parity_wrapper": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_cpp_parity_v1_6.py",
+      "sha256": "7a08a4f0fa9301c4b9276e441b5f7bbc0ea0f4f301d4f558492b5c7104d98a5f",
+      "size_bytes": 2018
+    },
+    "cif_provenance_core": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_downstream_execution_amendment_v1_5.py",
+      "sha256": "543f0798d8a0bf71c5d7b85851e14f350530834895fa2083bda5a3e75ee449b8",
+      "size_bytes": 32604
+    },
+    "cif_python_base": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif.py",
+      "sha256": "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72",
+      "size_bytes": 18352
+    },
+    "cif_python_inference": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif_inference_v1_1.py",
+      "sha256": "be12918c22d01e1e33cdba3466a38b870dce90a52877f7fe9be03d4e969250ee",
+      "size_bytes": 6476
+    },
+    "cif_successor_provenance": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cif_successor_v1_6.py",
+      "sha256": "da3bacd43f98e0c3db266c60199aad1c7060f26c39653e7ae8069ce82c0029f5",
+      "size_bytes": 9376
+    },
+    "cif_training_core": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_100ms_training_v1_5.py",
+      "sha256": "ec6a387470df2a971abba65d87e529e20156c1bc7cfb075f9dcc6e867536362e",
+      "size_bytes": 23519
+    },
+    "cif_training_wrapper": {
+      "path": "research/families/f07_active_order_continuation/audit/active_order_lifecycle_cif_100ms_training_v1_6.py",
+      "sha256": "63791cb5821844e5c448511925b7b4aed9070585bab99fb0ec149ba8d8d5aaaf",
+      "size_bytes": 2173
+    },
+    "compatibility_builder_validator": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_runtime_compatibility_v1_6.py",
+      "sha256": "5a2b311cab6c8ed386aec57a4b6b06e1528272b1f60daa0bbe7cbc82db8208e1",
+      "size_bytes": 66885
+    },
+    "cpp_build_contract": {
+      "path": "cpp/CMakeLists.txt",
+      "sha256": "acc2243c14bdec8838f802ba1cd3768f13c9a365717ab26f5e6285409890a66c",
+      "size_bytes": 2486
+    },
+    "cpp_event_stream_binding": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+      "sha256": "727df6b20cf60b083c718fe9ba33c45034f9d4409efb2d46f3592e7ad57e9e82",
+      "size_bytes": 15563
+    },
+    "cpp_pybind_source": {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0",
+      "size_bytes": 221376
+    },
+    "lockstep_wrapper": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_cpp_lockstep_v1_6.py",
+      "sha256": "0bbcb6fc0db06b5e7c922d4c7a782ea3bc9c76d5d1a8778df0b485bb87dfe6b7",
+      "size_bytes": 9715
+    },
+    "post_terminal_safety_audit": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_cpp_lockstep.py",
+      "sha256": "b432462da42fa19cc2b49fd536488db3aef58d468a77921547387aa634e31580",
+      "size_bytes": 11320
+    },
+    "synthetic_cancel_reject_lockstep": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cancel_reject_synthetic_lockstep_v1_6.py",
+      "sha256": "7f778ae4c88e1a0994d10bd2870b69c5f6149ff337ca5e515634b5a77a476658",
+      "size_bytes": 21545
+    }
+  },
+  "output_contract": {
+    "lockstep_identity": "f07_order_lifecycle_v2_40day_cpp_event_lockstep_v1_6",
+    "lockstep_schema_version": "f07_order_lifecycle_v2_40day_cpp_event_lockstep_report.v1_6",
+    "parity_identity": "active_order_lifecycle_cif_cpp_inference_parity_v1_6",
+    "parity_schema_version": "active_order_lifecycle_cif_cpp_inference_parity_report.v1_6",
+    "synthetic_cancel_reject_identity": "f07_order_lifecycle_v2_cancel_reject_synthetic_lockstep_v1_6",
+    "synthetic_cancel_reject_schema_version": "f07_order_lifecycle_v2_cancel_reject_synthetic_lockstep_report.v1_6",
+    "training_identity": "active_order_lifecycle_competing_risk_cif_100ms_v1_6",
+    "training_report_schema_version": "active_order_lifecycle_competing_risk_cif_training_report.v1_6",
+    "training_schema_version": "active_order_lifecycle_competing_risk_cif_artifact.v1_6"
+  },
+  "permissions": {
+    "action": false,
+    "economic_evaluation": false,
+    "live_deployment": false,
+    "live_transport": false,
+    "q90_action": false
+  },
+  "predecessor_execution_plan": {
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4/execution_plan.json",
+    "sha256": "30693fe79f423d2c563aa705219a0069ee290c3a1c0e972a66a4121525158bd2",
+    "size_bytes": 1086305
+  },
+  "runtime_compatibility_attestation": {
+    "canonical_attestation_sha256": "46a5f6338190525d5c304a28f8e0258d220b6985e87ff887131e9877614b851b",
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_runtime_compatibility_attestation_v1_6_20260805.json",
+    "sha256": "acd75e423f53de1b05ab3be426cbdf7d4d78e9a4e3e480a3651ab8e66d9efb72",
+    "size_bytes": 14028
+  },
+  "schema_version": "f07_order_lifecycle_v2_downstream_execution_successor_amendment.v1_6",
+  "scope": {
+    "economic_outcomes_read": false,
+    "mechanics_only": true
+  },
+  "stage_contract": {
+    "empirical_cancel_reject_support_required": false,
+    "full_40day_exact_fingerprint_equivalence_required": true,
+    "homogeneous_successor_panel_required": true,
+    "next_stage": "formal_40day_cpp_event_lockstep_v1_6",
+    "old_mixed_panel_not_admitted_for_lockstep": true,
+    "synthetic_cancel_reject_is_not_transport_support": true,
+    "synthetic_cancel_reject_lockstep_required": true
+  },
+  "status": "frozen_homogeneous_successor_mechanics_only",
+  "successor_execution_plan": {
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_successor_v1_6_20260805/execution_plan.json",
+    "sha256": "da0553dc6b83855723efeaa3db0053445f62d27cbc7d03d921d14afd6bf1ee75",
+    "size_bytes": 1086310
+  },
+  "successor_global_execution_identity_sha256": "423453e929f9c7de1acf2f0c9cfd5ab0c6ca06678fae9d497bca7fe0c8ab919b",
+  "successor_panel_manifest": {
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_successor_v1_6_20260805/panel_manifest.json",
+    "sha256": "2c888021ec6901b369998ec49cb3186f114983ce050613fbfab5edbb8d7084b7",
+    "size_bytes": 12518
+  },
+  "synthetic_cancel_reject_lockstep": {
+    "canonical_report_sha256": "5819a6d7441f0f2456ec8c305e88e8ee20915051d2e92eb42e337b5fb5ad655e",
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_cancel_reject_synthetic_lockstep_v1_6_20260805.json",
+    "sha256": "4de914e851f0058e818b962b31dc66dff1e07f9a2fc4072c1035ee778bff0d50",
+    "size_bytes": 5573
+  }
+}

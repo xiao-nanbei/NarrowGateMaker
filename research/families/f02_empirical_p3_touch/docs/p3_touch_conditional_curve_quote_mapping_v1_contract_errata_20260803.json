@@ -1,0 +1,79 @@
+{
+  "schema_version": "narrowgate_research_contract_errata.v1",
+  "identity": "p3_touch_conditional_curve_quote_mapping_v1_contract_errata_20260803",
+  "canonical_errata_identity_sha256": "a976cd64484988fba9462bb7ec5dd1767152853b3de5a0af837e45bb8301bd2e",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "last_materially_modified": "2026-08-03",
+  "immutable_original_artifacts": {
+    "canonical_experiment_identity": "p3_touch_conditional_curve_quote_mapping_v1",
+    "canonical_identity_unchanged": true,
+    "development_report": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_development_20260803.md",
+      "sha256": "34f69d34f5eb17751ee37630d776974fbf68932452beac77bd13bdeb4268a9e9"
+    },
+    "authoritative_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_conditional_curve_quote_mapping_v1_20260803/report.json",
+      "sha256": "e55d3355fdde31f83e921d6e8cb18ba9ff57a1539bac981d430d13cdc64d7fcd"
+    },
+    "output_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_conditional_curve_quote_mapping_v1_20260803/manifest.json",
+      "sha256": "83763d89bc633b1f696ff35e62393c86633a8764f3f265e87476436aa5834369"
+    },
+    "spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_spec_20260803.json",
+      "sha256": "c88e99fdeb69b0654a4b4a79c3e31bda190ffdfaf61f3b6b82db78298016c59a",
+      "canonical_spec_identity_sha256": "95a17af64f56d4769ecaece730d8c7e4b8b995e9272c966f4840a884e16102eb"
+    }
+  },
+  "classification": {
+    "interpretive_identity": "conditional_p3_scalar_compression_adapter_v1",
+    "tested_pipeline": [
+      "side_specific_conditional_touch_probabilities",
+      "equal_weight_buy_sell_probability_average",
+      "argmax_distance_times_pair_touch_probability",
+      "scalar_delta_star_and_kappa_eff",
+      "legacy_as_glft_quote_abi"
+    ],
+    "closed_scope": "pair_average_scalar_delta_star_kappa_adapter",
+    "conditional_p3_curve_to_quote_route_closed": false,
+    "full_side_specific_curve_mapping_tested": false,
+    "queue_conversion_jointly_modelled": false,
+    "fill_value_jointly_modelled": false,
+    "next_research_scope": "side_specific_full_curve_plus_queue_fill_and_value_under_a_new_frozen_identity"
+  },
+  "estimand_mismatches": [
+    {
+      "left": "10_second_touch_probability",
+      "relation": "not_equal",
+      "right": "1_second_fill_arrival_intensity"
+    },
+    {
+      "left": "distance_derivative_of_log_touch_probability",
+      "relation": "not_equal",
+      "right": "avellaneda_stoikov_fill_intensity_elasticity"
+    },
+    {
+      "left": "same_conditional_curve",
+      "relation": "double_transmitted_through",
+      "right": "kappa_eff_and_spread_floor"
+    }
+  ],
+  "retained_evidence": {
+    "v4_1_historical_development_prediction_supported": true,
+    "v4_1_independent_confirmation": false,
+    "scalar_adapter_historical_oof_negative_result_retained": true,
+    "scalar_adapter_terminal_mtm_pnl_delta_usdc": -115.66078781600056,
+    "scalar_adapter_fill_retention": 2.4544834640300035,
+    "operational_p3_artifact": "current_v2_unchanged"
+  },
+  "authority": {
+    "historical_prediction_evidence": true,
+    "historical_adapter_diagnostic": true,
+    "prediction_authority": false,
+    "quote_mapping_authority": false,
+    "operational_p3_replacement_authorized": false,
+    "action_authority": false,
+    "live_authority": false,
+    "validation_or_sealed_holdout_opened_by_errata": false
+  }
+}

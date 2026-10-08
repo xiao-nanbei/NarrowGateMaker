@@ -1,0 +1,45 @@
+name: Documentation report
+description: Report missing, broken, unclear, or inconsistent public documentation.
+title: "[Docs] "
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document location
+      description: Provide a repository-relative path, heading, or public URL.
+      placeholder: docs/example.md, section name
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Documentation problem
+      description: Explain what is missing, stale, broken, or ambiguous.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_change
+    attributes:
+      label: Proposed correction
+      description: Include the intended meaning and the public authority that supports it.
+  - type: dropdown
+    id: result_effect
+    attributes:
+      label: Effect on research results
+      options:
+        - Presentation-only; no rerun or scientific change
+        - Corrects a scientific contract or conclusion
+        - Unsure and requesting review
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I used repository-relative links and portable placeholders where applicable.
+          required: true
+        - label: I did not include private paths, hosts, account state, datasets, credentials, or owner-side evidence.
+          required: true
+        - label: I did not describe presentation-only cleanup as a rerun or new result.
+          required: true

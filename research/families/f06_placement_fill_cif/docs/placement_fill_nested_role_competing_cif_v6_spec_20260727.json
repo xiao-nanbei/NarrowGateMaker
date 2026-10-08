@@ -1,0 +1,64 @@
+{
+  "extends": "placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+  "extends_sha256": "0acc7920f07656af0be2cb55b05f5782aaae4520011ba5a00c400bf739563dac",
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v6",
+  "family_id": "placement_fill_nested_role_competing_cif_v6",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v6_inner_oof_development_fit",
+  "revision_reason": "v5 used one trailing train-only calibration block; v6 uses reusable inner expanding OOF interval scores and fits a fresh role-by-cause calibrator inside every outer train",
+  "evidence_scope": "v5 Development was read and closed; v5 Validation and sealed holdout remain unread and are unavailable to v6 fitting, calibration and selection",
+  "lineage": {
+    "v5_development_evaluation": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_role_calibrated_competing_cif_v5_development_20260727/curve_evaluation.json",
+    "v5_development_evaluation_sha256": "dd2644d7ad6de06f15d93b8caae1cb260285d0b42552fea30441468babeec780",
+    "v5_failure": "one trailing five-day role-offset block passed BUY/SELL add but did not transport cancel-ACK calibration for opener/reducing",
+    "implementation": "models/audit/nested_role_calibrated_competing_curve_cif.py",
+    "implementation_sha256": "a8c378c352080d0bb90180731464ade0e89ac9513ca7b3b454a8cf0708db441e",
+    "evaluator": "models/audit/evaluate_nested_role_competing_curve_cif.py",
+    "evaluator_sha256": "f77b48a4185cd9546c24fb52b4f93cadcea29d75890755ae3fea2c18897d454b",
+    "base_evaluator": "models/audit/evaluate_competing_curve_cif.py",
+    "base_evaluator_sha256": "984c2e2293ff9cfcbbd9bbaf702d4b3352d832a9041243bf8ea3111eae37649b",
+    "gate_identity": "inherited unchanged from v4"
+  },
+  "development_fit": {
+    "inner_oof_role_calibration": {
+      "method": "generate side-specific inner expanding OOF interval hazards once; inside each outer train use only inner-test days contained in that train to fit role-by-cause Platt maps; refit the base hazard on the full outer train; apply both only to the subsequent outer test",
+      "inner_min_train_days": 10,
+      "inner_embargo_days": 1,
+      "inner_test_days": 3,
+      "roles": [
+        "opener",
+        "add",
+        "reducing"
+      ],
+      "causes": [
+        "fill",
+        "cancel_ack"
+      ],
+      "calibrator": "weighted logit intercept plus positive slope on inner-OOF raw binary hazard, fitted with stable two-parameter L-BFGS and log-slope ridge",
+      "regularization_c": 100.0,
+      "minimum_event_intervals": 20,
+      "minimum_non_event_intervals": 100,
+      "base_model_refit_on_all_outer_train_days": true,
+      "outer_test_excluded_from_base_fit_and_calibration": true,
+      "global_inner_oof_reuse_rule": "an inner-test score may enter an outer calibrator only when its day is in that outer train; its inner fit and embargo days are necessarily earlier",
+      "competing_probability_normalization": "after independent role/cause calibration, preserve cause ratio and cap total interval hazard below one",
+      "fallback": "none; missing role/cause support or non-positive calibration slope fails closed",
+      "classification": {
+        "past-only nested cross-fitting": "research_governance_identity",
+        "Platt functional form and regularization": "judgmental_engineering",
+        "role/cause coefficients": "empirical_estimate"
+      }
+    },
+    "pre_development_smoke_revision": "the initial mechanics smoke exposed sklearn weighted-logit overflow warnings; before any formal Development outcome was read, the same two-parameter estimand was moved to a stable log-slope optimizer and the implementation hash was re-frozen"
+  },
+  "reporting": {
+    "curve_level_gate_identity": "exactly inherited from placement_fill_full_curve_competing_cif_v4; no threshold, confidence level, support rule or pass semantic changed after observing v4 or v5"
+  },
+  "permissions": {
+    "validation_access": false,
+    "validation_unlock": "conditional on unchanged v4 Development curve gate plus independent panel controller",
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "artifact_identity": "causal_v12_1s_orico_source_spec_and_benchmark_v1_implementation_20260805",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "source_spec_builder_and_small_benchmark_executable",
+  "scope": {
+    "bulk_materialization_started": false,
+    "cpp_modified": false,
+    "economic_outcomes_read": false,
+    "existing_frozen_spec_modified": false,
+    "label_generator_modified": false,
+    "labels_read": false,
+    "live_modified": false,
+    "registry_modified": false,
+    "strategy_modified": false,
+    "training_contract_modified": false,
+    "training_started": false
+  },
+  "code_identities": {
+    "orico_source_spec_builder": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_orico_source_spec.py",
+      "sha256": "98fd8f605cc81414b4d61e044e399395c4b77dc52a5b09d6efdb1a0957ec0852"
+    },
+    "small_materialization_benchmark": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_materialization_benchmark.py",
+      "sha256": "6b2b1d73f52cfb759a0debf280f1ec399c1983b5378c4ef17763ad55426e2c18"
+    },
+    "tests": {
+      "path": "tests/test_causal_v12_1s_orico_source_spec.py",
+      "sha256": "4f537b9b179e14f95341ca73f7218d3c996c374b35fbf61cdf7a5c21549d6f60"
+    }
+  },
+  "source_profile": {
+    "fallback_discovery_allowed": false,
+    "market_data_root": "${NARROWGATE_DATA_ROOT}",
+    "profile_id": "provider_normalized_v1",
+    "required_days": [
+      "D-1",
+      "D"
+    ],
+    "required_groups": [
+      "local_trade_tempo",
+      "local_trade_tempo_manifest",
+      "execution_l2",
+      "execution_l2_quality",
+      "raw_metrics_csv",
+      "BTCUSDT_reference_1s",
+      "BTCUSDT_reference_meta"
+    ]
+  },
+  "real_source_spec": {
+    "bundle_identity_sha256": "bfda22b3b523ce0c4b36e25b2b4e2acdddf67f19c5f645682369fe51cd6b1986",
+    "fallback_discovery_used": false,
+    "physical_materialization_eligible": true,
+    "probe_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_spec_20250802_v1/source-probe.json",
+    "probe_sha256": "677ba5b782bce655dde0c126e42e8c41432b53bc18e26999556678afc32a72a5",
+    "source_spec_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_spec_20250802_v1/source-spec.json",
+    "source_spec_sha256": "c56588464a5b6e36bae570f0310cfe5ff239eedbd8ab0d4aeea6dd6cf781e59a",
+    "target_day": "2025-08-02",
+    "warmup_day": "2025-08-01"
+  },
+  "benchmark_contract": {
+    "cutoff_selection": "deterministic_even_coverage_of_canonical_target_day_seconds",
+    "full_day_estimate_method": "probe_plus_source_load_once_plus_linear_feature_compute_and_panel_write",
+    "labels_read": false,
+    "peak_rss_measurement": "getrusage_process_maxrss",
+    "pnl_read": false,
+    "separate_process_per_row_count": true,
+    "target_interval": "[D 00:00:00, D+1 00:00:00)"
+  },
+  "benchmarks": [
+    {
+      "estimated_full_day_wall_hours": 3.9206,
+      "estimated_full_day_wall_seconds": 14114.031098954147,
+      "feature_compute_rows_per_second": 6.126822045771811,
+      "observed_process_wall_seconds": 23.964684166945517,
+      "panel_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_100/panel.parquet",
+      "panel_size_bytes": 147349,
+      "peak_rss_bytes": 1390592000,
+      "peak_rss_gib": 1.2951,
+      "report_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_100/benchmark.json",
+      "report_sha256": "304fa84338b78b4404bbfaa4b46fe00ecbc579687a86b201082a41b2cda599eb",
+      "row_count": 100,
+      "source_load_seconds": 5.694866957841441,
+      "source_probe_seconds": 1.7696753339841962
+    },
+    {
+      "estimated_full_day_wall_hours": 3.9589,
+      "estimated_full_day_wall_seconds": 14251.897531686165,
+      "feature_compute_rows_per_second": 6.067130867490411,
+      "observed_process_wall_seconds": 172.29148812498897,
+      "panel_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_1000/panel.parquet",
+      "panel_size_bytes": 1121771,
+      "peak_rss_bytes": 1399177216,
+      "peak_rss_gib": 1.3031,
+      "report_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_1000/benchmark.json",
+      "report_sha256": "672a4ec576045ecd072110ce842f1298c1682a7dac1c51e669de414e93bd2899",
+      "row_count": 1000,
+      "source_load_seconds": 5.577020791824907,
+      "source_probe_seconds": 1.7270456249825656
+    }
+  ],
+  "verification": {
+    "pytest_command": ".venv/bin/python -m pytest -q tests/test_causal_v12_1s_orico_source_spec.py tests/test_causal_v12_1s_panel_materializer.py tests/test_causal_v12_1s_full_schema.py",
+    "pytest_passed": 34,
+    "ruff_check": "passed"
+  },
+  "permissions": {
+    "bulk_materialization_authorized": false,
+    "economic_replay_authorized": false,
+    "live_authorized": false,
+    "training_authorized": false
+  }
+}

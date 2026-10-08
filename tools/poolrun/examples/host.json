@@ -1,0 +1,24 @@
+{
+  "host": "host-a",
+  "root": "/replace/with/poolrun-host-root",
+  "ssh": {
+    "target": "poolrun-master",
+    "identity_file": "/approved/private/host-a-key",
+    "known_hosts_file": "/approved/private/known_hosts"
+  },
+  "network_zone": "cloud",
+  "poll_seconds": 2,
+  "prepared_cache_roots": {},
+  "disk_headroom": 8589934592,
+  "environments": {
+    "calc-py-v1": {
+      "python": "/replace/with/immutable/env/bin/python",
+      "python_sha256": "REPLACE_WITH_ACTUAL_SHA256"
+    }
+  },
+  "transports": {
+    "direct": ["/replace/with/approved/python", "/replace/with/direct_adapter.py"],
+    "netdisk": ["/replace/with/approved/python", "/replace/with/netdisk_adapter.py"]
+  },
+  "result_adapter": ["/replace/with/approved/python", "/replace/with/result_adapter.py"]
+}

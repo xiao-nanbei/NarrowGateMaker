@@ -1,0 +1,130 @@
+{
+  "schema_version": "narrowgate_p3_reach_time_surface_design.v1",
+  "identity": "p3_aggressive_reach_time_surface_v1",
+  "date": "2026-08-04",
+  "last_materially_modified": "2026-08-04",
+  "status": "mechanics_contract_implemented_model_identity_not_frozen",
+  "classification": "development_prediction_infrastructure_only",
+  "objective": "Estimate the side-specific aggressive-reach first-passage distribution over time and distance without imposing one universal order-lifetime horizon.",
+  "legacy_boundary": {
+    "fixed_10s_calibration_path": "research/families/f02_empirical_p3_touch/audit/p3_touch_calibration.py",
+    "fixed_10s_runtime_loader_path": "research/families/f02_empirical_p3_touch/fill_probability.py",
+    "fixed_10s_status": "historical_operational_heuristic_preserved_for_reproduction",
+    "fixed_10s_authoritative_for_new_research": false,
+    "current_operational_p3_v2_changed": false,
+    "historical_artifacts_rewritten": false
+  },
+  "estimand": {
+    "name": "side_specific_aggressive_reach_first_passage_cdf",
+    "formula": "F_reach,s(t,d|x)=P(T_aggressive_reach,s(d)<=t|x)",
+    "event_type": "side_correct_aggressive_reach",
+    "buy_event": "aggressive_sell_trade_price_tick<=decision_bid_tick-distance_ticks",
+    "sell_event": "aggressive_buy_trade_price_tick>=decision_ask_tick+distance_ticks",
+    "strict_future_interval": "(decision_origin_ms, decision_origin_ms+horizon_ms]",
+    "time_unit": "ms",
+    "distance_unit": "integer_price_ticks",
+    "time_step_ms": 100,
+    "administrative_right_censor_ms": 30000,
+    "max_distance_ticks": 1200,
+    "btc_usdc_tick_size_for_materialization": 0.1,
+    "first_passage_time_semantics": "100ms_interval_upper_endpoint_not_exact_event_time",
+    "unreached_semantics": "right_censored_at_30000ms_not_negative_event",
+    "decision_origin_cadence": "not_frozen_by_label_kernel",
+    "decision_origin_requirement": "strictly_increasing_explicit_causal_origins"
+  },
+  "parameter_provenance": {
+    "time_step_ms": {
+      "value": 100,
+      "source": "normalized BBO state cadence and established F06 discrete-time lifecycle infrastructure",
+      "selection_role": "label resolution",
+      "market_constant_claimed": false
+    },
+    "administrative_right_censor_ms": {
+      "value": 30000,
+      "source": "owner-supplied EC2 360h lifecycle audit reports fill p95=18.802s and cancel p95=25.126s",
+      "source_artifact_hash_bound": false,
+      "selection_role": "engineering censor boundary",
+      "market_constant_claimed": false,
+      "formal_fit_requirement": "bind a machine-readable lifecycle report and report beyond-censor sensitivity before freezing a model identity"
+    },
+    "distance_support": {
+      "value": "0.5_to_120_USDC_per_BTC_on_0.1_tick_grid",
+      "source": "historical v4.1 conditional-P3 prediction support",
+      "selection_role": "initial reusable label-cache bound",
+      "formal_model_support_frozen": false
+    },
+    "decision_origin_cadence": {
+      "value": null,
+      "source": "must be chosen by the future model identity",
+      "allowed_successors": [
+        "canonical_10s_prediction_origins",
+        "exact_baseline_eligible_quote_decisions"
+      ],
+      "constraint": "a canonical-10s fit cannot be transported to 100ms quote decisions without a separate decision-cadence audit"
+    }
+  },
+  "implementation": {
+    "label_kernel_path": "research/families/f02_empirical_p3_touch/audit/p3_reach_time_surface.py",
+    "label_kernel_sha256": "dc482bf02e752c5d5bf8a75ff10161f1261202dc4654e1d0487377b79c2af93d",
+    "label_schema_version": "narrowgate_p3_aggressive_reach_time_labels.v1",
+    "feature_graph_id": "p3_aggressive_reach_time_surface.v1",
+    "feature_graph_sha256": "fd084e7bf978747560271867366ff5ce8d8bbfff59a169b73ba459d2dbb3844c",
+    "legacy_feature_graph_id": "p3_touch_volatility_conditioned.v4",
+    "legacy_feature_graph_sha256_unchanged": "210ba301b14cc134ba4f7c93db973d535f3f8ea10242d5872b7afa0fb542612a"
+  },
+  "cache_contract": {
+    "persistent_payload": "side_specific_cumulative_max_reach_ticks_by_decision_origin_and_100ms_upper_endpoint",
+    "derived_queries": [
+      "first_reach_time_upper_ms_at_supported_distance",
+      "binary_reach_at_supported_distance_and_grid_horizon"
+    ],
+    "action_dependent_state_allowed": false,
+    "queue_or_fill_state_allowed": false,
+    "cancel_ack_or_terminal_state_allowed": false,
+    "inventory_campaign_or_pnl_allowed": false,
+    "reuse_boundary": "source_identity_plus_decision_origin_manifest_plus_tick_contract_plus_grid_spec"
+  },
+  "engineering_smoke": {
+    "economic_outcomes_read": false,
+    "day": "2026-06-13",
+    "decision_origin_sampling_for_smoke_only": "canonical_10s",
+    "decision_rows": 8640,
+    "valid_rows_per_side": 8628,
+    "time_bins": 300,
+    "buy_monotonicity_violations": 0,
+    "sell_monotonicity_violations": 0,
+    "bbo_input": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2/bbo/BTCUSDC-bbo-2026-06-13.parquet",
+      "sha256": "81b8cbed9103f05a2d352bb500594869fa2971570eca2520c458ee90a7f02788",
+      "rows": 845871
+    },
+    "trade_input": {
+      "path": "${NARROWGATE_DATA_ROOT}/raw/BTCUSDC-aggTrades-2026-06-13.csv",
+      "sha256": "9f9b9567fa44bc23e311eaa7391b1bbed688266da037d7fe2bf1bf30dbcf0634",
+      "rows": 211599
+    }
+  },
+  "future_model_freeze_requirements": {
+    "day_and_source_manifest_frozen_before_labels_are_scored": true,
+    "decision_origin_denominator_frozen": true,
+    "chronological_oof_and_day_clustered_inference": true,
+    "time_monotonicity": "nondecreasing_probability_in_time",
+    "distance_monotonicity": "nonincreasing_probability_in_distance",
+    "side_specific_evaluation": true,
+    "source_specific_transport": true,
+    "integrated_brier_and_calibration_over_time_distance": true,
+    "policy_support_diagnostics": true,
+    "lifecycle_join_belongs_to_action_conditioned_replay": true,
+    "mechanical_p_touch_times_average_markout_forbidden": true
+  },
+  "permissions": {
+    "model_training_completed": false,
+    "prediction_evidence_read": false,
+    "economic_outcomes_read": false,
+    "operational_artifact_replacement_authorized": false,
+    "quote_mapping_authorized": false,
+    "action_authorized": false,
+    "shadow_authorized": false,
+    "live_authorized": false
+  }
+}

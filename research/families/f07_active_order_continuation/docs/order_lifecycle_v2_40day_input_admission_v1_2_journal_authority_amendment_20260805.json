@@ -1,0 +1,55 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_40day_journal_authority_amendment.v1",
+  "identity": "f07_order_lifecycle_v2_40day_input_admission_v1_2_journal_authority_amendment",
+  "status": "execution_successor_frozen_pending_40day_journal_v2_admission",
+  "last_materially_modified": "2026-08-05",
+  "amends": {
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_input_admission_v1_contract_20260805.json",
+    "file_sha256": "3b1f6816111e2f73018307d2a44886d789a47bf84b48d5bcbe69f6bddc8d0aeb",
+    "canonical_identity_sha256": "3458cb12a9fcc9b65608018b9324fbb30de02e208ee3b26d000257800102dbd7",
+    "ordered_40_day_denominator_unchanged": true,
+    "historical_contract_bytes_unchanged": true
+  },
+  "authority": {
+    "mechanics_primary": "authoritative_journal_v2",
+    "python_cpp_authority": "per_event_event_stream_lockstep",
+    "legacy_role": "diagnostic_reconciliation_only",
+    "legacy_missing_blocks_execution": false,
+    "legacy_single_clock_blocks_execution": false
+  },
+  "hard_gates": {
+    "journal_v2_explicit_dual_clock": true,
+    "writer_integrity": true,
+    "cancel_reject_route": true,
+    "terminal_sub_lot_zero": true,
+    "cpp_event_stream_binding": true,
+    "ordered_40_day_sources_and_identity": true,
+    "daily_fresh_start_scope": true
+  },
+  "legacy_reconciliation": {
+    "missing_status": "diagnostic_unavailable",
+    "single_clock_status": "diagnostic_partial",
+    "invalid_artifact_status": "diagnostic_invalid",
+    "order_identity_mismatch_status": "diagnostic_mismatch",
+    "affects_lockstep_execution_eligibility": false,
+    "may_grant_mechanics_authority": false
+  },
+  "implementation_artifacts": {
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_journal_authority_amendment.py": "ccc9310c3ff3f94b9396f509de2409989b39806a5eba2a1c82efa783f4b98d67",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_input_admission.py": "a1afffa5a892909e3905cb5bf053729da7f058769cb23ca316132506f3a4d490",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_event_lockstep.py": "ec5b612e28a5fcfc70a4d50ea21909009994a784ee2c9b821fb805591b38d72a",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding.py": "cba3c33ca89599ba3d72293b3157e902984cf5db1ddb92fbe7810c59ea84a461",
+    "execution/order_lifecycle_journal_v2.py": "0d87c9c4d5d7c8bf0535289c284a071a50627444773edffd862fa789b6b14451",
+    "execution/order_lifecycle_journal_writer_v2.py": "ea1bcf695a451add489fb772d22d4036529bd6ac2f7a2c34bcc3c94e46f7438e",
+    "models/replay/order_lifecycle_v2_replay_adapter.py": "87311d8eeda4ed0fdc098a82ba09dd8829e49f07f2030b3527d2001359497a06"
+  },
+  "permissions": {
+    "formal_40day_lockstep": false,
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "prospective_live_epoch_transport": false,
+    "live_deployment": false
+  },
+  "canonical_amendment_sha256": "bd2216e84281a99049cbd8c04ede798101179ae37b3a4272a5d584ec2d94f254"
+}

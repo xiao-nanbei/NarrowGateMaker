@@ -1,0 +1,174 @@
+{
+  "schema_version": "cooldown_release_one_cycle_mechanics_reaudit.v1",
+  "identity": "cooldown_release_one_cycle_mechanics_reaudit_v1",
+  "status": "frozen_before_development_mechanics_read",
+  "frozen_at_utc": "2026-07-30T00:00:00Z",
+  "canonical_spec_sha256": "858548589f314125414020f128fa150a3b2c6725e842892cde06fe3fb58de16b",
+  "scope": "Development-only current-stack mechanical reaudit of an already closed post-cooldown one-cycle skip action; no treatment-effect estimate and no action registration authority.",
+  "permissions": {
+    "treatment_contrast_read": false,
+    "outcome_mean_or_sign_read": false,
+    "outcome_variance_read_for_mde_only": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "randomized_action_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "historical_action_overlap": {
+    "first_add_marginal_order_value_v1": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/first_add_marginal_order_value_v1_20260722/freeze_spec.json",
+      "sha256": "dc8426549d4a09dacd474c1ef42246fd72e3856e3589bf1b83b98a6213443f66",
+      "closed": true,
+      "overlap": "baseline versus skip exactly one first baseline-eligible exposure-increasing add cycle per campaign"
+    },
+    "sell_add_repair_trend_skip_causal_v4_v1": {
+      "path": "research/families/f09_campaign_action_uplift/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md",
+      "sha256": "8ef405573ab048789b49bf065a1d964667ff4738e0edc2d490f6213cd7f48897",
+      "closed": true,
+      "overlap": "SELL baseline versus skip exactly one otherwise eligible add cycle; historical selected-cycle fill rate 3.52 percent"
+    },
+    "recovery_event_rearm_v1": {
+      "path": "research/families/f09_campaign_action_uplift/docs/recovery_event_rearm_v1_20260722.md",
+      "sha256": "8bdb660719b07c95d3f168cd3d11eb71e907053ccaf2aec0787cd753a60ec2c2",
+      "closed": true,
+      "overlap": "first baseline-eligible post-85n-cooldown add decision with reducing quote unchanged"
+    }
+  },
+  "diagnostic_contract": {
+    "classification": "diagnostic_only",
+    "decision_surface": "first baseline-eligible exposure-increasing add decision after the current 85s times consecutive-fill-units cooldown has expired",
+    "control_action": "release_current_eligible_add_cycle",
+    "candidate_action": "skip_exactly_one_eligible_add_cycle",
+    "reducing_quote_unchanged": true,
+    "one_diagnostic_opportunity_per_campaign_and_side": true,
+    "metrics": [
+      "release_episode_count",
+      "first_binding_blocker",
+      "release_to_eligible_delay_ms",
+      "baseline_eligible_rate",
+      "action_change_opportunity_rate",
+      "selected_cycle_order_fill_rate",
+      "selected_cycle_filled_quantity",
+      "active_days",
+      "design_mde_usdc"
+    ],
+    "near_noop_fill_rate_ucb_threshold": 0.1,
+    "near_noop_threshold_provenance": "judgmental mechanics classification fixed before the current-stack result; it is not an economic promotion gate",
+    "may_register_randomized_action_on_pass": false,
+    "reason": "The same release surface and one-cycle skip intervention were already evaluated and closed under three prior F09 identities. A denominator, blocker, or replay refresh cannot create a new economic action."
+  },
+  "observer_contract": {
+    "implementation": "two side-specific observer-only baseline replays",
+    "fill_cooldown_clock": "wall_time_85n",
+    "state_conditioned_rearm_policy_version": "composite_recovery_v2",
+    "recovery_score_threshold": 1e-12,
+    "recovery_component_epsilon": 1e-6,
+    "observer_noop_proof": "the positive threshold is below the hard recovery component floor; every valid state exits immediately and every invalid state has hold_add_active=false",
+    "observer_action_effective_must_equal_zero": true,
+    "observer_blocked_quote_cycles_must_equal_zero": true,
+    "core_paths_must_be_identical": true,
+    "core_path_comparison": "decision and order lifecycle SHA256 after removing observer-only metadata",
+    "native_module_binding": "each worker explicitly imports the producer-spec module path before deferred q90 initialization and verifies its byte hash",
+    "observer_seed_base": 2026073001,
+    "trace_decisions_max_per_day": 200000,
+    "trace_quotes_max_per_day": 200000,
+    "trace_observer_rows_max_per_day": 10000,
+    "current_stack": [
+      "BUY q90 cancel ACK recovery re-entry with Python/C++ kernel parity",
+      "path-dependent consecutive-loss cooldown",
+      "deterministic sync-degrade stress",
+      "native snapshot/delta exact-level queue",
+      "frozen P3 and AWS Tokyo latency identity"
+    ],
+    "daily_initial_state": "fresh_start",
+    "cross_day_state_carried": false
+  },
+  "mde_contract": {
+    "estimand": "balanced_two_arm_difference_in_means",
+    "outcome": "decision_to_campaign_terminal_value_usdc",
+    "allowed_read": "within-UTC-day centered baseline outcome variance only",
+    "forbidden_reads": [
+      "outcome mean",
+      "outcome sign",
+      "action contrast",
+      "state threshold search",
+      "policy score"
+    ],
+    "alpha": 0.05,
+    "power": 0.8,
+    "allocation": "0.5_0.5_hypothetical_design_only",
+    "formula": "MDE=(z_0.975+z_0.8)*2*sqrt(sum_day_within_day_SSE)/N",
+    "authority": "design resolution diagnostic only"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "identity": "same 24 Grade-A plus 16 Grade-B Development denominator used by current F09/F10 baseline evidence",
+    "validation_days_read": false,
+    "sealed_holdout_days_read": false
+  },
+  "baseline_producer_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/first_add_decision_to_terminal_native_producer_v1_spec_20260729.json",
+    "sha256": "d5f10e132c3f7b41942800dc8372f1868fdde27d9a2f60e34ca311ee727deff7",
+    "reuse_scope": "current corrected wall-time baseline, data, P3, queue, latency, native book, BUY q90 and current implementation identities"
+  },
+  "lineage_outcome_contract_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/lineage_randomized_outcome_contract_v2.json",
+    "sha256": "bd95adae59e4fa1fee982b29dc960c233bb7e468bc2f844d656f42a4527503cd",
+    "reuse_scope": "assignment-time outcome and accounting semantics for MDE design only; no randomization is registered"
+  },
+  "storage_gate": {
+    "estimated_new_output_gib": 0.25,
+    "absolute_minimum_free_gib": 50.0,
+    "reserve_free_gib": 60.0,
+    "output_multiple": 2.5,
+    "required_free_gib": 60.625,
+    "daily_atomic_checkpoints": true
+  },
+  "implementation_identity": {
+    "research/families/f09_campaign_action_uplift/audit/cooldown_release_one_cycle_mechanics_reaudit.py": "b6831a25048ddbf8cb9e37ce97f77add5d5ffc9b9084d2049d6672e335b29811",
+    "tests/test_cooldown_release_one_cycle_mechanics_reaudit.py": "29c1d041b9109d29ad4f4307af1569d248af9bd9a52ad84f4e65845a24bda75f"
+  },
+  "frozen_decision_rule": "Complete the current-stack mechanics and MDE diagnostic, then keep the historical one-cycle action closed regardless of result. A future F09 action must change the economic intervention itself."
+}

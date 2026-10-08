@@ -1,0 +1,33 @@
+{
+  "schema_version": "narrowgate_experiment_panel_amendment.v1",
+  "experiment_id": "causal_v9_through_20260725_20260727",
+  "amendment_id": "causal_v9_formal_panel_source_gap_r1_20260727",
+  "timing": "frozen_after_formal_data_gate_failure_and_before_any arm outcome was produced",
+  "reason": {
+    "day": "2026-07-24",
+    "normalized_l2_coverage": 0.978925,
+    "formal_minimum_coverage": 0.99,
+    "source_gap_intervals_utc": [
+      ["2026-07-24T05:26:56.644Z", "2026-07-24T05:39:21.297Z"],
+      ["2026-07-24T06:41:46.836Z", "2026-07-24T06:53:02.179Z"],
+      ["2026-07-24T06:56:04.485Z", "2026-07-24T07:03:00.277Z"]
+    ],
+    "remote_redownload_check": "CryptoHFTData hours 05, 06, and 07 were downloaded again and matched the local raw files byte-for-byte by SHA256",
+    "classification": "source-side outage; not repairable from the supported archive"
+  },
+  "amended_panels": {
+    "formal_replay_test": ["2026-07-21", "2026-07-22", "2026-07-23"],
+    "diagnostic_only": {
+      "2026-07-24": "target-day L2 coverage below 99%",
+      "2026-07-25": "target day passes, but its required prior-day market context is not formal eligible"
+    }
+  },
+  "governance": {
+    "formal_test_minimum_days_original": 4,
+    "formal_test_days_available": 3,
+    "deployment_authorized_by_this_panel": false,
+    "outcome_use": "mechanism and directional evidence only",
+    "threshold_changes": false,
+    "diagnostic_days_may_not_override_formal_denominator_failure": true
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.spec",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-08",
+  "family_id": "F09_campaign_action_uplift",
+  "research_class": "defense",
+  "progression_route": "owner_risk_accepted",
+  "status_at_freeze": "outcome_informed_owner_development_screen_registered_candidate_outcomes_unread",
+  "question": "Does preserving the current BER signal and 1.2/2.0 mapping only on exposure-increasing add quotes improve the current full path relative to applying BER to both sides and all inventory roles?",
+  "design_basis": {
+    "identity": "live_480h_multi_level_inventory_loss_attribution",
+    "interpretation": "Multi-level inventory concentrated the observed loss, motivating a role-safe test without relying on a replay control that differed from live BER clocks.",
+    "outcome_informed_successor": true,
+    "independent_confirmation": false
+  },
+  "baseline": {
+    "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "identity_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
+    "config_path": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.aws_tokyo_20260808_ber_baseline.yaml",
+    "config_sha256": "f1d39df6d44c7e5ca494e3cac46ef72c362cc39f62ba8979956982e77231ca4e",
+    "config_authority": "read_only_snapshot_of_the_running_AWS_Tokyo_live_config",
+    "causal_v12_ml_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_enabled": false,
+    "continuous_state_required_for_live_promotion": true
+  },
+  "model_and_p3": {
+    "bundle_meta_path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+    "bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "p3_path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+    "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+  },
+  "fixed_ber_signal": {
+    "input": "trade_intensity_60s",
+    "input_semantics": "latest feature-history value published by compute_signal, held between completed canonical 10-second feature buckets, and sampled once by each completed 1-second bar callback",
+    "feature_value_units": "mean aggregate trade count per 10-second bar across the trailing 60 seconds",
+    "ema_fast_alpha": 0.13,
+    "ema_slow_alpha": 0.011,
+    "slow_ema_ready_minimum": 1e-06,
+    "activation_ratio_threshold": 1.2,
+    "spread_multiplier": 2.0,
+    "python_live_replay_cpp_state_event_lockstep_required": true,
+    "signal_or_constant_search_allowed": false
+  },
+  "arms": {
+    "control": {
+      "arm_id": "current_live_held_global_ber_control",
+      "ber_guard_thresh": 1.2,
+      "ber_spread_mult": 2.0,
+      "ber_exposure_add_only": false
+    },
+    "candidate": {
+      "arm_id": "ber_exposure_add_only_role_safe",
+      "ber_guard_thresh": 1.2,
+      "ber_spread_mult": 2.0,
+      "ber_exposure_add_only": true
+    },
+    "only_policy_difference": "ber_exposure_add_only: false -> true"
+  },
+  "candidate_quote_composition": {
+    "role_classifier": "decision_pre_inventory_plus_target_quantity",
+    "inventory_numeric_epsilon_btc": 1e-10,
+    "opener": "absolute decision-pre inventory is at or below numeric epsilon",
+    "add": "the complete target quantity moves inventory farther from zero without crossing zero",
+    "reducing": "the complete target quantity moves inventory toward zero and does not cross zero",
+    "mixed_cross_zero": "the target quantity crosses flat and creates opposite-side exposure; candidate remains byte-equivalent to control",
+    "same_quote_decision_snapshot_for_both_source_quotes": true,
+    "same_prediction_and_depth_for_both_source_quotes": true,
+    "ber_inactive": "candidate equals control",
+    "positive_inventory_nonmixed": {
+      "BUY": "exact BUY side from the current global BER quote; this is the exposure-increasing add",
+      "SELL": "exact SELL side from the BER-bypass quote; this is the reducing quote"
+    },
+    "negative_inventory_nonmixed": {
+      "BUY": "exact BUY side from the BER-bypass quote; this is the reducing quote",
+      "SELL": "exact SELL side from the current global BER quote; this is the exposure-increasing add"
+    },
+    "flat_inventory_opener": {
+      "BUY": "exact BUY side from the BER-bypass quote; this is an opener",
+      "SELL": "exact SELL side from the BER-bypass quote; this is an opener"
+    },
+    "post_composition_processing": "Both arms pass through the same existing side policy, tick, GTX, post-policy spread cap, replace, cancel-ACK, queue, fill, inventory, cooldown, and campaign logic.",
+    "pair_cap_collision_rule": "The candidate may not move an opener or reducing side away from its BER-bypass integer-tick price. If the composed pair cannot satisfy the existing spread cap by changing only the add side, the BER role-safe composition is a no-op and the current control pair is retained.",
+    "forced_cancel_or_lifecycle_change": false,
+    "normal_replace_due_to_changed_effective_price_is_part_of_treatment": true
+  },
+  "development_panel": {
+    "role": "historical_native_development_previously_consumed_not_independent_confirmation",
+    "independent_confirmation": false,
+    "day_count": 40,
+    "daily_fresh_start": true,
+    "reused_execution_plan_path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3/execution-plan.json",
+    "reused_execution_plan_sha256": "5c47033e67b75a9cbef6c336825dbea713b117c54674828d956f6626886fb7d4",
+    "days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ]
+  },
+  "comparison": {
+    "same_market_window": true,
+    "same_v9_10s_prediction_overlay": true,
+    "same_random_path": true,
+    "same_queue_latency_fill_inventory_cooldown_and_campaign_implementation": true,
+    "engine": "cpp_authoritative_with_python_fill_path_lockstep",
+    "bootstrap_cluster": "UTC_day",
+    "bootstrap_draws": 20000,
+    "bootstrap_seed": 20260808
+  },
+  "mechanics_gates": {
+    "live_python_replay_cpp_ber_state_mismatch_count": 0,
+    "python_cpp_fill_path_mismatch_count": 0,
+    "add_side_vs_global_ber_price_mismatch_count": 0,
+    "opener_or_reducing_side_vs_ber_bypass_price_mismatch_count": 0,
+    "candidate_pair_change_rate_denominator": "common canonical requote timestamps present in both arms, two side rows per timestamp; any control/candidate n_requotes mismatch fails closed",
+    "candidate_pair_change_rate_minimum": 0.05,
+    "candidate_pair_change_rate_maximum": 0.5,
+    "minimum_effective_changes_per_side": 200,
+    "minimum_effective_change_days_per_side": 10,
+    "BUY_and_SELL_add_support_reported_separately": true,
+    "effective_tick_change_reported_after_all_caps_and_guards": true
+  },
+  "scorecard": {
+    "profile_id": "action_defense_v2",
+    "profile_sha256": "29e3e8777672784e701a4016b31aa9c6b5116d46762e5ce84c78f48d2bea058e",
+    "implementation_path": "models/audit/experiment_scorecard_v2.py",
+    "implementation_sha256": "200862bb883a714cdfbab254b1074f17db06ee5642dc81dfd706a0d41641ab14",
+    "owner_fill_retention_range": [
+      0.8,
+      1.2
+    ]
+  },
+  "noncompensable_economic_gates": {
+    "terminal_mtm_delta_lcb_strictly_positive": true,
+    "closed_campaign_value_delta_lcb_strictly_positive": true,
+    "daily_positive_rate_minimum": 0.55,
+    "negative_terminal_protection_lcb_minimum": 0.0,
+    "campaign_q10_delta_lcb_minimum": 0.0,
+    "campaign_cvar10_delta_lcb_minimum": 0.0,
+    "campaign_mae_avoidance_lcb_minimum": 0.0,
+    "maximum_inventory_avoidance_lcb_minimum": 0.0,
+    "inventory_time_avoidance_lcb_minimum": 0.0,
+    "buy_maker_value_delta_lcb_minimum_bps": -0.05,
+    "sell_maker_value_delta_lcb_minimum_bps": -0.05,
+    "fill_retention_range": [
+      0.8,
+      1.2
+    ],
+    "multi_level_LONG_and_SHORT_terminal_value_reported_separately": true,
+    "campaign_accounting_max_abs_error_usdc": 1e-06
+  },
+  "progression": {
+    "one_day_mechanics_must_pass_before_remaining_development_days_are_read": true,
+    "development_pass_only_allows": "restart_aware_continuous_calendar_owner_confirmation",
+    "direct_live_change_from_daily_fresh_start": false,
+    "continuous_confirmation_required_before_live_config_successor": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "threshold_multiplier_role_or_epsilon_search_after_outcome_read": false,
+    "research_supported_promotion_allowed": false,
+    "owner_risk_accepted_label_must_remain_permanent": true
+  }
+}

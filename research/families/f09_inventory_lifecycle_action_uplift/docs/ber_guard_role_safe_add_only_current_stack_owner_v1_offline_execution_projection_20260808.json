@@ -1,0 +1,41 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.offline_execution_projection",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-08",
+  "status": "execution_projection_frozen_candidate_outcomes_unread",
+  "source_config": {
+    "path": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.aws_tokyo_20260808_ber_baseline.yaml",
+    "sha256": "f1d39df6d44c7e5ca494e3cac46ef72c362cc39f62ba8979956982e77231ca4e",
+    "canonical_mapping_sha256": "91e6cc14a67ffdc89b3f63163147b711fd69065b6001303c9c64a56e4cbdb743"
+  },
+  "projection": {
+    "patches": [
+      {
+        "path": "lifecycle_journal_v2.enabled",
+        "source_value": true,
+        "projected_value": false,
+        "reason": "The EC2 bounded spool is an asynchronous research writer and its host path is not mounted on the offline replay host."
+      }
+    ],
+    "allowed_difference_paths": [
+      "lifecycle_journal_v2.enabled"
+    ],
+    "projected_canonical_mapping_sha256": "592b6a1832e140dd733fbedfb62df042a0d68be2ef0f6917b40b7a43149a0c74",
+    "raw_remote_config_rewritten": false,
+    "remote_mount_validation_monkeypatched": false,
+    "strategy_or_execution_parameter_changes": false,
+    "order_path_equivalent": true
+  },
+  "baseline_provenance": {
+    "operational_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "operational_identity_sha256": "b30a1675032df6ef273886cd147466de827a77a385e5977587e77eb51e6c6f5d",
+    "observability_successor_quote_policy_changed": false
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

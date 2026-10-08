@@ -1,0 +1,182 @@
+{
+  "schema_version": "first_add_decision_to_terminal_loss_diagnostic.v1",
+  "identity": "first_add_decision_to_terminal_loss_diagnostic_v1",
+  "status": "preregistered_native_producer_required_development_not_read",
+  "scope": "Development-only observational attribution of the first actual exposure-increasing add-fill-generating order decision in each campaign; no action counterfactual, threshold search, or promotion authority.",
+  "canonical_spec_sha256": "eb1c9a744acea6b2111681f50b07183232b090b2aeb54364220857139621940d",
+  "estimand": {
+    "primary": "decision_to_campaign_terminal_value_usdc",
+    "definition": "campaign_terminal_equity_usdc - decision_equity_usdc",
+    "unit": "USDC_per_first_add_decision",
+    "observational_not_action_uplift": true,
+    "decision_before_order_fill_campaign_join": true,
+    "pre_decision_campaign_state_is_covariate_only": true
+  },
+  "panels": {
+    "development_primary_grade_a_days": [
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-06-03",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-13",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-26"
+    ],
+    "development_sensitivity_grade_b_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-14",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "grade_b_policy": "preregistered_sensitivity_only_never_pooled_into_primary_gate",
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ]
+  },
+  "quality_identity": {
+    "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/minimal_good_day_reaudit_20260727/daily_quality_20260101_20260725.csv",
+    "sha256": "ab1d34fef572aaba59a42ec1f216726ac5f6c1d9a75b18a582fcd6c508489958",
+    "primary_requires_formal_training_replay_eligible": true,
+    "sensitivity_requires_native_sequence_and_normalized_formal_eligible": true
+  },
+  "native_lifecycle_contract": {
+    "trace_schema_version": "first_add_decision_to_terminal_trace.v1",
+    "selection": "first order decision in each campaign whose exact order later generates an exposure-increasing add fill",
+    "join": "decision_id_to_order_id_to_fill_to_campaign",
+    "nearest_time_match_forbidden": true,
+    "post_hoc_old_trace_repair_forbidden": true,
+    "coverage_must_equal_one_or_fail": true,
+    "one_row_per_day_campaign": true,
+    "required_columns": [
+      "campaign_id",
+      "campaign_terminal_equity_usdc",
+      "campaign_terminal_ts_ms",
+      "day",
+      "decision_equity_usdc",
+      "decision_id",
+      "decision_to_campaign_terminal_value_usdc",
+      "decision_ts_ms",
+      "decision_visible_feature_ready_ts_max_ms",
+      "exact_decision_order_fill_join",
+      "fill_ts_ms",
+      "inventory_role",
+      "order_id",
+      "order_submit_ts_ms",
+      "quality_grade",
+      "side",
+      "trace_schema_version"
+    ]
+  },
+  "decision_visible_features": {
+    "campaign_state": [
+      "inventory_btc",
+      "campaign_age_ms",
+      "campaign_pnl_so_far_usdc",
+      "campaign_mae_so_far_usdc",
+      "exposure_increasing_fill_count_so_far",
+      "reducing_fill_count_so_far"
+    ],
+    "local_microstructure": [
+      "quote_distance_ticks",
+      "queue_ahead_btc",
+      "microprice_shift_bps",
+      "l2_book_refresh_ratio",
+      "l2_book_cancel_ratio",
+      "local_toxicity",
+      "parent_aggtrade_flow_imbalance"
+    ],
+    "individual_trade_fields_are_outcome_matching_only": true,
+    "all_feature_ready_timestamps_must_not_exceed_decision_ts": true
+  },
+  "chronological_evaluation": {
+    "primary_days": "A_only",
+    "outer_folds": "expanding_past_only",
+    "minimum_train_days": 10,
+    "embargo_days": 1,
+    "maximum_test_block_days": 3,
+    "buy_sell_separate": true,
+    "day_and_campaign_clustered_simultaneous_intervals": true,
+    "campaign_state_only_baseline": true,
+    "local_microstructure_incremental_model": true
+  },
+  "gates": {
+    "exact_join_coverage": 1.0,
+    "feature_clock_violations": 0,
+    "minimum_primary_days": 10,
+    "negative_high_risk_value_simultaneous_bound": "strictly_below_zero",
+    "daily_direction_stability": "preregistered_before_fit",
+    "local_incremental_value_over_campaign_state_baseline": "positive_lower_bound",
+    "grade_b_sensitivity_must_not_reverse_primary_direction": true,
+    "prediction_evidence_does_not_authorize_action": true
+  },
+  "downstream": {
+    "f05_identity": "decision_visible_negative_fill_value_evidence_m0_v1",
+    "f05_fit_blocked_until_native_f10_artifact_and_sha256_exist": true,
+    "f09_action_registration_blocked": true
+  },
+  "permissions": {
+    "development_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "implementation_identity": {
+    "contract_module_sha256": "f2f114897987ba454db414a0b736d5687bfb68bc159ceb307e9fa313345b2a16",
+    "contract_test_sha256": "f847b1dcb12d176ece079f31b6951418ec8d113a20f68d511b67a698073fd89e"
+  }
+}

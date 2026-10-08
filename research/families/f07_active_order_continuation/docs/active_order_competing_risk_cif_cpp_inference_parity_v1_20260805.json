@@ -1,0 +1,56 @@
+{
+  "schema_version": "active_order_competing_risk_cif_cpp_inference_parity.v1",
+  "identity": "active_order_competing_risk_cif_cpp_inference_parity_v1",
+  "date": "2026-08-05",
+  "status": "cpp_probability_state_update_and_python_inference_v1_1_implemented_local_parity_passed_no_training_or_action_authority",
+  "grid_interval_ms": 100,
+  "cause_order": [
+    "favorable_fill",
+    "adverse_fill",
+    "cancel_ack",
+    "other_terminal"
+  ],
+  "ownership": {
+    "cpp": "joint hazard normalization and sequential survival/CIF state update",
+    "python_inference_v1_1": "numerically robust batch inference for all finite non-negative cause rates",
+    "python_lifecycle": "risk-spell creation, partial-fill reset, phase transitions and terminal classification"
+  },
+  "implementation_sha256": {
+    "cpp_header": "506c96bfcc31e9034521e530484946662e0804291caac6695eed1a5dfd151ef6",
+    "cpp_source": "912c53d708abcc54c7e23c7de0f000a362867beccb93b3e62f546162a84766c4",
+    "python_lifecycle_v1": "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72",
+    "python_inference_v1_1": "be12918c22d01e1e33cdba3466a38b870dce90a52877f7fe9be03d4e969250ee",
+    "bindings": "2c140017baae1643429e490d6c446f0c1d5996a3eb274b48dd50c750712ae82c",
+    "cmake": "44702a3ea69d6c150584fb0282cdec06c0c86d855c20e321b514dc0d56e728f5",
+    "deploy_makefile": "8f17c477f6f3ed719a104ed3a81a1c20a15edd21f3887fe5bbe4cfdfbcc2ac3d",
+    "parity_test": "68cb1374d38107314f574a1ecadce18add42a139fa932c18c5a8b372aa7b0de9"
+  },
+  "verification": {
+    "focused_tests_passed": 23,
+    "time_varying_rate_edges": 300,
+    "historical_exact_sum_false_rejection_removed_in_v1_1": true,
+    "checkpoint_resume_tested": true,
+    "invalid_grid_and_rate_fail_closed": true,
+    "probability_mass_checked_each_edge": true,
+    "python_cpp_tolerance": {
+      "rtol": 2e-14,
+      "atol": 2e-15
+    }
+  },
+  "permissions": {
+    "lifecycle_tape_admission_authorized": false,
+    "training_authorized": false,
+    "economic_outcomes_read": false,
+    "q90_action_authorized": false,
+    "live_deployment_authorized": false,
+    "baseline_update_authorized": false
+  },
+  "remaining_blockers": [
+    "authoritative replay journal-v2 event tape",
+    "fully bound baseline epoch identity",
+    "frozen 40-day panel and full-fill classifier",
+    "trained rate model artifact and feature preprocessing contract",
+    "event and checkpoint lockstep on authoritative rows",
+    "live transport validation"
+  ]
+}

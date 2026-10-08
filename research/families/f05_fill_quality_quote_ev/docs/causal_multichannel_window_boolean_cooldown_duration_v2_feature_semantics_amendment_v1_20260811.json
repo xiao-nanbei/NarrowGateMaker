@@ -1,0 +1,70 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.feature_semantics_amendment.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_feature_semantics_amendment_v1",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "reason": "Clarify already-implemented outcome-blind feature ownership before any formal strict-native Development labels or nested OOF are admitted.",
+  "active_schema_clarification": {
+    "target_price_displayed_quantity": {
+      "learner_block": "M0",
+      "role": "assignment-visible execution context at the order's target price",
+      "fields": [
+        "target_price_displayed_qty_btc",
+        "target_price_displayed_qty_status",
+        "target_price_displayed_qty_known"
+      ],
+      "allowed_statuses": ["exact", "known_zero", "unknown"],
+      "is_queue_ahead": false,
+      "may_infer_cancel_refill_or_trade_ownership": false,
+      "unsupported_or_unknown_fallback": "UNOBSERVED"
+    },
+    "displayed_depth_change": {
+      "learner_block": "M2",
+      "role": "consecutive-window public displayed-quantity increase/decrease rate",
+      "may_be_named_exact_l2_depletion_or_refill_attribution": false,
+      "may_infer_cancel_refill_or_trade_ownership": false
+    }
+  },
+  "still_registered_but_unobserved": [
+    "arrival tempo distinct from trade count",
+    "causal trade price impact",
+    "causal absorption",
+    "exact-L2 depletion/refill ownership attribution",
+    "provider queue state"
+  ],
+  "implementation_bindings": {
+    "features": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_features.py",
+      "sha256": "f397bb538d257eba67acf047427ef577e8a9a77b1474d02d4f5953364adfa486"
+    },
+    "predicates": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_predicates.py",
+      "sha256": "ad7691951ae39b3dd1b20e33cb71990c2e65daeeaf31950909f6be6d129a5605"
+    },
+    "snapshot": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_snapshot.py",
+      "sha256": "5f4c10d3d55f02203807c67e4d32d09d1ba4097dea669e74ff8eca35dcd5f7ea"
+    }
+  },
+  "execution_compatibility": {
+    "snapshot_schema_changed": false,
+    "feature_values_changed": false,
+    "predicate_values_changed": false,
+    "duration_vocabulary_changed": false,
+    "queue_or_fill_semantics_changed": false,
+    "one_shot_label_estimand_changed": false,
+    "benchmark_reexecution_required": false,
+    "compatibility_scope": "The amendment names and limits fields already emitted and consumed by the base identity; it does not alter execution or economic outcomes."
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "development_labels_generated": false,
+    "nested_oof_run": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

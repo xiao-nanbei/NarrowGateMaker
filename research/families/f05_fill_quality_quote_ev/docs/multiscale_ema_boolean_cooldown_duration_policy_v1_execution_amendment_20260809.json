@@ -1,0 +1,356 @@
+{
+  "schema_version": "multiscale_ema_boolean_cooldown_duration_policy.v1.execution_amendment.v1",
+  "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+  "last_materially_modified": "2026-08-09",
+  "status": "frozen_execution_contract_with_explicit_implementation_blockers_before_economic_read",
+  "research_class": "exploratory_state_to_duration_policy",
+  "economic_results_read_by_this_amendment": false,
+  "registry_modified": false,
+  "contract_binding": {
+    "spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.json",
+      "sha256": "9f8c5abce4817b029d943648a46ab115d6ce7ac7f758b1326a48d75fa446e8ce"
+    },
+    "human_readable_spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.md",
+      "sha256": "4526dbcd9924c04c8eca5e62b96027d8473426cc7949c51c8c748a0ca7f0cbfe"
+    },
+    "outcome_blind_inputs": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_outcome_blind_inputs_20260809.json",
+      "sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035",
+      "schema_version": "multiscale_ema_boolean_cooldown_duration_policy_v1.outcome_blind_inputs.v1",
+      "economic_outcomes_read": false,
+      "expected_opportunities": 8600,
+      "candidate_count_per_side": 8,
+      "expected_single_action_forks": 68800,
+      "candidate_actions": {
+        "BUY": [
+          "CONTROL_85N",
+          "FIXED_79S",
+          "FIXED_173S",
+          "FIXED_223S",
+          "FIXED_356S",
+          "FIXED_640S",
+          "FIXED_709S",
+          "FIXED_2048S"
+        ],
+        "SELL": [
+          "CONTROL_85N",
+          "FIXED_79S",
+          "FIXED_166S",
+          "FIXED_211S",
+          "FIXED_349S",
+          "FIXED_660S",
+          "FIXED_686S",
+          "FIXED_1748S"
+        ]
+      },
+      "duration_estimator": "daily-fresh-start day-equal-weighted Kaplan-Meier for next-state and undo clocks",
+      "right_censoring": "unobserved next-state or undo values are right-censored at natural UTC day end",
+      "control_85n_distribution": "day-equal-weighted empirical distribution reported separately from the Kaplan-Meier candidates",
+      "distribution_scope": "not_a_cross_day_physical_duration_distribution",
+      "authoritative_config_lock": {
+        "path": "${NARROWGATE_LIVE_CONFIG}",
+        "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+        "clock_mode": "wall_time",
+        "fill_cooldown_s": 85.0,
+        "quantity_unit_definition": "max(order_size_btc, lot_size_btc)",
+        "order_size_btc": 0.001,
+        "lot_size_btc": 0.001,
+        "quantity_unit_btc": 0.001,
+        "consecutive_reset_policy": "opposite_fill_only",
+        "adaptive_add_cooldown_enabled": false,
+        "reducing_cooldown_s": 0.0,
+        "q90_action_enabled": false,
+        "buy_fill_selection_action_enabled": false
+      }
+    },
+    "authoritative_daily_control": {
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+      "baseline_id": "btc_usdc_current_live_held_ber_replay_baseline_40d_20260809"
+    },
+    "operational_baseline": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+      "sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4"
+    },
+    "outer_fold_source": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
+      "sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908",
+      "field": "chronological_oof",
+      "lineage_only": true,
+      "predecessor_economic_conclusion_inherited": false
+    }
+  },
+  "source_artifacts": {
+    "provider_ema_encoder": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid.npz",
+      "sha256": "369ee07e5f8568ad0d9b41cf9c407c2d01fe794f072f7af55942fbeba917236d",
+      "role": "2025 provider unsupervised predicate normalization only"
+    },
+    "provider_ema_encoder_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid_manifest.json",
+      "sha256": "59970d00136c56e7500f50ca4df71ed3487fb3dcec705c371b75f530b0eb4def",
+      "training_days": 66,
+      "training_rows_both_sides": 112090884,
+      "economic_authority": false
+    }
+  },
+  "control_projection_integrity": {
+    "authoritative_baseline_recorded_python_replay_sha256": "e89eaa389326f37c057310bbfc432679de3d389ace917a46c7738a0dd113930c",
+    "current_local_python_replay_sha256": "4bf15f89a76f67aede90ec37e605e9debcf51bd20cfd67db728ef34acd6eba8e",
+    "hashes_equal": false,
+    "reason": "the local replay now contains research-only opportunity and duration-fork hooks added after the authoritative control artifact",
+    "required_gate": "with every research hook disabled, regenerate the frozen control and require zero field/path/accounting mismatch before the new opportunity census can claim baseline authority",
+    "control_noop_parity_status": "not_run",
+    "economic_outcomes_may_be_read_before_gate": false
+  },
+  "bound_local_implementation": [
+    {
+      "role": "causal_all_pair_ema_state_and_predicates",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_boolean_cooldown_duration.py",
+      "sha256": "5fcd4afe14dcc226c10663c9a99eb95c7914aba972df107e093f2fdff4019c83",
+      "status": "implemented_local"
+    },
+    {
+      "role": "outcome_blind_duration_and_predicate_freezer",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/freeze_multiscale_ema_boolean_cooldown_duration_policy.py",
+      "sha256": "b04383ca0b9cd04cfc01c57d4115231ea60240fc8537c6ae6c50ec8301398369",
+      "status": "implemented_and_artifact_present"
+    },
+    {
+      "role": "python_authoritative_replay_with_opportunity_census_and_single_target_duration_override",
+      "path": "models/backtest_tick.py",
+      "sha256": "4bf15f89a76f67aede90ec37e605e9debcf51bd20cfd67db728ef34acd6eba8e",
+      "status": "implemented_local_not_yet_complete_panel_runner"
+    },
+    {
+      "role": "shared_fill_cooldown_quantity_and_reset_contract",
+      "path": "strategy/fill_cooldown.py",
+      "sha256": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+      "status": "implemented_local"
+    },
+    {
+      "role": "live_control_semantics_reference_only",
+      "path": "strategy/maker_engine.py",
+      "sha256": "3bac1a62826d949d439f6c38f063545e18430b80dc2779a1ff2640662464f0c2",
+      "status": "reference_not_candidate_policy_implementation"
+    },
+    {
+      "role": "shared_quote_permission_guard",
+      "path": "strategy/policy_guards.py",
+      "sha256": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+      "status": "implemented_local"
+    },
+    {
+      "role": "C++ authoritative replay source",
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "b5370e51df66a14cb31f92d61f9d08922d27aa54b69ab5249491e28d5b77a2ea",
+      "status": "control_cooldown_exists_but_v1_duration_opportunity_and_override_ABI_not_implemented"
+    },
+    {
+      "role": "C++ replay ABI declaration",
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "510ed87de20bb2f8a3c1b64623caac0d45862731f9dc255f2f28dcdc1f811bc9",
+      "status": "v1_duration_fork_fields_not_implemented"
+    },
+    {
+      "role": "pybind replay binding",
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "7185110a95329702bb77fced590d5d4dbd6b9afc471c630265a687c13c7e18a0",
+      "status": "v1_duration_fork_binding_not_implemented"
+    },
+    {
+      "role": "mechanics_unit_test",
+      "path": "tests/test_multiscale_ema_boolean_cooldown_duration.py",
+      "sha256": "45c97ae30e69a740ae73a0ba9e9325b1fff44ba71953fe93c21836c5aa3bb61a",
+      "status": "present_not_executed_by_this_freeze"
+    },
+    {
+      "role": "shared_cooldown_contract_test",
+      "path": "tests/test_fill_cooldown_contract.py",
+      "sha256": "509f9d0aca19fa62bbb72a9a94348a4980069d632ddff62fc2cff4c315643b5d",
+      "status": "present_not_executed_by_this_freeze"
+    },
+    {
+      "role": "live_cooldown_semantics_test",
+      "path": "tests/test_live_fill_cooldown_policy.py",
+      "sha256": "a9f3b7da900c4f801dde9851e617b6747929d93c950f13374ec390898fdf56e5",
+      "status": "present_not_executed_by_this_freeze"
+    },
+    {
+      "role": "future_policy_scorecard_implementation",
+      "path": "models/audit/experiment_scorecard.py",
+      "sha256": "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6",
+      "status": "reference_only_profile_to_be_frozen_by_future_F09_identity"
+    }
+  ],
+  "implementation_status": {
+    "causal_ema_surface": "implemented_local",
+    "all_pair_predicate_dictionary": "implemented_local",
+    "outcome_blind_duration_vocabulary": "generated_and_hash_bound",
+    "python_single_target_duration_fork": "implemented_local",
+    "complete_8600_opportunity_manifest": "not_generated",
+    "complete_68800_fork_orchestrator": "not_implemented",
+    "atomic_partition_admission_and_resume": "not_implemented_for_this_identity",
+    "sparse_boolean_rule_learner": "not_implemented",
+    "nested_chronological_runner": "not_implemented",
+    "C++_duration_fork_ABI": "not_implemented",
+    "Python_CPP_duration_and_path_parity": "not_run",
+    "learned_policy_full_path_runner": "not_implemented",
+    "restart_aware_continuous_confirmation": "not_implemented_for_this_identity",
+    "mechanics_execution_eligible": false,
+    "development_economic_read_eligible": false,
+    "policy_full_path_eligible": false,
+    "f09_or_live_eligible": false
+  },
+  "required_successor_implementation_before_any_economic_read": {
+    "new_execution_amendment_required": true,
+    "reason": "implementing any missing runner or C++ ABI changes a bound code hash and must be frozen before outcomes",
+    "required_components": [
+      "complete opportunity census and immutable manifest writer",
+      "C++ cooldown-duration opportunity and fixed-duration fork ABI",
+      "Python/C++ synthetic and one-day event-lockstep tests",
+      "partitioned 68800-fork runner with idempotent checkpoints",
+      "atomic final admission that rejects missing or duplicate opportunity-duration keys",
+      "sparse Boolean rule-list learner and deterministic serializer",
+      "nested chronological inner/outer runner",
+      "side-specific Development report and scorecard emitter",
+      "learned-policy full-path runner"
+    ]
+  },
+  "complete_denominator_execution_contract": {
+    "expected_opportunities": 8600,
+    "candidate_actions_per_opportunity": 8,
+    "expected_single_action_forks": 68800,
+    "formal_key": "opportunity_id x side x candidate_policy_id",
+    "opportunity_sampling": "forbidden",
+    "per_day_side_role_one_row_projection": "forbidden",
+    "complete_case_reduction": "forbidden",
+    "batching": "allowed",
+    "checkpointing": "allowed",
+    "campaign_total_analysis_weight": 1.0,
+    "campaign_weighting_may_remove_materialized_rows": false,
+    "capacity_shortfall": "set execution_blocker=true and stop without reading partial economics",
+    "completion_gate": [
+      "exactly 8600 unique opportunity ids",
+      "exactly eight unique side-valid policy ids per opportunity",
+      "exactly 68800 unique opportunity-policy rows",
+      "zero missing candidate actions",
+      "zero duplicate keys",
+      "zero sampled or silently dropped opportunities",
+      "all source, config, code, and action hashes identical across partitions"
+    ]
+  },
+  "single_action_execution_contract": {
+    "assignment": "one target exposure-increasing fill lineage revision",
+    "control": "CONTROL_85N at the target and all later lineages",
+    "candidate": "one fixed total duration at the target; CONTROL_85N at every later lineage",
+    "all_candidate_forks_start_from_same_pre_assignment_state": true,
+    "no_second_research_assignment_before_washout": true,
+    "reducing_quote_mutation_count_must_equal_zero": true,
+    "full_order_queue_cancel_fill_inventory_campaign_path_required": true,
+    "right_censoring": "fail closed for training unless every candidate fork for the opportunity reaches economic washout",
+    "forced_maximum_horizon": "forbidden"
+  },
+  "Python_CPP_parity_contract": {
+    "required_before_duration_economics": true,
+    "stages": [
+      "synthetic partial-fill and cancel-ACK race",
+      "one native day complete opportunity census",
+      "one native day every-duration fork fingerprint",
+      "complete Development label path"
+    ],
+    "zero_tolerance_fields": [
+      "opportunity identity and ordinal",
+      "fill exchange and visibility clocks",
+      "side and fill-time role",
+      "inventory before and after fill",
+      "same-side quantity units",
+      "CONTROL_85N baseline duration",
+      "selected policy id and applied deadline",
+      "same-side cancel request and ACK routing",
+      "reducing bypass",
+      "order ids and lifecycle transitions",
+      "queue and fill path",
+      "terminal inventory and cash",
+      "washout and right-censor status"
+    ],
+    "core_mismatch_allowed": 0,
+    "unsupported_or_missing_C++_field": "fail closed"
+  },
+  "nested_model_execution_contract": {
+    "BUY_and_SELL_separate": true,
+    "all_45_pairs_and_360_predicates_available": true,
+    "model": "ordered sparse Boolean rule list with signed literals",
+    "inner_folds": "three expanding chronological folds inside each outer fit set",
+    "outer_folds": "four frozen chronological six-day tests",
+    "rule_duration_and_complexity_selection": "inner folds only",
+    "outer_reselection": "forbidden",
+    "campaign_total_weight": 1.0,
+    "Validation_read": false,
+    "sealed_holdout_read": false,
+    "serialized_policy_is_immutable_after_outer_OOF": true
+  },
+  "label_and_policy_identity_separation": {
+    "single_action_label_namespace": "multiscale_ema_boolean_cooldown_duration_policy_v1.single_action_label",
+    "single_action_continuation": "CONTROL_85N after the target action",
+    "policy_namespace": "multiscale_ema_boolean_cooldown_duration_policy_v1.compiled_side_policy",
+    "policy_semantics": "evaluate the frozen side rule once at every future legal fill-time lineage revision",
+    "label_result_can_authorize_policy_without_full_path": false,
+    "policy_full_path_replay_required": true,
+    "BUY_policy_and_SELL_policy_need_independent_artifacts_and_gates": true
+  },
+  "expected_future_artifacts": {
+    "root": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809",
+    "opportunity_manifest": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/opportunity_manifest.json",
+    "opportunities": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/opportunities.parquet",
+    "single_action_labels": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/single_action_duration_labels.parquet",
+    "label_admission_manifest": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/single_action_duration_label_manifest.json",
+    "nested_outer_oof": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/nested_outer_oof_policy_rows.parquet",
+    "compiled_BUY_policy": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/compiled_buy_policy.json",
+    "compiled_SELL_policy": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/compiled_sell_policy.json",
+    "development_report": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260809/development_report.json",
+    "paths_are_expected_and_do_not_imply_existence_or_permission": true
+  },
+  "policy_full_path_progression": {
+    "daily_fresh_start_Development_screen_required": true,
+    "daily_fresh_start_can_authorize_live": false,
+    "restart_aware_continuous_confirmation_required": true,
+    "continuous_confirmation_preserves_state_across_UTC_midnight": true,
+    "identical_restart_and_gap_manifest_across_arms": true,
+    "C++_policy_inference_and_path_parity_required": true,
+    "Validation_and_holdout_require_separate_successor_read_amendment": true,
+    "F09_registration_before_all_requirements": false,
+    "live_authority_before_all_requirements": false
+  },
+  "permitted_next_actions": [
+    "implement missing execution infrastructure without reading economic outcomes",
+    "run mechanics-only tests and parity",
+    "freeze a successor execution amendment with new hashes",
+    "stop and report execution_blocker if the full unsampled denominator cannot be materialized"
+  ],
+  "forbidden_under_this_amendment": [
+    "read partial duration-fork PnL",
+    "sample the 8600 opportunities",
+    "reduce the eight-duration action set",
+    "train on a complete-case subset",
+    "substitute the closed ADD/WAIT Ridge result",
+    "pool BUY and SELL",
+    "change predicate thresholds from 2026 economic outcomes",
+    "run Validation or sealed holdout",
+    "modify registry",
+    "create F09 or live authority"
+  ],
+  "permissions": {
+    "mechanics_implementation_authorized": true,
+    "mechanics_test_authorized": true,
+    "partial_economic_output_read_authorized": false,
+    "development_economic_read_authorized": false,
+    "validation_read_authorized": false,
+    "sealed_holdout_read_authorized": false,
+    "F09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}
