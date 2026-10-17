@@ -1,0 +1,92 @@
+{
+  "schema_version": "buy_q90_terminal_hold_riskset_audit.v1",
+  "identity": "buy_q90_terminal_hold_riskset_audit_v1",
+  "status": "frozen_before_journal_generation",
+  "frozen_at_utc": "2026-08-01T00:00:00Z",
+  "last_materially_modified": "2026-08-01",
+  "canonical_spec_sha256": "69adcf0a3c1ca497ef14addd7d8ca306df1824cabd402c393dedf9cc46892a84",
+  "day": "2026-07-25",
+  "panel": "Development mechanics-only observed live slice",
+  "purpose": "Determine whether q90 terminal-canceled orders remain in the active-order fill-hazard risk set and freeze the complete 23-order lifecycle journal.",
+  "known_before_freeze": {
+    "outside_deep_book_rows": 62495,
+    "terminal_hold_orders": 23,
+    "price_above_mid_rows": 62466,
+    "recovered_and_reentered_orders": 18,
+    "hold_invalid_end_orders": 5
+  },
+  "riskset_contract": {
+    "exchange_order_active_states": [
+      "OPEN",
+      "PARTIALLY_FILLED",
+      "PENDING_CANCEL"
+    ],
+    "cancel_ack_transition": "exchange_order_terminal",
+    "terminal_active_order_fill_hazard_allowed": false,
+    "q90_hold_may_outlive_exchange_order": true,
+    "post_cancel_recovery_requires_separate_state": true,
+    "old_order_may_not_be_synthesized_as_pending_cancel_after_ack": true
+  },
+  "invalid_reason_contract": {
+    "terminal_price_above_best_bid": "For a terminal BUY order, order_price > mid is a strict sufficient condition for order_price > best_bid; adding depth cannot restore an active bid level there.",
+    "active_price_below_snapshot_floor": "Requires an actually active order and an observed snapshot floor; the frozen live shadow tape does not carry the floor, so this category cannot be inferred from mid alone.",
+    "stale_gap_or_depth_missing": "Reserved for explicit stale, sequence-gap, or missing-book evidence; it must not absorb terminal-price rows.",
+    "unresolved_policy": "Rows lacking best_bid or snapshot-floor evidence remain explicitly unresolved rather than being relabeled as depth failures."
+  },
+  "inherited_parity_gates": {
+    "valid_fraction_abs_delta_lte": 0.05,
+    "cancel_role_total_variation_lte": 0.15,
+    "thresholds_may_not_be_relaxed": true
+  },
+  "source_identity": {
+    "live_q90_shadow_tape": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_live_action_rate_transport_parity_v1_20260731/inputs/buy_q90_shadow_20260724T223950_20260730T220013.csv.gz",
+      "sha256": "383dafd6cb44e03fd62e3061e4c1669e2e61ce06ffaab75ae57ba0947eae23bc"
+    },
+    "live_q90_action_log": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_terminal_hold_riskset_audit_v1_20260801/inputs/dynamic_fill_hazard_action_through_20260731.csv",
+      "sha256": "5f7c0b0fee9c638b42962daee446eb81c02e957be3afd3fa81059b5ba826c118"
+    },
+    "live_order_outcomes": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_terminal_hold_riskset_audit_v1_20260801/inputs/order_outcomes_terminal_hold_20260725.csv",
+      "sha256": "ca53e02f276fff1c3c7ba8864d71ebe7c2a8e7de35afe967d8e4b41077c5c315",
+      "extraction_source_path": "${NARROWGATE_EPHEMERAL_ROOT}/live_240h_20260731/order_outcomes.csv",
+      "extraction_source_sha256": "68a9688b9dec9c66180231e2843e6d0d3dca7359e2ee0578bb112487c90d214f",
+      "extraction_rule": "all rows for the 23 client_order_ids deterministically identified from the frozen shadow tape"
+    }
+  },
+  "parent_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_causal_visibility_clock_parity_v1_1_spec_20260731.json",
+    "sha256": "1327ea10805ee474968c29012fc7e8b2d9aa1abbd5de01289e3fe5e23ad9d3ca"
+  },
+  "parent_report_identity": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_causal_visibility_clock_parity_v1_1_20260731/development/report.json",
+    "sha256": "fd3c93ba055210f11f62c5ff32eb7a973a3f74e66e7610089badfe42da1d4e7f"
+  },
+  "implementation_identity": {
+    "path": "research/families/f10_live_replay_attribution/audit/buy_q90_terminal_hold_riskset_audit.py",
+    "sha256": "4568b720ddffb64e2ef5e795a09827aca09e2046250598898589f1f07d181cb9"
+  },
+  "test_identity": {
+    "path": "tests/test_buy_q90_terminal_hold_riskset_audit.py",
+    "sha256": "b0da72ef4e3a2b3755fe778dfe9d7e23cd5cd734223f23962c73e9c1b4a10937"
+  },
+  "interpretation_contract": {
+    "audit_is_transport_engineering_only": true,
+    "audit_is_not_240h_loss_attribution": true,
+    "depth_expansion_is_not_authorized": true,
+    "hold_timeout_is_not_authorized": true,
+    "q90_threshold_change_is_not_authorized": true,
+    "post_cancel_recovery_action_is_not_defined": true,
+    "aws_exact_deep_tape_is_final_transport_gate_not_audit_prerequisite": true
+  },
+  "economic_outputs_prohibited": true,
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "f07_v2_registration_unblocked": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "automatic_live_rollback_authorized": false
+  }
+}

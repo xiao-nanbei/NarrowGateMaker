@@ -1,0 +1,112 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.execution_amendment_v2",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-08",
+  "status": "execution_bound_full_development_read_after_mechanics",
+  "stage": "full_development_after_v1_denominator_failure",
+  "spec": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_spec_20260808.json",
+    "sha256": "d35583f35df315d30c63480ce06b961fd377e4a4e19b64268099e6613f84e4b1"
+  },
+  "offline_execution_projection": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_offline_execution_projection_20260808.json",
+    "sha256": "2afae8faf75a697f9b5d5cd0833a8c402dba7d0bd3b14073a16b243686ae0e7b"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_execution_amendment_v1_20260808.json",
+    "sha256": "b41faa2b2b149c56313aabc116b7cc64d126975098e5c2c69ea7502e6643f069"
+  },
+  "predecessor_mechanics_failure": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_mechanics_implementation_failure_20260808.json",
+    "sha256": "d9642a07c21c8107dd986023a5b8bcdafb5df04bb8317c5ad7df90b99e399b82"
+  },
+  "execution_estimand_errata": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_execution_estimand_errata_v1_20260808.json",
+    "sha256": "28810957e7254453fad503c1cb12ca9ef0e02e7eb9750d3c52828cc2a8cd6dc4"
+  },
+  "reused_input_contract": {
+    "f03_execution_plan_path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3/execution-plan.json",
+    "f03_execution_plan_sha256": "5c47033e67b75a9cbef6c336825dbea713b117c54674828d956f6626886fb7d4",
+    "f03_execution_amendment_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_native_40day_full_path_ml_ab_execution_amendment_v4_20260805.json",
+    "f03_execution_amendment_sha256": "518a86ca55895edcf1acb2f17c18c8dc9a4d9def5384150a10817438eb8c9413"
+  },
+  "implementation": {
+    "base_runner": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ber_guard_role_safe_add_only_current_stack_owner.py",
+      "sha256": "9601073063488fcdba081d1edb97353a628f44b3094622a29595070b4a56f248"
+    },
+    "execution_estimand_runner": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ber_guard_role_safe_add_only_current_stack_owner_v1_1.py",
+      "sha256": "4b049ccfb493a688a06997c9a67924fde971d12f1b3df1ea0021c99fad45c1d8"
+    },
+    "base_test": {
+      "path": "tests/test_ber_guard_role_safe_add_only_current_stack_owner.py",
+      "sha256": "29aeb1d0f922ba105f80d7a39d5f5068e37faa75e19d5e2bfc870d4df5e084c5"
+    },
+    "execution_estimand_test": {
+      "path": "tests/test_ber_guard_role_safe_add_only_current_stack_owner_v1_1.py",
+      "sha256": "64f9957a4b33c2499e2a2c6a5a452a43a7f4afd8f309b9fa213edb1dd1fc10fa"
+    },
+    "python_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "2b04e8701875dd7d61138fc9db7ed9ce7b82e5a333b42a5168fdbd699cb84452"
+    },
+    "python_quote_core": {
+      "path": "strategy/quote_core.py",
+      "sha256": "40d9481f8e1e77936953faef23552cc131458f33cda7863c13fd9a06b7f39bbd"
+    },
+    "live_composition": {
+      "path": "strategy/maker_engine.py",
+      "sha256": "3bac1a62826d949d439f6c38f063545e18430b80dc2779a1ff2640662464f0c2"
+    },
+    "live_config_schema": {
+      "path": "live/config.py",
+      "sha256": "1378d9751d94ea2648a92cfe6e9a722452c06a61da8b4967ec5490b983055b3a"
+    },
+    "backtest_config_projection": {
+      "path": "models/backtest_config.py",
+      "sha256": "4c10699b6efc4312d491e1e003be691282d2c7a0e32915ddc6d824318fd1c0bb"
+    },
+    "cpp_replay": {
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "46ec9f7ab9c98b459b19c4c41acbc299d1f4fe5569d4c6616f1f0ac4bb0ebcc8"
+    },
+    "cpp_replay_header": {
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "b520a7167907f36105a3b503d85de88cf75e3622393320c0f0fe2d2dd7153829"
+    },
+    "cpp_binding": {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "605a90b7ebc0005e335f9445538c15c3ed736c5822d997abf128c956257927b2"
+    },
+    "cpp_extension": {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "sha256": "080c75f93af14738482e089d6f176952e62a46d45398956b91889dd3a736851a"
+    },
+    "f03_execution_api": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_native_40day_full_path_ml_ab.py",
+      "sha256": "8f1a8e9490f1cefc10257425c6aff5471e6efca8fc027a369b59d5b6fff6ece7"
+    },
+    "control_overlay_loader": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_v9_10s_control_overlay_repair.py",
+      "sha256": "f011498c20e9c1f6959e705692ecbf36113670b4b79a04fc0b018e0107f5a089"
+    },
+    "scorecard": {
+      "path": "models/audit/experiment_scorecard_v2.py",
+      "sha256": "200862bb883a714cdfbab254b1074f17db06ee5642dc81dfd706a0d41641ab14"
+    }
+  },
+  "permissions": {
+    "economic_outcomes_read": true,
+    "development_days_read": [
+      "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-22", "2026-04-23",
+      "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31",
+      "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"
+    ],
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "automatic_deployment": false
+  }
+}

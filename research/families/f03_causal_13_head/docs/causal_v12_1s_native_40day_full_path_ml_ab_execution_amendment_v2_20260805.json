@@ -1,0 +1,131 @@
+{
+  "campaign_mae_contract": {
+    "improvement_direction": "candidate_minus_control",
+    "metric": "minimum_campaign_pnl_excursion_usdc",
+    "missing_or_invalid_trace_is_failure": true,
+    "risk_gate": "campaign_mae_avoidance_lcb_nonnegative",
+    "same_value_required_in_both_arms": true,
+    "trace_campaign_repair_max": 1000000,
+    "trace_cap_hit_is_failure": true,
+    "zero_forbidden": true
+  },
+  "comparison": "candidate_1s_ml_on_minus_v9_10s_ml_on",
+  "execution_identity_sha256": "24a94df1e94d7a4d9ad31456cfb0607effea6ae5cdddfa5dcbeaaba3dd3fb202",
+  "frozen_inputs": {
+    "candidate_overlay_panel": {
+      "bundle_meta_sha256": "983797432a1d649b6a2913a03780934e73d58765a71b2a99b9b07da36db6b3fb",
+      "panel_identity_sha256": "4f4c60caf18a0d454e1f4c76661587d6579fc685c3dd561b4d9833e5d6d858b9",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_2026_native_40d_model_overlay_v1_1/overlay-panel-manifest.json",
+      "sha256": "295f2a79df465e0b8090e50123ab7afa3bc88394e7abc1be063ec57aa28ada2d"
+    },
+    "control_overlay_panel": {
+      "panel_identity_sha256": "939518843cdcfc72842782da6ff390ba73269fb5199c29598bf6d408c4ab6827",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/f03_v9_10s_control_overlay_repair_v1/control_overlay_panel_admission_v1_1/panel-manifest.json",
+      "sha256": "9c36f54d34bf55da634d10a09b472c4cfcd82357e0d7da50e873cfb1ed383447",
+      "v9_model_bundle_identity_sha256": "16985f95b6abce38a436db06ed537683e4173fa51a4bfe3ccdeebaed2a4e178c"
+    },
+    "feature_dag": {
+      "path": "features/feature_dag.py",
+      "sha256": "97411199bfd44f81aa3bed3e45301601293c3146d41bf77695615ef97bbc5f56",
+      "size_bytes": 40508
+    },
+    "operational_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5",
+      "size_bytes": 24244
+    },
+    "ordered_utc_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "precommit": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
+      "score_profile": {
+        "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_action_alpha_v2_score_profile_20260805.json",
+        "sha256": "fae99d6e7e2926847fe4a97767db66315bc1196805c1a26dc23a33ed6a93b9f2",
+        "size_bytes": 3631
+      },
+      "sha256": "af079850d7173b82bf431eabaf5165fa5d5216352f588fb1fb7cdae1803c9882"
+    }
+  },
+  "governance": {
+    "continuous_71_day_confirmation_still_required": true,
+    "only_allowed_override": "fills_retention_0.80_to_1.20",
+    "promotion_label": "owner_risk_accepted_promotion",
+    "raw_action_alpha_v2_scorecard_preserved": true,
+    "route": "owner_only",
+    "sealed_holdout_forbidden": true,
+    "validation_forbidden": true
+  },
+  "identity": "causal_v12_1s_native_40day_v9_10s_vs_1s_ml_on_full_path_v1",
+  "permissions": {
+    "action_authorized": false,
+    "development_pnl_read": false,
+    "economic_outcomes_read": false,
+    "live_authorized": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "runtime_bindings": {
+    "dual_overlay_abi": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_dual_overlay_ml_ab_replay.py",
+      "sha256": "a94c653a28d9547d18d381ae7f3837e2cdec2185a65c1b6f818c61b54a62ef8a",
+      "size_bytes": 13819
+    },
+    "dual_overlay_test": {
+      "path": "tests/test_causal_v12_1s_dual_overlay_ml_ab_replay.py",
+      "sha256": "994a2ecb9d5c82c3de9f53c9a28e5bd0b3498101805020e889f5e3dee457351f",
+      "size_bytes": 7329
+    },
+    "panel_runner": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_native_40day_full_path_ml_ab.py",
+      "sha256": "819827fe013905824442cca881440a2c19988b72b86b2bf33eb44daee25162e1",
+      "size_bytes": 65389
+    },
+    "panel_runner_test": {
+      "path": "tests/test_causal_v12_1s_native_40day_full_path_ml_ab.py",
+      "sha256": "67625adf1b580164a1111984efdddab07812b0645a6abb8a30cab5eaeb24d9d5",
+      "size_bytes": 20628
+    }
+  },
+  "schema_version": "causal_v12_1s_native_40day_full_path_ml_ab_execution_amendment.v2",
+  "status": "execution_inputs_bound_outcomes_unread"
+}

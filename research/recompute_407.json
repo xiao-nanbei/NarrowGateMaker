@@ -1,0 +1,686 @@
+{
+  "final107_five_candidate_completion": {"as_of_utc": "2026-10-16", "summary": "final107_comparison.json", "accepted_accounts_each": 54, "days_each": 107, "new_candidate_accounts": 270, "economic_status": "closed_complete", "archive_status": "verified_minimal", "inspection_automation": "deleted", "fresh_holdout": false, "promotion": false},
+  "schema": "narrowgate.recompute_packages.v1",
+  "as_of": "2026-10-17",
+  "dataset_scope": "data/dataset_scope.json",
+  "historical_status_blocks_new_work": false,
+  "current_replay_count_policy": {
+    "as_of": "2026-10-17",
+    "quota_enforced": false,
+    "authority": "Owner removed backtest-count and candidate-count budgets; execute necessary research and engineering/recovery evaluations",
+    "historical_budget_fields": "Historical batch declarations and actual counts below are provenance, not current admission limits or a consumed allowance",
+    "preserved_checks": "Declared scientific scope, identity, comparable coverage, previous-use, accidental duplicate prevention and actual resource protections"
+  },
+  "previous_use_reset": false,
+  "historical_redo_authorization_20261017": {
+    "families": ["F02 scalar-adapter", "F05 Full-Multiscale cooldown"],
+    "status": "historical_method_audit_complete_current_input_binding_pending",
+    "new_economic_runs": 0,
+    "old_payload_retirement": "Only after accepted replacement results and retained dependencies are verified",
+    "audit_reports": ["families/f02_empirical_p3_touch/README.md", "families/f05_fill_quality_quote_ev/README.md"],
+    "scope": "Preserve the original research questions; current source/B0 and explicit causal support, not outcome-tuned dates or new unrelated strategy"
+  },
+  "automatic_execution": false,
+  "l3_engineering": {
+    "as_of": "2026-09-25",
+    "scope": "Python ConsumerBundle prepared replay with owned runtime graph and complete L2 prefix",
+    "source_commit": "25dbe1cbef6f54003956507543c6bf99cbce832f",
+    "receipt_availability": "private_not_distributed",
+    "receipt_artifact": "development072 F05 independent-process checkpoint restoration comparison",
+    "original_six_checkpoint_failures": "fixed; current checkpoint file has 134 passing cases",
+    "full_two_day_account_executions": 1,
+    "new_model_fits": 0,
+    "new_strategy_candidates": 0,
+    "exact_fill_rows": 1082,
+    "exact_l2_rows": 452728,
+    "accounting_utc_marks_policy_and_event_path_equal": true,
+    "net_pnl_delta_usdc": 0.0,
+    "synthetic_independent_forks": "persisted F06 widen and F07 keep/cancel; exact result and L2 comparison",
+    "remaining_limits": [
+      "native cooldown full-account restoration accepted only for the separately authorized development072 engineering configuration; not arbitrary configurations or the complete C++ tick loop",
+      "deferred mutable variance output checkpointing not supported",
+      "cross-version and arbitrary cross-host recovery not admitted",
+      "F06/F07 scientific tasks still require their own bounded contracts and workload validation"
+    ]
+  },
+  "loader_native_closure": {
+    "as_of": "2026-09-26",
+    "retired_signal_loader_and_reload_removed": true,
+    "original_ten_fixture_failures": "migrated to current admission rejection and native component invariance tests; all pass",
+    "offline_component_requires_live_authorization": false,
+    "live_startup_deployment_authority_unchanged": true,
+    "current_targeted_suite_passed": 535,
+    "native_state_schema_version": 1,
+    "native_checkpoint_scope": "SELL/BUY full value state and cross-process complete real development072 engineering account accepted; 980 fills, 419755 L2 events and 490 policy decisions exact, all accounting and PnL exact; operational wall-time telemetry reported separately",
+    "aws_prepared_release": "853a0346 installed Linux environment and original 270-test evidence reused without rebuild; authorized new Tardis candidate real-market MakerEngine-to-recorded-intent assembly accepted; not activated, no trading",
+    "aws_candidate_source_commit": "853a0346c0b018fe5ec7c46ac4ebfa2103be02b5",
+    "aws_candidate_interface_version": 20260928,
+    "native_account_binding_search": "Owner explicitly authorized an independent development072 engineering configuration changing only BUY/SELL cooldown enable flags. Original 0.046 coefficient axis, asymmetry0 and F05 fixed widening preserved. Original cooldown-off baseline is not relabelled or overwritten.",
+    "target_configuration_pending": false,
+    "aws_authorized_target": "Historical coefficient axis0.05 maps at inventory_reference_qty1 to eta_inventory/a_spread/risk_per_order0.05; ML asym_strength0.1; existing selected AWS mechanisms preserved independently of the engineering account",
+    "aws_real_assembly": {
+      "receipt_availability": "private_not_distributed",
+      "real_source_observations": 5483,
+      "warmed_decisions": 2,
+      "heads_per_decision": 13,
+      "recorded_order_intents": 4,
+      "local_target_features_predictions_quotes_intents_exact": true,
+      "network_attempts": 0,
+      "limits": "Explicit simulated ordered transport over real Tardis observations; not native receive/sequence parity, exhaustive coverage, profitability or activation. Only lock wait/hold telemetry differs."
+    },
+    "native_engineering_account": {
+      "source_commit": "b43714d722a65e187995f1de613f71511ba830ae",
+      "receipt_availability": "private_not_distributed",
+      "cut": "2025-12-24T00:00:00Z",
+      "cut_coverage": "nonzero inventory, one active BUY order, unexpired SELL cooldown and pending native windows; exact exported state in a separate process before next event",
+      "uninterrupted_elapsed_ms": 885618.9969158731,
+      "prefix_elapsed_ms": 591522.9784999974,
+      "resume_elapsed_ms": 669456.9174170028,
+      "peak_rss_bytes": 7541915648,
+      "pnl_difference_usdc": 0.0,
+      "focused_native_tests_passed": 30,
+      "new_parameterized_tests": 2,
+      "scope": "restoration equivalence, not cooldown profitability"
+    },
+    "blocks_independent_cold_run_parameter_research": false,
+    "local_real_assembly": "unchanged F03/inf and P3, actual shared features/postprocessing/quote with controlled events, zero network or orders",
+    "new_real_full_account_runs": 2,
+    "new_research_fits": 0,
+    "new_strategy_candidates": 0,
+    "deployment_or_current_switch": false
+  },
+  "f03": {
+    "existing_frozen_run_preserved": true,
+    "original_strategy_shards": 654,
+    "ml_off_strategy_shards": 204,
+    "total_strategy_shards": 858,
+    "selection_candidates": [
+      "inf",
+      "240",
+      "120",
+      "60"
+    ],
+    "ml_off_is_selection_candidate": false,
+    "final_requires_b_selection": true
+  },
+  "packages": [
+    {
+      "id": 1,
+      "families": [
+        "F10",
+        "SYS"
+      ],
+      "question": "Accounting, clocks and attribution",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "first_account_accounting_attribution_only_other_F10_SYS_work_open",
+      "candidate_budget": null,
+      "public_results": null,
+      "reused_evidence": "one_audited_F03_inf_vs_F05_development_account_ledger_delta_no_new_strategy_replay",
+      "remaining_scope": "full_attribution_and_any_exact_live_matching_require_their_own_trace_and_runtime_evidence"
+    },
+    {
+      "id": 2,
+      "families": [
+        "F08"
+      ],
+      "question": "Side-taker flow and hazard",
+      "separate_response_action_study": {
+        "baseline_id": "B0_RESPONSE_20261007",
+        "original_candidate_id": "TRADE_BOOK_RESPONSE_VALUE",
+        "report": "research/families/f08_side_taker_lifecycle/response_baseline.md",
+        "economic_status": "204_independent_accounts_407_days_complete_locally_archived_bindings_verified",
+        "net_pnl_usdc": -1603.0311815508494,
+        "final_accounts_reused_once": 54,
+        "features": 47,
+        "history_ablation_features": 39,
+        "live_status": "implemented_offline_validation_separate_from_real_environment_admission",
+        "historical_hazard_status_unchanged": true,
+        "evidence_availability": "private_not_distributed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 3,
+      "families": [
+        "F02"
+      ],
+      "question": "Static P3 touch",
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 4,
+      "families": [
+        "F04"
+      ],
+      "question": "Cross-market prediction",
+      "depends_on": [
+        "dual_market_features"
+      ],
+      "implementation_status": "bounded_two_market_Tardis_pair_completed_under_frozen_pre_migration_source; current_M0_and_M1_real_model_assembly_verified",
+      "execution_status": "historical_first_batch_verified; A_and_D_Final107_closed_complete_verified_minimal_negative_vs_B0; family_open_no_automatic_followup",
+      "candidate_budget": {
+        "frozen_first_batch_fit_utc_days": 8,
+        "new_M0_M1_fit_calls_budgeted": 2,
+        "new_M0_M1_fit_calls_completed": 2,
+        "paired_full_account_replays_budgeted": 2,
+        "paired_full_account_replays_completed": 2,
+        "conditional_existing_F03_reference_replay_budgeted": 1,
+        "additional_candidates_or_evaluation_accounts_budgeted": 0
+      },
+      "public_results": null,
+      "verified_first_batch": {
+        "availability": "private_not_distributed",
+        "source_commit": "e27e8f50a95c4d9b843c41e8358ee7141bc4efd7",
+        "comparison_artifact": "F04 frozen first-batch development014 comparison.json",
+        "comparison_sha256": "a2a91a2c7a03b4d1273564b7da1169333452eb7fd0f022b5dbb070a364e50fe8",
+        "M0_net_pnl_usdc": -14.915664464194533,
+        "M1_net_pnl_usdc": -10.683021109346399,
+        "M1_minus_M0_usdc": 4.232643354848134,
+        "verification": "original_frozen_reader_revalidated_trace_hashes_counts_no_truncation_common_environment_inventory_fees_and_accounting_decomposition; recomputed_comparison_exactly_equal; both_models_reloaded",
+        "new_fits_during_verification": 0,
+        "new_replays_during_verification": 0,
+        "not_current_migration_economic_acceptance": true,
+        "independent_accounts_not_continuous_return": true
+      },
+      "current_semantic_assembly": {
+        "availability": "private_not_distributed",
+        "artifact": "F04 current M1 reference assembly receipt",
+        "reference_frames": 17292,
+        "M1_real_causal_frames_checked": 64,
+        "M0_prior_real_causal_frames_checked": 32,
+        "model_weights_unchanged": true,
+        "M1_predictions_exactly_equal": true,
+        "new_fit_calls": 0,
+        "new_account_replays": 0,
+        "scope": "real_models_and_reference_payload_with_offline_locator_and_plan_rebinding; not_new_economic_evaluation"
+      },
+      "new_b0_final107_20261013": {
+        "experiment_id": "B0_DEFENSE_URGENCY_OFF_20261011_F04_FINAL107_20261013",
+        "status": "owner_stopped_partial_results_archived_under_20260924_history_group",
+        "completed_M0_accounts": 8,
+        "completed_M1_accounts": 0,
+        "stopped_submitted_accounts": 9,
+        "unsubmitted_target_paths": 91,
+        "closure_reason": "owner_rejected_small_training_support_after_partial_outcome_review; not_full_Final107_completion",
+        "baseline_id": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "arms": ["M0", "M1"],
+        "independent_accounts_per_arm": 54,
+        "market_days_per_arm": 107,
+        "target_economic_paths": 108,
+        "continuous_paths": 0,
+        "new_fits": 0,
+        "models": "unchanged_existing_M0_local29_and_M1_local29_plus_reference12",
+        "intervention": "replace_only_direction_head_keep_complete_current_B0_contract",
+        "prior_stop_reason": "explicit_original_first_batch_budget_exhausted_not_unit_PnL_rejection",
+        "previous_use_reset": false,
+        "evidence_availability": "private_not_distributed",
+        "contract_artifact": "F04 final107-newb0-20261013 frozen contract, source and per-host admission receipts",
+        "public_summary": "families/f04_external_market_alpha/README.md"
+      },
+      "full_support_direction_20261014": {
+        "status": "54_accounts_107_days_economically_accepted_archive_verified_minimal_no_promotion",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "candidate_count": 1,
+        "method": "actual_F03_train100_inner79_1_20_daily_weighted_fit_unweighted_AUC_early_stop_full_refit",
+        "fit_rows": 104106,
+        "selection_rows": 11423,
+        "refit_rows": 116434,
+        "features": "original29_plus12_currency_invariant_BTCUSDT_reference",
+        "new_labels": 0,
+        "selection_fit_budget": 1,
+        "refit_budget": 1,
+        "candidate_Final_accounts": 54,
+        "control": "reuse_accepted_same_contract_current_B0",
+        "continuous_accounts": 0,
+        "real_projection_check": "60_feature_rows_and_causal_asof_rows_exact; not_economic_acceptance",
+        "code": "families/f04_external_market_alpha/full_support_direction.py",
+        "final_adapter": "families/f04_external_market_alpha/full_support_final.py",
+        "final_preparation": "100_reference_days_and_one_fit_one_refit_verified; real_Final_hour_checkpoint_recovery_exact; 54_control_contracts_reviewed; host_input_model_source_admission_before_dispatch; report_only_fully_verified_pairs",
+        "reference_cache_reuse": "original_training_and_old_Final_connection_order_profiles_differ; equivalence_required_before_reuse",
+        "evidence_availability": "private_not_distributed",
+        "previous_use_reset": false,
+        "live_authority": false
+      },
+      "equal_label_direction_20261015": {
+        "status": "superseded_before_economic_submission_joint_model_retained_as_dependency",
+        "candidate": "F03_TRAIN100_BTCUSDC_BTCUSDT_DIRECTION_EQUAL_LABEL_20261015",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "training_days": 100,
+        "features": "same_BTCUSDC29_plus_BTCUSDT12",
+        "panel": "exact_accepted_original_train100_joint_panel_reused",
+        "fit_embargo_selection_days": [79, 1, 20],
+        "selection_fits": 1,
+        "refits": 1,
+        "weighting": "each_valid_label_1_no_daily_normalization_no_class_rebalance_no_age_decay",
+        "unweighted_AUC_early_stopping": true,
+        "other12_heads_and_P3": "original_urgency_off_B0_not_Development300_candidate",
+        "candidate_Final_accounts": 0,
+        "new_control_accounts": 0,
+        "continuous_accounts": 0,
+        "predecessor": "all54_F03_BTCUSDC_TRAIN300_13HEAD_EQUAL_LABEL_20261015_accounts_economically_accepted",
+        "dispatch_gate": "predecessor_full_acceptance_then_own_model_runtime_real_recovery_input_cache_lifecycle_and_unique_PoolRun_admission",
+        "code": "families/f04_external_market_alpha/equal_label_direction.py",
+        "evidence_availability": "private_not_distributed",
+        "previous_use_reset": false,
+        "live_authority": false
+      },
+      "equal_label_all13_joint_dir10_20261015": {
+        "status": "54_accounts_107_days_economically_accepted_archive_verified_minimal_no_promotion",
+        "candidate": "F03_TRAIN100_13HEAD_EQUAL_LABEL_JOINT_DIR10_20261015",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "training_days": 100,
+        "fit_embargo_selection_days": [79, 1, 20],
+        "all13_weighting": "each_valid_label_1_no_date_class_or_age_reweighting",
+        "joint_input_heads": ["touch_conditioned_up_probability_10000ms"],
+        "joint_features": "BTCUSDC29_plus_BTCUSDT12",
+        "other12": "new100day_equal_label_fits_using_BTCUSDC29_not_old_B0_models",
+        "P3": "unchanged_original_B0",
+        "reused_accepted_equal_label_joint_head": 1,
+        "new_selection_fits": 12,
+        "new_refits": 12,
+        "total_current_model_selection_fits": 13,
+        "total_current_model_refits": 13,
+        "candidate_Final_accounts": 54,
+        "new_control_accounts": 0,
+        "continuous_accounts": 0,
+        "dispatch_gate": "owner_20261015_removed_C54_wait; own_composite_runtime_real_recovery_per_account_input_cache_and_unique_PoolRun_admission_required",
+        "interpretation": "calendar_and_direction_inputs_differ_from_equal_label300_not_a_BTCUSDT_only_effect",
+        "code": "families/f04_external_market_alpha/equal_label_joint_bundle.py",
+        "evidence_availability": "private_not_distributed",
+        "previous_use_reset": false,
+        "live_authority": false
+      },
+      "remaining_scope": "five_Final107_candidates_closed_complete_and_verified_minimal; preserve_original_pilot_and_owner_stopped_extension_identities; no_automatic_followup_or_live_authority"
+    },
+    {
+      "id": 5,
+      "families": [
+        "F03"
+      ],
+      "question": "13-head and time weighting",
+      "depends_on": [
+        "train_only_p3_features_labels"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "completed_modeled_economics_negative",
+      "candidate_budget": 4,
+      "public_results": "families/f03_causal_13_head/results_20260922.json",
+      "development300_extension_20261014": {
+        "status": "54_accounts_107_days_economically_accepted_archive_verified_minimal_no_promotion",
+        "candidate": "F03_BTCUSDC_TRAIN300_13HEAD_HINF_20261014",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "code": "families/f03_causal_13_head/development300.py",
+        "training_calendar_utc": ["2025-08-01", "2026-05-28"],
+        "training_days": 300,
+        "reused_label_days": 100,
+        "additional_label_days": 200,
+        "feature_count": 29,
+        "reference_market": null,
+        "heads": 13,
+        "selection_split_days": [239, 1, 60],
+        "refit_days": 300,
+        "half_life_days": "inf",
+        "daily_weights": "per_head_effective_rows_normalized; equal_nonempty_day_total_before_class_imbalance; unweighted_selection",
+        "new_bundle_budget": 1,
+        "selection_fit_budget": 13,
+        "refit_budget": 13,
+        "new_Final_account_budget": 54,
+        "new_control_budget": 0,
+        "continuous_budget": 0,
+        "p3_recalibration": false,
+        "existing_joint_direction_candidate": "unchanged_completed_and_retained",
+        "previous_use": "owner_added_after_partial_Final_inspection; all_Development_is_training; Final_not_fresh_holdout",
+        "evidence_availability": "private_not_distributed",
+        "live_authority": false
+      },
+      "original100_valid_label_equal_20261015": {
+        "status": "54_accounts_107_days_economically_accepted_archive_verified_minimal_no_promotion",
+        "candidate": "F03_BTCUSDC_TRAIN100_13HEAD_EQUAL_LABEL_20261015",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "code": "families/f03_causal_13_head/label_equal100_training.py",
+        "execution_identity_wrapper": "families/f03_causal_13_head/label_equal100_final.py",
+        "training_days": 100,
+        "calendar": "exact_original_B0_100_dates_not_recent_contiguous_days",
+        "selection_split_days": [79, 1, 20],
+        "heads": 13,
+        "features_per_head": 29,
+        "reference_market": null,
+        "row_weight": 1,
+        "date_normalization": "none",
+        "classification_reweighting": "none",
+        "time_decay": "none",
+        "unweighted_early_stopping": true,
+        "reused_equal_label_heads": 12,
+        "reuse_source": "accepted_100day_all13_equal_label_joint_dir10_candidate; same_dates_masks_params; unchanged_bytes",
+        "reused_old_B0_weighted_heads": 0,
+        "new_selection_fit_budget": 1,
+        "new_refit_budget": 1,
+        "new_Final_account_budget": 54,
+        "new_control_budget": 0,
+        "continuous_budget": 0,
+        "cross_model_completion_gate": false,
+        "comparison_with_joint100": "only_dir10_inputs_and_fitted_model_differ; other12_model_bytes_identical",
+        "previous_use": "owner_added_after_partial_Final_inspection; Final_not_fresh_holdout",
+        "evidence_availability": "private_not_distributed",
+        "live_authority": false
+      },
+      "valid_label_equal_extension_20261015": {
+        "status": "54_accounts_107_days_economically_accepted_archive_verified_minimal_no_promotion",
+        "candidate": "F03_BTCUSDC_TRAIN300_13HEAD_EQUAL_LABEL_20261015",
+        "baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "code": "families/f03_causal_13_head/label_equal_training.py",
+        "execution_identity_wrapper": "families/f03_causal_13_head/label_equal_final.py",
+        "training_days": 300,
+        "panel_reuse": "exact_accepted_Development300_panel; no_label_regeneration",
+        "selection_split_days": [239, 1, 60],
+        "heads": 13,
+        "row_weight": 1,
+        "date_normalization": "none",
+        "classification_reweighting": "none",
+        "unweighted_early_stopping": true,
+        "isolated_date_weight_effect": false,
+        "new_bundle_budget": 1,
+        "selection_fit_budget": 13,
+        "refit_budget": 13,
+        "new_Final_account_budget": 54,
+        "new_control_budget": 0,
+        "continuous_budget": 0,
+        "existing_candidates": "unchanged_and_retained",
+        "previous_use": "owner_added_and_confirmed_after_partial_Final_inspection; Development_all_training; Final_not_fresh_holdout",
+        "evidence_availability": "private_not_distributed",
+        "live_authority": false
+      }
+    },
+    {
+      "id": 6,
+      "families": [
+        "F02"
+      ],
+      "question": "Conditional P3 and reach-time",
+      "depends_on": [
+        "3"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 7,
+      "families": [
+        "F05"
+      ],
+      "question": "Opportunity Quote-EV prediction",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "ten_head_risk_widen_and_separate_prefill_EC_consumers_exercised_other_F05_mechanisms_open",
+      "execution_status": "first_risk_widen_batch_negative_and_prefill_EC_v2_complete_family_open",
+      "candidate_budget": 1,
+      "public_results": "families/f05_fill_quality_quote_ev/README.md",
+      "first_batch": {
+        "training_support_independent_two_day_accounts": 2,
+        "trained_heads": 10,
+        "training_selection_refits": 0,
+        "frozen_candidate_policies": 1,
+        "evaluation_independent_two_day_accounts_budgeted": 1,
+        "evaluation_independent_two_day_accounts_completed": 1,
+        "evaluation_independent_two_day_accounts_remaining": 0,
+        "result_direction_vs_frozen_F03_inf": "negative",
+        "evidence_availability": "private_not_distributed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "remaining_scope": "other_preexisting_F05_mechanisms_and_family_selection_require_declared_support_and_question_identity_without_a_run_count_quota",
+      "prefill_ec": {
+        "identity": "F05-prefill-EC-Tardis-v1",
+        "authorized_on": "2026-09-27",
+        "status": "v2_label_production_frozen_fits_and_full_account_evaluation_complete_not_promoted",
+        "calendar_revision": "f03-407-t100-final107-v2",
+        "public_completion_summary": "families/f05_fill_quality_quote_ev/README.md",
+        "evidence_availability": "private_completion_receipt_not_distributed",
+        "baseline": "D_g050_a010",
+        "baseline_selection": "explicit_owner_choice_20260927_before_real_EC_labels_or_fits",
+        "selection_scope": "visible_inventory",
+        "label_horizon_ms": 30000,
+        "fit_support": "T100_dates_only",
+        "diagnostic_support": "A50_B100_C50_interleaved_dates_not_forward_holdout",
+        "evaluation_support": "204_independent_accounts_full_407_day_calendar_including_Final107",
+        "historical_contiguous_plan": {
+          "scope": "initial_plan_superseded_by_v2_not_current_completion",
+          "fit_accounts": "development000-development045",
+          "diagnostic_accounts": "development046-development052",
+          "evaluation_accounts": "development053-development066",
+          "full_account_work_units_budget": 193,
+          "initial_real_pair_acceptance": 32
+        },
+        "fit_pairs_budget": 2048,
+        "diagnostic_pairs_budget": 256,
+        "ridge_alpha": 1.0,
+        "minimum_training_rows_per_surface": 128,
+        "fit_budget": 4,
+        "evaluation_paths": ["B0", "E", "C", "EC", "R_E_1701", "R_E_1702", "R_C_1701", "R_C_1702", "R_EC_1701", "R_EC_1702"],
+        "real_pairs_completed": 2288,
+        "legal_empty_slots": 16,
+        "label_parent_accounts_completed": 132,
+        "fits_completed": 4,
+        "evaluation_accounts_completed": 204,
+        "evaluation_paths_completed": 10,
+        "economic_units_completed": 2040,
+        "strategy_days_completed": 4070,
+        "shared_terminal_valuation_reuse": "implemented_with_direct_scan_parity_and_no_repeat_depth_io_tests",
+        "replay_prefill_features": "visible_book_variance_pending_and_age_mapped_exact_5000ms_inputs_unknown",
+        "frozen_feature_support": "eight_shared_visible_features_exact_5000ms_trade_and_mid_inputs_excluded_before_outcomes",
+        "recording_gateway_validation": "off_shadow_enforce_POST_WAIT_KEEP_CANCEL_with_actual_MakerEngine_and_OrderManager_no_network",
+        "remaining_implementation": [],
+        "predeclared_main_candidate": "EC",
+        "economic_admission": "not_established_no_baseline_or_live_promotion",
+        "automatic_followup_authorized": false,
+        "live_activation_authorized": false,
+        "final_access_authorized": true,
+        "final_usage": "evaluation_complete_no_supervised_labels_previous_use_retained"
+      }
+    },
+    {
+      "id": 8,
+      "families": [
+        "F09",
+        "F04",
+        "F05"
+      ],
+      "question": "Fixed action comparisons",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "one_F05_existing_quote_widen_action_comparison_complete_negative_other_components_open",
+      "candidate_budget": null,
+      "public_results": "families/f05_fill_quality_quote_ev/README.md",
+      "completed_component_budget": "F05_one_frozen_candidate_one_independent_development_account_no_remaining_first_batch_evaluation",
+      "remaining_scope": "F04_F09_and_other_F05_action_questions_require_their_own_inputs_and_contracts_without_a_run_count_quota"
+    },
+    {
+      "id": 9,
+      "families": [
+        "F01"
+      ],
+      "question": "Fixed-parameter racing",
+      "depends_on": [
+        "shared_inputs"
+      ],
+      "implementation_status": "frozen_F03_signal_and_P3_gated_independent_candidate_replay_verified",
+      "execution_status": "first_bounded_development_pair_complete_B0_retained_risk_gate_failed_family_open",
+      "candidate_budget": 1,
+      "public_results": "families/f01_fixed_parameter_racing/README.md",
+      "first_batch": {
+        "development_independent_two_day_accounts_completed": 1,
+        "nonbaseline_gamma_candidates_completed": 1,
+        "conditional_paired_evaluation_accounts_completed": 0,
+        "conditional_paired_evaluation_accounts_remaining": 0,
+        "selection": "retain_frozen_F03_inf_B0_candidate_reduced_loss_but_exceeded_predeclared_peak_inventory_gate",
+        "whole_strategy_fresh_holdout": false,
+        "evidence_availability": "private_not_distributed"
+      },
+      "current_research_baseline": {
+        "baseline_id": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "original_candidate_id": "DEFENSE_ON__URGENCY_OFF",
+        "previous_baseline_id": "B0_RESPONSE_20261007",
+        "selection": "explicit_owner_promotion_20261011_of_B_frozen_challenger",
+        "parameter_delta": {"exit_urgency_strength": {"before": 0.5, "after": 0.0}},
+        "scope": "future_offline_reference_and_local_next_deployment_candidate_not_activated_live",
+        "completed_comparison": "Final107 independent account panel and continuous pair",
+        "full_nine_arm_407_study": "economically_accepted_archived_under_original_frozen_baseline_not_relabelled",
+        "economic_admission": false,
+        "evidence_availability": "private_not_distributed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "defense_urgency_closure": {
+        "as_of": "2026-10-12",
+        "status": "economically_accepted_and_archived",
+        "original_baseline_id": "B0_RESPONSE_20261007",
+        "candidate_accounts": 1632,
+        "original_baseline_accounts": 204,
+        "continuous_107_day_accounts": 2,
+        "independent_407_day_net_pnl_usdc": {"original_B0": -1603.0311815508494, "DEFENSE_ON__URGENCY_OFF": -1455.222759320454},
+        "C_extra_seed_sensitivity": "NOT_RUN",
+        "conditional_joint_action_denominators": "unavailable_not_proof_of_never_triggering",
+        "evidence_availability": "private_not_distributed",
+        "archive_artifact": "F01 Defense/Urgency full407 results and runtime archive",
+        "public_summary": "families/f01_fixed_parameter_racing/README.md",
+        "previous_use_reset": false,
+        "profitability_or_risk_noninferiority_established": false
+      },
+      "mechanism12": {
+        "as_of": "2026-10-13",
+        "status": "original_fixed_panel_complete_historical_scope_followed_by_explicit_full407_expansion",
+        "experiment_id": "B0_DEFENSE_URGENCY_OFF_20261011_MECHANISM12",
+        "baseline_id": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "arms": ["B0", "GENERIC_MARKOUT_POLICY_OFF", "DIRECT_DIRECTION_ASYM_OFF"],
+        "development150_zero_based_indices": [6, 18, 31, 43, 56, 68, 81, 93, 106, 118, 131, 143],
+        "selection_rule": "floor((k+0.5)*150/12), k=0..11, original parent start order",
+        "account_hours": 48,
+        "maximum_complete_paths": 36,
+        "rng_seed": 42,
+        "latency_seed": 59,
+        "new_fits": 0,
+        "new_Final_accounts": 0,
+        "new_continuous_accounts": 0,
+        "additional_seeds": 0,
+        "evidence_availability": "private_not_distributed",
+        "public_summary": "families/f01_fixed_parameter_racing/README.md",
+        "scope": "exploratory_fixed_panel_no_strength_scan_no_combination_arm_no_fresh_holdout_claim"
+      },
+      "mechanism_full407_owner_closure": {
+        "as_of": "2026-10-13",
+        "status": "OWNER_STOPPED_PARTIAL_FULL407",
+        "baseline_id": "B0_DEFENSE_URGENCY_OFF_20261011",
+        "candidate_independent_target": 408,
+        "candidate_independent_complete": 143,
+        "candidate_independent_stopped": 9,
+        "candidate_independent_pending_held": 20,
+        "candidate_independent_not_submitted": 236,
+        "Final_common_accounts_per_arm": 38,
+        "Final_common_noncontiguous_days": 75,
+        "candidate_continuous_paths_complete": 2,
+        "continuous_days_each": 107,
+        "control_reused_original_identity": true,
+        "Final_common_net_pnl_usdc": {"CONTROL": -104.06553310885337, "GENERIC_MARKOUT_POLICY_OFF": -131.3411235134772, "DIRECT_DIRECTION_ASYM_OFF": -125.21983809146867},
+        "continuous_net_pnl_usdc": {"CONTROL": -142.28381960978234, "GENERIC_MARKOUT_POLICY_OFF": -144.8972130052579, "DIRECT_DIRECTION_ASYM_OFF": -147.38549200136887},
+        "decision": "retain_current_B0_no_ablation_promotion",
+        "limitations": "owner_stop_after_outcome_inspection_incomplete_full407_and_Final_previous_use; no_equivalence_risk_noninferiority_or_profitability_claim",
+        "archive_status": "full_archive_verified_scoped_Agent_output_cleanup_complete_shared_dependencies_retained",
+        "evidence_availability": "private_not_distributed",
+        "archive_artifact": "F01 mechanism-ablation-20261012 closure-20261013 results-and-closure and archive-verification"
+      },
+      "historical_response_research_baseline": {
+        "baseline_id": "B0_RESPONSE_20261007",
+        "original_candidate_id": "TRADE_BOOK_RESPONSE_VALUE",
+        "selection": "owner_selected_frozen_response_candidate_on_20261007",
+        "scope": "offline_research_reference_not_live_deployment_authority",
+        "economic_coverage": {"accounts": 204, "days": 407, "development_accounts": 150, "reused_final_accounts": 54},
+        "closure_status": "economics_complete_locally_archived_frozen_bindings_verified",
+        "evidence_availability": "private_not_distributed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "historical_coefficient_research_baseline": {
+        "selection": "owner_selected_D_g050_a010_on_20260927_after_B_Final_evaluation",
+        "eta_inventory": 0.05,
+        "a_spread": 0.05,
+        "risk_per_order": 0.05,
+        "asym_strength": 0.1,
+        "ml_enabled": true,
+        "inventory_reference_qty": 1.0,
+        "effective_config": "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/research-baseline-current.json",
+        "evidence_availability": "private_not_distributed",
+        "scope": "offline_research_only_no_live_change; no_current_run_count_quota",
+        "historical_baseline_and_risk_gate": "unchanged; original four-arm reference remains A; historical B peak-inventory failure is not reversed",
+        "whole_strategy_fresh_holdout": false
+      },
+      "remaining_scope": "other_preexisting_F01_parameter_questions_require_declared_support_and_question_identity_without_a_run_count_quota"
+    },
+    {
+      "id": 10,
+      "families": [
+        "F06"
+      ],
+      "question": "Placement CIF and marginal value",
+      "depends_on": [
+        "shared_trace"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    },
+    {
+      "id": 11,
+      "families": [
+        "F07",
+        "F05"
+      ],
+      "question": "KEEP/CANCEL/REENTER and E/C",
+      "depends_on": [
+        "10"
+      ],
+      "implementation_status": "prefill_EC_component_complete_F07_REENTER_separate",
+      "execution_status": "see_package_7_prefill_ec_completion_not_whole_package_completion",
+      "components": {
+        "prefill_EC": "completed_under_f03-407-t100-final107-v2_see_package_7",
+        "F07_REENTER": "not_completed_by_EC_KEEP_CANCEL_evaluation"
+      },
+      "candidate_budget": null,
+      "public_results": "families/f05_fill_quality_quote_ev/README.md"
+    },
+    {
+      "id": 12,
+      "families": [
+        "F05",
+        "F09"
+      ],
+      "question": "Multiscale and duration policies",
+      "depends_on": [
+        "10",
+        "11"
+      ],
+      "implementation_status": "integration_review_required",
+      "execution_status": "not_run_under_this_plan",
+      "candidate_budget": null,
+      "public_results": null
+    }
+  ]
+}

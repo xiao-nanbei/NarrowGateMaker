@@ -1,0 +1,178 @@
+{
+  "schema_version": "active_order_competing_risk_cif_100ms_contract.v1",
+  "identity": "active_order_competing_risk_cif_100ms_v1",
+  "family": "F07_active_order_continuation",
+  "status": "frozen_mechanics_contract_training_and_execution_closed",
+  "frozen_at_utc": "2026-08-04T00:00:00Z",
+  "last_materially_modified": "2026-08-04",
+  "purpose": "Freeze the probability-accounting and lifecycle-boundary contract for a 100 ms active-order competing-risk cumulative-incidence kernel without reading economic outcomes or authorizing q90 action.",
+  "implementation_identity": {
+    "path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif.py",
+    "sha256": "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72",
+    "language": "python",
+    "implementation_scope": "pure_probability_accounting_kernel",
+    "lifecycle_event_classification_owned_by_kernel": false
+  },
+  "state_grid_contract": {
+    "interval_ms": 100,
+    "interval_s": 0.1,
+    "grid_semantics": "ordered_state_interval",
+    "duplicate_edge_policy": "fail_closed",
+    "missed_edge_policy": "fail_closed_no_backfill",
+    "terminal_evaluation_allowed": false
+  },
+  "competing_risk_contract": {
+    "causes_in_canonical_order": [
+      "favorable_fill",
+      "adverse_fill",
+      "cancel_ack",
+      "other_terminal"
+    ],
+    "cause_specific_rate_unit": "events_per_second",
+    "rates_must_be_finite_and_nonnegative": true,
+    "joint_normalization_required": true,
+    "interval_event_probability": "1-exp(-0.1*sum_k(lambda_k))",
+    "cause_hazard_probability": "lambda_k/sum_j(lambda_j)*(1-exp(-0.1*sum_j(lambda_j)))",
+    "zero_total_rate_no_event_probability": 1.0,
+    "survival_and_all_cause_cifs_sum_to_one": true,
+    "survival_monotone_nonincreasing": true,
+    "cause_specific_cif_monotone_nondecreasing": true,
+    "independent_binary_hazard_normalization_prohibited": true
+  },
+  "lifecycle_contract": {
+    "risk_phases": [
+      "ACTIVE",
+      "PARTIALLY_FILLED",
+      "CANCEL_PENDING"
+    ],
+    "terminal_phase": "EXCHANGE_TERMINAL",
+    "partial_fill": {
+      "classification": "observed_risk_spell_boundary",
+      "ends_current_remaining_quantity_risk_spell": true,
+      "starts_new_risk_spell_when_remaining_quantity_is_positive": true,
+      "new_spell_id_required": true,
+      "last_evaluated_grid_edge_preserved": true,
+      "survival_and_cifs_reset_for_new_spell": true,
+      "order_terminal": false
+    },
+    "cancel_request": {
+      "classification": "state_transition",
+      "target_phase": "CANCEL_PENDING",
+      "terminal_cause": false,
+      "risk_set_ends": false
+    },
+    "cancel_reject": {
+      "classification": "state_transition",
+      "target_phase": "ACTIVE_or_PARTIALLY_FILLED",
+      "terminal_cause": false,
+      "risk_set_ends": false
+    },
+    "cancel_ack": {
+      "classification": "terminal_competing_cause",
+      "cause": "cancel_ack",
+      "risk_set_ends": true
+    },
+    "full_fill": {
+      "classification": "terminal_competing_cause",
+      "cause_by_frozen_outcome_classifier": [
+        "favorable_fill",
+        "adverse_fill"
+      ],
+      "remaining_quantity_must_equal_zero": true,
+      "risk_set_ends": true
+    },
+    "other_exchange_terminal": {
+      "classification": "terminal_competing_cause",
+      "cause": "other_terminal",
+      "risk_set_ends": true
+    },
+    "post_terminal_hazard_evaluations_allowed": false,
+    "post_terminal_checkpoint_advance_allowed": false
+  },
+  "checkpoint_contract": {
+    "schema_version": "active_order_competing_risk_cif_state.v1",
+    "roundtrip_state_equality_required": true,
+    "checkpoint_restore_parity_required": true,
+    "required_state": [
+      "schema_version",
+      "identity",
+      "grid_interval_ms",
+      "spell_id",
+      "phase",
+      "remaining_qty",
+      "last_edge",
+      "survival",
+      "cumulative_incidence",
+      "terminal",
+      "terminal_cause",
+      "terminal_edge"
+    ],
+    "schema_or_identity_mismatch_policy": "fail_closed",
+    "probability_mass_mismatch_policy": "fail_closed"
+  },
+  "data_and_clock_prerequisites": {
+    "authoritative_lifecycle_schema_required": "lifecycle_events_v2",
+    "lifecycle_events_v2_available": false,
+    "event_clock": "causal_visibility_clock_on_100ms_grid",
+    "feature_ready_must_not_exceed_decision_time": true,
+    "chronological_lockstep_days_required": 40,
+    "chronological_lockstep_complete": false,
+    "python_cpp_event_lockstep_required": true,
+    "python_cpp_event_lockstep_complete": false,
+    "checkpoint_resume_lockstep_required": true,
+    "checkpoint_resume_lockstep_complete": false,
+    "aws_receive_time_transport_required": true,
+    "aws_receive_time_transport_complete": false,
+    "pooling_across_baseline_epochs_before_epoch_specific_audit_allowed": false
+  },
+  "training_and_execution_gate": {
+    "training_eligible": false,
+    "training_blocked_by": [
+      "authoritative_lifecycle_events_v2_unavailable"
+    ],
+    "execution_eligible": false,
+    "execution_blocked_by": [
+      "authoritative_lifecycle_events_v2_unavailable",
+      "40_day_chronological_python_cpp_event_lockstep_incomplete",
+      "checkpoint_resume_lockstep_incomplete",
+      "aws_receive_time_transport_incomplete"
+    ],
+    "mechanics_results_may_not_grant_economic_or_live_authority": true,
+    "future_training_or_execution_requires_successor_evidence_identity": true
+  },
+  "outcome_access": {
+    "pnl_read": false,
+    "reward_read": false,
+    "markout_read": false,
+    "campaign_terminal_value_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "runtime_contract": {
+    "q90_action_enabled": false,
+    "q90_action_must_remain_off": true,
+    "q90_threshold_change_authorized": false,
+    "live_configuration_change_authorized": false
+  },
+  "permissions": {
+    "mechanics_contract_frozen": true,
+    "lifecycle_panel_generation_authorized": false,
+    "model_training_authorized": false,
+    "prediction_evaluation_authorized": false,
+    "execution_replay_authorized": false,
+    "economic_outcome_read_authorized": false,
+    "validation_read_authorized": false,
+    "sealed_holdout_read_authorized": false,
+    "q90_action_enable_authorized": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "baseline_update_authorized": false
+  },
+  "required_gate_order": [
+    "admit_authoritative_lifecycle_events_v2",
+    "freeze_training_panel_and_model_identity",
+    "run_40_day_chronological_python_cpp_event_and_checkpoint_lockstep",
+    "pass_aws_receive_time_transport",
+    "register_separate_economic_action_identity_before_any_pnl_read"
+  ]
+}

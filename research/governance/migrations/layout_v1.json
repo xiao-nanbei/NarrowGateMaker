@@ -1,0 +1,1402 @@
+{
+  "canonical_content_policy": "canonical family files are active source and may change under normal version control",
+  "created_on": "2026-07-28",
+  "frozen_content_policy": "the legacy snapshot preserves every recorded pre-migration byte and SHA256; canonical source is not substituted for a frozen code identity",
+  "legacy_path_policy": "legacy files and symlinks are removed after hard migration; use canonical_path for active code",
+  "legacy_snapshot": {
+    "path": "research_legacy_snapshot_v1.tar.gz",
+    "purpose": "exact pre-hard-migration bytes for frozen path/hash reconstruction",
+    "sha256": "6358405985e3f9bad937b0560f7fb8ed3724db528ef220f577ddc056773a7aaa",
+    "size_bytes": 937843
+  },
+  "mapping_count": 198,
+  "mappings": [
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/request_state_features.cpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/request_state_features.cpp",
+      "legacy_path": "cpp/narrowgate_cpp/request_state_features.cpp",
+      "sha256": "3ef39826b4e4f467ad89a40cb02f6cf47c6edd113145e28096dd8c9cabd4352a",
+      "size_bytes": 15082
+    },
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/request_state_features.hpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/request_state_features.hpp",
+      "legacy_path": "cpp/narrowgate_cpp/request_state_features.hpp",
+      "sha256": "adcfe897c1101657aae3a82efe36130ec226b0c219e0c642f1fdf517b1061f0b",
+      "size_bytes": 2300
+    },
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/risk_set_expansion.cpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/risk_set_expansion.cpp",
+      "legacy_path": "cpp/narrowgate_cpp/risk_set_expansion.cpp",
+      "sha256": "272472450ee955b396764280df701c1839d43a9c55c30b7d8affbac2cf9c3cd6",
+      "size_bytes": 3158
+    },
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/risk_set_expansion.hpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/risk_set_expansion.hpp",
+      "legacy_path": "cpp/narrowgate_cpp/risk_set_expansion.hpp",
+      "sha256": "45ad741a9124c541750e7096cf2a6c110d23696d13eb7c2e09ec33da4c48b850",
+      "size_bytes": 648
+    },
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/sparse_order_lifecycle.cpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/sparse_order_lifecycle.cpp",
+      "legacy_path": "cpp/narrowgate_cpp/sparse_order_lifecycle.cpp",
+      "sha256": "b6e072a50613786b909eadeca5ff39de3dd1b01e1a020eaa9d9fa85d2fbd3296",
+      "size_bytes": 21410
+    },
+    {
+      "archive_member": "legacy/cpp/narrowgate_cpp/sparse_order_lifecycle.hpp",
+      "canonical_path": "research_06_placement_fill_cif/cpp/sparse_order_lifecycle.hpp",
+      "legacy_path": "cpp/narrowgate_cpp/sparse_order_lifecycle.hpp",
+      "sha256": "0b8a644dd81b7460ec41726c85946ad9cececdb5f19d1017e62dde0b550595f6",
+      "size_bytes": 3104
+    },
+    {
+      "archive_member": "legacy/docs/aws_tokyo_market_data_latency_profile_20260711.md",
+      "canonical_path": "research_11_system_engineering/docs/aws_tokyo_market_data_latency_profile_20260711.md",
+      "legacy_path": "docs/aws_tokyo_market_data_latency_profile_20260711.md",
+      "sha256": "306ce928679124a0a1f2bc9ab80e4be2e9b13da8b9b64b9e1325b54f637597cf",
+      "size_bytes": 5127
+    },
+    {
+      "archive_member": "legacy/docs/aws_tokyo_market_data_latency_stable_20260712.md",
+      "canonical_path": "research_11_system_engineering/docs/aws_tokyo_market_data_latency_stable_20260712.md",
+      "legacy_path": "docs/aws_tokyo_market_data_latency_stable_20260712.md",
+      "sha256": "f9407b31e479bcd80579a801fae098ddd9dc7d5de02e49244556b802b59b9fdc",
+      "size_bytes": 5668
+    },
+    {
+      "archive_member": "legacy/docs/binance_trade_lifecycle_contract_v2_20260723.md",
+      "canonical_path": "research_08_side_taker_lifecycle/docs/binance_trade_lifecycle_contract_v2_20260723.md",
+      "legacy_path": "docs/binance_trade_lifecycle_contract_v2_20260723.md",
+      "sha256": "f64178898c5cefd5f83636275eb1ad7d1e06471c9d318135bb075f5020d4db3e",
+      "size_bytes": 7756
+    },
+    {
+      "archive_member": "legacy/docs/bounded_receive_time_capture_operations_20260724.md",
+      "canonical_path": "research_11_system_engineering/docs/bounded_receive_time_capture_operations_20260724.md",
+      "legacy_path": "docs/bounded_receive_time_capture_operations_20260724.md",
+      "sha256": "a5579569c12e151842276efd458281acb67f22f0bf6423c07c48ece38e31d655",
+      "size_bytes": 3404
+    },
+    {
+      "archive_member": "legacy/docs/btcusdt_trade_bridge_migration_20260727.md",
+      "canonical_path": "research_04_external_market_alpha/docs/btcusdt_trade_bridge_migration_20260727.md",
+      "legacy_path": "docs/btcusdt_trade_bridge_migration_20260727.md",
+      "sha256": "9c92f9090c6afabaa07e3e7af1eeaf80fe9cc3f9220b5f8dc315b2158bf01387",
+      "size_bytes": 5285
+    },
+    {
+      "archive_member": "legacy/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md",
+      "legacy_path": "docs/buy_add_conditional_widen_causal_v4_v1_20260718.md",
+      "sha256": "fd9f03fb28f194aa40c20347c29b507403914a014b8f511fd1411a19baacfd65",
+      "size_bytes": 4826
+    },
+    {
+      "archive_member": "legacy/docs/buy_exposure_adverse_q90_live_policy_20260725.md",
+      "canonical_path": "research_07_active_order_continuation/docs/buy_exposure_adverse_q90_live_policy_20260725.md",
+      "legacy_path": "docs/buy_exposure_adverse_q90_live_policy_20260725.md",
+      "sha256": "a28bcc1fc8b067a96558f49cc86126fdc12055ef59db3e32e79df4d66707b0a4",
+      "size_bytes": 2116
+    },
+    {
+      "archive_member": "legacy/docs/causal_v4_empirical_p3_retrain_replay_20260718.md",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v4_empirical_p3_retrain_replay_20260718.md",
+      "legacy_path": "docs/causal_v4_empirical_p3_retrain_replay_20260718.md",
+      "sha256": "820c922f901bbb933e9d693fc64864accb3bcdd27bf717a71b7caed5984dd990",
+      "size_bytes": 7381
+    },
+    {
+      "archive_member": "legacy/docs/causal_v5_normalized100ms_revalidation_20260725.md",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v5_normalized100ms_revalidation_20260725.md",
+      "legacy_path": "docs/causal_v5_normalized100ms_revalidation_20260725.md",
+      "sha256": "16434320ccff724cb43048497e3b6015f7e18ac53f17a59a757433bd185eb85e",
+      "size_bytes": 17247
+    },
+    {
+      "archive_member": "legacy/docs/causal_v5_revalidation_registry_20260725.md",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v5_revalidation_registry_20260725.md",
+      "legacy_path": "docs/causal_v5_revalidation_registry_20260725.md",
+      "sha256": "3514a114d49073a33845ff514a9b47fcada3edf24281d112b96b229998354db3",
+      "size_bytes": 19860
+    },
+    {
+      "archive_member": "legacy/docs/causal_v8_lineage_invalidation_20260727.md",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v8_lineage_invalidation_20260727.md",
+      "legacy_path": "docs/causal_v8_lineage_invalidation_20260727.md",
+      "sha256": "b114a3a3783f9bc673943a798f2237151bbc28a3fac08ed9c96a42f78e1960a2",
+      "size_bytes": 1403
+    },
+    {
+      "archive_member": "legacy/docs/causal_v8_through_20260725_spec_20260727.json",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v8_through_20260725_spec_20260727.json",
+      "legacy_path": "docs/causal_v8_through_20260725_spec_20260727.json",
+      "sha256": "517729deb1248841c02726a40926e73f422817af35467b2c30e6a3ec86090b01",
+      "size_bytes": 4010
+    },
+    {
+      "archive_member": "legacy/docs/causal_v9_formal_panel_amendment_20260727.json",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v9_formal_panel_amendment_20260727.json",
+      "legacy_path": "docs/causal_v9_formal_panel_amendment_20260727.json",
+      "sha256": "d90b9cfad0a2838232feeac91cb7ff9868bd9a1cb05a70e159bf3d2869043f9e",
+      "size_bytes": 1481
+    },
+    {
+      "archive_member": "legacy/docs/causal_v9_through_20260725_replay_20260727.md",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v9_through_20260725_replay_20260727.md",
+      "legacy_path": "docs/causal_v9_through_20260725_replay_20260727.md",
+      "sha256": "ba24f125c1b28d4f0aea555fd05ee343b8ecc2ebfaf965365a271f764be110d8",
+      "size_bytes": 5365
+    },
+    {
+      "archive_member": "legacy/docs/causal_v9_through_20260725_spec_20260727.json",
+      "canonical_path": "research_03_causal_13_head/docs/causal_v9_through_20260725_spec_20260727.json",
+      "legacy_path": "docs/causal_v9_through_20260725_spec_20260727.json",
+      "sha256": "43098d2b4c416e00ee68184301ea5c98e514f202221cd48a2f861a42e6189c11",
+      "size_bytes": 2669
+    },
+    {
+      "archive_member": "legacy/docs/cross_venue_reference_to_alpha_roadmap_20260711.md",
+      "canonical_path": "research_04_external_market_alpha/docs/cross_venue_reference_to_alpha_roadmap_20260711.md",
+      "legacy_path": "docs/cross_venue_reference_to_alpha_roadmap_20260711.md",
+      "sha256": "34a0999c33829a18ac45f0a3487313acf3d04409008be62e0352e6e71c05d4d7",
+      "size_bytes": 18814
+    },
+    {
+      "archive_member": "legacy/docs/deep_active_order_queue_probe_20260720.md",
+      "canonical_path": "research_07_active_order_continuation/docs/deep_active_order_queue_probe_20260720.md",
+      "legacy_path": "docs/deep_active_order_queue_probe_20260720.md",
+      "sha256": "f6c89516fc5356258dd25f19cad10ae015129e35bad8c9a8acfb9b6dc4197ce0",
+      "size_bytes": 12689
+    },
+    {
+      "archive_member": "legacy/docs/dynamic_fill_hazard_m0_v2_20260723.md",
+      "canonical_path": "research_07_active_order_continuation/docs/dynamic_fill_hazard_m0_v2_20260723.md",
+      "legacy_path": "docs/dynamic_fill_hazard_m0_v2_20260723.md",
+      "sha256": "2a4feed5245ff2f1e746fe9de2e8272dec6c9f387891668f3758dfd2db233719",
+      "size_bytes": 5354
+    },
+    {
+      "archive_member": "legacy/docs/dynamic_mechanism_campaign_audit_20260722.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/dynamic_mechanism_campaign_audit_20260722.md",
+      "legacy_path": "docs/dynamic_mechanism_campaign_audit_20260722.md",
+      "sha256": "ca87d54c521c1929ba3ff82c9c35b880b14f29d246528bb8e9327423eaca3ce4",
+      "size_bytes": 7382
+    },
+    {
+      "archive_member": "legacy/docs/event_identity_and_riskset_v1_20260723.md",
+      "canonical_path": "research_08_side_taker_lifecycle/docs/event_identity_and_riskset_v1_20260723.md",
+      "legacy_path": "docs/event_identity_and_riskset_v1_20260723.md",
+      "sha256": "29b62461aad63e045197dc663426673553caa2328d208953dd87b9400e9e23ab",
+      "size_bytes": 3411
+    },
+    {
+      "archive_member": "legacy/docs/external_information_decay_v1_development_20260727.md",
+      "canonical_path": "research_04_external_market_alpha/docs/external_information_decay_v1_development_20260727.md",
+      "legacy_path": "docs/external_information_decay_v1_development_20260727.md",
+      "sha256": "b3fd0b6483ac05e430cfcb540b064fc4afae21323fd117299dd7ba9665c52c12",
+      "size_bytes": 5119
+    },
+    {
+      "archive_member": "legacy/docs/external_information_decay_v1_spec_20260727.json",
+      "canonical_path": "research_04_external_market_alpha/docs/external_information_decay_v1_spec_20260727.json",
+      "legacy_path": "docs/external_information_decay_v1_spec_20260727.json",
+      "sha256": "492ec1a301dd9f597cb3c81d2bba4a8e74c55df4a4bf073cfc955c47fca301f7",
+      "size_bytes": 3212
+    },
+    {
+      "archive_member": "legacy/docs/external_venue_model_granularity_20260713.md",
+      "canonical_path": "research_04_external_market_alpha/docs/external_venue_model_granularity_20260713.md",
+      "legacy_path": "docs/external_venue_model_granularity_20260713.md",
+      "sha256": "518578c46924664017d9982b28bf7d09139d2a6798ea36ede59d9d5ede41426d",
+      "size_bytes": 13705
+    },
+    {
+      "archive_member": "legacy/docs/fill_inventory_lifecycle_retained111_20260713.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/fill_inventory_lifecycle_retained111_20260713.md",
+      "legacy_path": "docs/fill_inventory_lifecycle_retained111_20260713.md",
+      "sha256": "1b4b158b297e6bfa9176170099b72b10523e39395f1ce62dae0588e25ff0962a",
+      "size_bytes": 3383
+    },
+    {
+      "archive_member": "legacy/docs/fixed_parameter_strategy_family_closed.md",
+      "canonical_path": "research_01_fixed_parameter_racing/docs/fixed_parameter_strategy_family_closed.md",
+      "legacy_path": "docs/fixed_parameter_strategy_family_closed.md",
+      "sha256": "eb789e55f272a5508fecf05de27beaa1cb9a82052c8c1e514dd67165c38943c6",
+      "size_bytes": 14285
+    },
+    {
+      "archive_member": "legacy/docs/formal_replay_contract_20260722.md",
+      "canonical_path": "research_11_system_engineering/docs/formal_replay_contract_20260722.md",
+      "legacy_path": "docs/formal_replay_contract_20260722.md",
+      "sha256": "b0c7466379a7e9d01a64eeb05425a4aac644c3f37056c48e6e66827c43af5a45",
+      "size_bytes": 4409
+    },
+    {
+      "archive_member": "legacy/docs/global_market_reference_review_memo_20260711.md",
+      "canonical_path": "research_04_external_market_alpha/docs/global_market_reference_review_memo_20260711.md",
+      "legacy_path": "docs/global_market_reference_review_memo_20260711.md",
+      "sha256": "50c0fe65f8b79acc88ab1e6714fea434b9e603478c89832f6b7b305c8be5a1b0",
+      "size_bytes": 17093
+    },
+    {
+      "archive_member": "legacy/docs/global_reference_stage0_retained111_20260711.md",
+      "canonical_path": "research_04_external_market_alpha/docs/global_reference_stage0_retained111_20260711.md",
+      "legacy_path": "docs/global_reference_stage0_retained111_20260711.md",
+      "sha256": "21701300c21466f5b11d2cf4be0e01d4c5fb3cacecbcba294b0c5e529724ae02",
+      "size_bytes": 4937
+    },
+    {
+      "archive_member": "legacy/docs/historical_backtest_evidence_revalidation_20260720.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/historical_backtest_evidence_revalidation_20260720.md",
+      "legacy_path": "docs/historical_backtest_evidence_revalidation_20260720.md",
+      "sha256": "751818e2c8512e059be315caceef1a6723e0ddce01b712efd2ca7c63b37b906d",
+      "size_bytes": 8626
+    },
+    {
+      "archive_member": "legacy/docs/live_48h_loss_attribution_20260722.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/live_48h_loss_attribution_20260722.md",
+      "legacy_path": "docs/live_48h_loss_attribution_20260722.md",
+      "sha256": "7bc5c20c8ca1e8d7072e21d452d1f043de5b02f40121849345dd10ebe62b7a00",
+      "size_bytes": 8272
+    },
+    {
+      "archive_member": "legacy/docs/live_pre_restart_48h_loss_attribution_20260725.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/live_pre_restart_48h_loss_attribution_20260725.md",
+      "legacy_path": "docs/live_pre_restart_48h_loss_attribution_20260725.md",
+      "sha256": "b04ab5c7aac5a0280764a715f006d5601f2ed73a5b26c879712bd4f4e019d600",
+      "size_bytes": 8136
+    },
+    {
+      "archive_member": "legacy/docs/live_replay_code_parity_20260717.md",
+      "canonical_path": "research_10_live_replay_attribution/docs/live_replay_code_parity_20260717.md",
+      "legacy_path": "docs/live_replay_code_parity_20260717.md",
+      "sha256": "1a1a6c372d1af1374b1f36f4e6f54d03db3f9db5a75d81baf3d3a289d82dbf76",
+      "size_bytes": 4641
+    },
+    {
+      "archive_member": "legacy/docs/live_taker_flow_parity_v1_20260723.md",
+      "canonical_path": "research_08_side_taker_lifecycle/docs/live_taker_flow_parity_v1_20260723.md",
+      "legacy_path": "docs/live_taker_flow_parity_v1_20260723.md",
+      "sha256": "3d5444998575acc75028715f14625c43c80eef09e1b8dcb3c653f5764b683e9d",
+      "size_bytes": 3144
+    },
+    {
+      "archive_member": "legacy/docs/model_runtime_cleanup_retrain_20260717.md",
+      "canonical_path": "research_03_causal_13_head/docs/model_runtime_cleanup_retrain_20260717.md",
+      "legacy_path": "docs/model_runtime_cleanup_retrain_20260717.md",
+      "sha256": "587aec9a0e162f3c5ed613cf5a383564d37cb26ad9d3543f4050f9550c00aa3d",
+      "size_bytes": 4878
+    },
+    {
+      "archive_member": "legacy/docs/native_exchange_book_replay_scheduler_20260720.md",
+      "canonical_path": "research_07_active_order_continuation/docs/native_exchange_book_replay_scheduler_20260720.md",
+      "legacy_path": "docs/native_exchange_book_replay_scheduler_20260720.md",
+      "sha256": "039e2cb8a5892e86c54c33cee8a61351dcfd5f4126db0651c29f1e743bfdc883",
+      "size_bytes": 12977
+    },
+    {
+      "archive_member": "legacy/docs/native_global_flow_batch_soak_20260711.md",
+      "canonical_path": "research_11_system_engineering/docs/native_global_flow_batch_soak_20260711.md",
+      "legacy_path": "docs/native_global_flow_batch_soak_20260711.md",
+      "sha256": "5ccb2ec4de54ec63c42990a3099a26e40f6021de4d54995cb3e1d89ed1747a8c",
+      "size_bytes": 5368
+    },
+    {
+      "archive_member": "legacy/docs/offensive_defensive_arm_taxonomy_20260706.md",
+      "canonical_path": "research_05_fill_quality_quote_ev/docs/offensive_defensive_arm_taxonomy_20260706.md",
+      "legacy_path": "docs/offensive_defensive_arm_taxonomy_20260706.md",
+      "sha256": "ea3a750c462f6c4a19fbbb862f48a08e7d40a178ca66eef49d722ec1f395f9ee",
+      "size_bytes": 25417
+    },
+    {
+      "archive_member": "legacy/docs/offline_policy_evaluation_20260712.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/offline_policy_evaluation_20260712.md",
+      "legacy_path": "docs/offline_policy_evaluation_20260712.md",
+      "sha256": "189446ec6a418971f474720ef109394149a92350dc0d0a5d4399dc7c8995c48d",
+      "size_bytes": 13249
+    },
+    {
+      "archive_member": "legacy/docs/operational_baseline_identity_20260720.json",
+      "canonical_path": "research_10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+      "legacy_path": "docs/operational_baseline_identity_20260720.json",
+      "sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+      "size_bytes": 2898
+    },
+    {
+      "archive_member": "legacy/docs/operational_baseline_identity_20260725.json",
+      "canonical_path": "research_10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+      "legacy_path": "docs/operational_baseline_identity_20260725.json",
+      "sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+      "size_bytes": 5137
+    },
+    {
+      "archive_member": "legacy/docs/p3_touch_recalibration_normalized100ms_v2_20260725.md",
+      "canonical_path": "research_02_empirical_p3_touch/docs/p3_touch_recalibration_normalized100ms_v2_20260725.md",
+      "legacy_path": "docs/p3_touch_recalibration_normalized100ms_v2_20260725.md",
+      "sha256": "ac8efd613e4c3593213632d4f340aa7403ed0be1863097c143f85bedd0cfed0a",
+      "size_bytes": 2641
+    },
+    {
+      "archive_member": "legacy/docs/paired_fixed_spread_monotonic_v2_20260726.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/paired_fixed_spread_monotonic_v2_20260726.md",
+      "legacy_path": "docs/paired_fixed_spread_monotonic_v2_20260726.md",
+      "sha256": "e24b6a901df5819489e0598b32d0eb448295dfd244907dc3db2bb2dbb6909177",
+      "size_bytes": 8057
+    },
+    {
+      "archive_member": "legacy/docs/paired_screen_v2_architecture_20260727.md",
+      "canonical_path": "research_01_fixed_parameter_racing/docs/paired_screen_v2_architecture_20260727.md",
+      "legacy_path": "docs/paired_screen_v2_architecture_20260727.md",
+      "sha256": "582119c686cbe237eaedc397e61837cf67dccf6deb8e919207b970742410aa30",
+      "size_bytes": 2828
+    },
+    {
+      "archive_member": "legacy/docs/paired_state_fill_surface_smoke_20260726.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/paired_state_fill_surface_smoke_20260726.md",
+      "legacy_path": "docs/paired_state_fill_surface_smoke_20260726.md",
+      "sha256": "c363b4feb8184f432960790de418327d1e0559a267cdea3d92285a83533d38e3",
+      "size_bytes": 4453
+    },
+    {
+      "archive_member": "legacy/docs/paired_state_fill_surface_v1_experiment_spec_20260726.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/paired_state_fill_surface_v1_experiment_spec_20260726.json",
+      "legacy_path": "docs/paired_state_fill_surface_v1_experiment_spec_20260726.json",
+      "sha256": "4929fbd8b78c4661500149092c5b265c87b6c86c81b57c6e13d0cf36cc8df25d",
+      "size_bytes": 4098
+    },
+    {
+      "archive_member": "legacy/docs/paired_state_fill_surface_v1_spec_20260726.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/paired_state_fill_surface_v1_spec_20260726.json",
+      "legacy_path": "docs/paired_state_fill_surface_v1_spec_20260726.json",
+      "sha256": "fc20d96c2cf72a1e9c524f157cd118d66ee54f1e6535915dc752965c0455baa2",
+      "size_bytes": 6992
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v1_development_20260726.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v1_development_20260726.md",
+      "legacy_path": "docs/placement_fill_cif_v1_development_20260726.md",
+      "sha256": "3ef3dd753c20bc44021e70cda30b8f67f8842a4be932985e9aa873f558cadd14",
+      "size_bytes": 5284
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v1_spec_20260726.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v1_spec_20260726.json",
+      "legacy_path": "docs/placement_fill_cif_v1_spec_20260726.json",
+      "sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
+      "size_bytes": 6664
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v2_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v2_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_cif_v2_spec_20260727.json",
+      "sha256": "54c74b8a5185cfe55ff00cd7bbf95896649133d6093de0707ddf6b3b7ce906e9",
+      "size_bytes": 7669
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v3_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v3_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_cif_v3_spec_20260727.json",
+      "sha256": "18dfc9cea5b0e4da7455370bf5e79d9655b71972676cca3500bbc6df0587462f",
+      "size_bytes": 1658
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v4_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_cif_v4_spec_20260727.json",
+      "sha256": "e2a9ef38aef8ff53493e92ca58852db7b76cd5aa57ce9a7b89d24b706ba7afaf",
+      "size_bytes": 2401
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_cif_v4_validation_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_validation_20260727.md",
+      "legacy_path": "docs/placement_fill_cif_v4_validation_20260727.md",
+      "sha256": "1b5b58da352d83356b8811ff32c0d349ef32fea67c9ad24d17c813f28c047d56",
+      "size_bytes": 4925
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_empirical_pending_nuisance_v3_development_20260728.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_empirical_pending_nuisance_v3_development_20260728.md",
+      "legacy_path": "docs/placement_fill_empirical_pending_nuisance_v3_development_20260728.md",
+      "sha256": "f427a8703f3296cd73b9de6b222fdadd8e77ed12cceb51ce327d070b8390ef0a",
+      "size_bytes": 8901
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_20260728.json",
+      "sha256": "4260aa09cff28568ee6b09c7a2d5294d62b767ffde43a73ad2d3fa0ac1748069",
+      "size_bytes": 3672
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v2_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v2_20260728.json",
+      "legacy_path": "docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v2_20260728.json",
+      "sha256": "fa63716fc2405459d574c0d0d53616fe6f75ff0984d599d373e23eef3004c6fa",
+      "size_bytes": 4260
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v3_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v3_20260728.json",
+      "legacy_path": "docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v3_20260728.json",
+      "sha256": "4ce0bfe49d55371c9162e6838fe916d67640e5f77c2a68b03597723d0dcdbb1e",
+      "size_bytes": 4051
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_empirical_pending_nuisance_v3_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_empirical_pending_nuisance_v3_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_empirical_pending_nuisance_v3_spec_20260728.json",
+      "sha256": "45979003b605a08a94eeaffc6023e76e315deb22f5b88737cd41d80cd763c12a",
+      "size_bytes": 8345
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_cif_v1_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v1_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_full_curve_cif_v1_spec_20260727.json",
+      "sha256": "71efb2f30d2ec8d6ddbf95f139a87e56720de1485300cb073ec2a54011ed25d0",
+      "size_bytes": 6731
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_cif_v2_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v2_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_full_curve_cif_v2_spec_20260727.json",
+      "sha256": "832664c857e2943a638eeb53ab12c7c22bfb0e3d4388d9a209f470d96795cb23",
+      "size_bytes": 1737
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_cif_v3_development_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v3_development_20260727.md",
+      "legacy_path": "docs/placement_fill_full_curve_cif_v3_development_20260727.md",
+      "sha256": "a552f6203112b8aef79649f511113f997d795e36a0f6442d83996b6096265aa6",
+      "size_bytes": 5367
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_cif_v3_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v3_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_full_curve_cif_v3_spec_20260727.json",
+      "sha256": "5084a3f81a9f439e8c21bb5eeb4f111b47328ddf76cc9b35406557fc9b0dbe3b",
+      "size_bytes": 2573
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_competing_cif_v4_development_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_competing_cif_v4_development_20260727.md",
+      "legacy_path": "docs/placement_fill_full_curve_competing_cif_v4_development_20260727.md",
+      "sha256": "9bdc5d08c0df0c0e52e1e3bdf791d7f2e74ee9efe3517efd482404b31806ca65",
+      "size_bytes": 4624
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+      "sha256": "0acc7920f07656af0be2cb55b05f5782aaae4520011ba5a00c400bf739563dac",
+      "size_bytes": 4412
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_nested_role_competing_cif_v6_development_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_nested_role_competing_cif_v6_development_20260727.md",
+      "legacy_path": "docs/placement_fill_nested_role_competing_cif_v6_development_20260727.md",
+      "sha256": "0115a6f45d2d220753778a95d6aeba4ff16bdd4dae1996fdcca30f4d32952b47",
+      "size_bytes": 3778
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_nested_role_competing_cif_v6_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_nested_role_competing_cif_v6_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_nested_role_competing_cif_v6_spec_20260727.json",
+      "sha256": "6db121f8b1240a84c5666e0a843398291778d42cd43fedb2cf036d3ff536fb8d",
+      "size_bytes": 4234
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_policy_clock_panel_v1_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_panel_v1_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_policy_clock_panel_v1_spec_20260728.json",
+      "sha256": "de2090c4dd755deded63c8e54b4f18fd1abd83f1e61b21e4b491b20d62825659",
+      "size_bytes": 2916
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_policy_clock_race_v1_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_race_v1_20260727.md",
+      "legacy_path": "docs/placement_fill_policy_clock_race_v1_20260727.md",
+      "sha256": "4a2925bbe80c994ad1158faf513a2b0aecbbb3dd5746eb327ac38e1d1cf53f55",
+      "size_bytes": 2086
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_policy_clock_race_v1_development_20260728.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_race_v1_development_20260728.md",
+      "legacy_path": "docs/placement_fill_policy_clock_race_v1_development_20260728.md",
+      "sha256": "adb0c0d9c051705ae617d10fdc735304c1a912ec1560ef3afe9fa9cf44f86cc4",
+      "size_bytes": 5905
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_policy_clock_race_v1_fit_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_race_v1_fit_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_policy_clock_race_v1_fit_spec_20260728.json",
+      "sha256": "bd73e73c965c8453f69d21596cf2257912bc25522a0592f5117db18e4eb1bee5",
+      "size_bytes": 7231
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_policy_clock_race_v1_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_race_v1_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_policy_clock_race_v1_spec_20260727.json",
+      "sha256": "f2412f2efa4565b36d90213575c0698b12686dde7ce3d60dfeb3f32a22ff4f79",
+      "size_bytes": 3366
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_request_state_race_v2_development_20260728.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_request_state_race_v2_development_20260728.md",
+      "legacy_path": "docs/placement_fill_request_state_race_v2_development_20260728.md",
+      "sha256": "fb3b60ca01dfb4e61d4378da65ae6d62a8d0c1519fd34d104afd7a6c4197ea9b",
+      "size_bytes": 4638
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_request_state_race_v2_fit_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_request_state_race_v2_fit_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_request_state_race_v2_fit_spec_20260728.json",
+      "sha256": "08168e4550d7cb812668829ac9fc7337172524be2224852902a9f316698ef4e5",
+      "size_bytes": 4550
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_request_state_race_v2_fit_spec_v2_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_request_state_race_v2_fit_spec_v2_20260728.json",
+      "legacy_path": "docs/placement_fill_request_state_race_v2_fit_spec_v2_20260728.json",
+      "sha256": "2695b3ddb74f0f146d8f4370c9ebd9cf04d7634c562d6cad13faa07a2da395c5",
+      "size_bytes": 5315
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_request_state_race_v2_implementation_20260728.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_request_state_race_v2_implementation_20260728.md",
+      "legacy_path": "docs/placement_fill_request_state_race_v2_implementation_20260728.md",
+      "sha256": "b3f9e701616e41c29921f9fbecc1976f81cd0e29059e22473f7ea0785cad53d8",
+      "size_bytes": 8612
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_request_state_race_v2_spec_20260728.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_request_state_race_v2_spec_20260728.json",
+      "legacy_path": "docs/placement_fill_request_state_race_v2_spec_20260728.json",
+      "sha256": "5b5c89b5c43ea0ca9f3a186da759551be43effbeaca6eb0936bf4fedfaeb3721",
+      "size_bytes": 12383
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_role_calibrated_competing_cif_v5_development_20260727.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_role_calibrated_competing_cif_v5_development_20260727.md",
+      "legacy_path": "docs/placement_fill_role_calibrated_competing_cif_v5_development_20260727.md",
+      "sha256": "33bea2869beaa10ffb7af18651faea6d8572955449fffecb9f00fc85e0b87592",
+      "size_bytes": 3583
+    },
+    {
+      "archive_member": "legacy/docs/placement_fill_role_calibrated_competing_cif_v5_spec_20260727.json",
+      "canonical_path": "research_06_placement_fill_cif/docs/placement_fill_role_calibrated_competing_cif_v5_spec_20260727.json",
+      "legacy_path": "docs/placement_fill_role_calibrated_competing_cif_v5_spec_20260727.json",
+      "sha256": "a474b756a3e39c023a915e7628edfb0befe3e3dba20c1eaf0d98813adab166dd",
+      "size_bytes": 2999
+    },
+    {
+      "archive_member": "legacy/docs/queue_value_cancel_reenter_v3_development_20260720.md",
+      "canonical_path": "research_07_active_order_continuation/docs/queue_value_cancel_reenter_v3_development_20260720.md",
+      "legacy_path": "docs/queue_value_cancel_reenter_v3_development_20260720.md",
+      "sha256": "a12744c3ce33c3a59722da06c9b0f8ed67390fb9001b8a1584b416aec76a7f54",
+      "size_bytes": 9432
+    },
+    {
+      "archive_member": "legacy/docs/queue_value_keep_cancel_v1_20260719.md",
+      "canonical_path": "research_07_active_order_continuation/docs/queue_value_keep_cancel_v1_20260719.md",
+      "legacy_path": "docs/queue_value_keep_cancel_v1_20260719.md",
+      "sha256": "1a1b6dbf0b4f326444f5b5841ceb79ff7b7a2196f74288da227dcd707553591e",
+      "size_bytes": 6542
+    },
+    {
+      "archive_member": "legacy/docs/queue_value_net_hazard_keep_cancel_v2_20260722.md",
+      "canonical_path": "research_07_active_order_continuation/docs/queue_value_net_hazard_keep_cancel_v2_20260722.md",
+      "legacy_path": "docs/queue_value_net_hazard_keep_cancel_v2_20260722.md",
+      "sha256": "2201455a3faf065cd9a924155dd03e12cb04757b1cc6999967521838ff399d3d",
+      "size_bytes": 7046
+    },
+    {
+      "archive_member": "legacy/docs/recovery_event_rearm_v1_20260722.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/recovery_event_rearm_v1_20260722.md",
+      "legacy_path": "docs/recovery_event_rearm_v1_20260722.md",
+      "sha256": "901f6e8cfafe3e632053ddba6b1d3fe651fdb5514f5c3fa25c8d9cc28ce7d279",
+      "size_bytes": 6447
+    },
+    {
+      "archive_member": "legacy/docs/reference_feed_dispatch_soak_20260711.md",
+      "canonical_path": "research_11_system_engineering/docs/reference_feed_dispatch_soak_20260711.md",
+      "legacy_path": "docs/reference_feed_dispatch_soak_20260711.md",
+      "sha256": "558f9918811897d30042008aae4102e18e4feba799d89c671f837533b5a283f4",
+      "size_bytes": 8490
+    },
+    {
+      "archive_member": "legacy/docs/remote_main_archive_20260705.md",
+      "canonical_path": "research_11_system_engineering/docs/remote_main_archive_20260705.md",
+      "legacy_path": "docs/remote_main_archive_20260705.md",
+      "sha256": "51eb65c536357cdb73d2d78b08a2d1895cbd7d92d85d83aaf4ae14f4cfb046d6",
+      "size_bytes": 1573
+    },
+    {
+      "archive_member": "legacy/docs/replay_time_unit_causality_repair_20260715.md",
+      "canonical_path": "research_11_system_engineering/docs/replay_time_unit_causality_repair_20260715.md",
+      "legacy_path": "docs/replay_time_unit_causality_repair_20260715.md",
+      "sha256": "fa52158805e8e373858298163a79bce8338d47fa6870414cdc91eb6e549781bd",
+      "size_bytes": 7102
+    },
+    {
+      "archive_member": "legacy/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md",
+      "legacy_path": "docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md",
+      "sha256": "d5aa7bad45596cbaa7da0222d2bdd01db2524dcb5a1b994f61df9db96a028f2d",
+      "size_bytes": 7422
+    },
+    {
+      "archive_member": "legacy/docs/sell_campaign_add_permission_v1_20260722.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/sell_campaign_add_permission_v1_20260722.md",
+      "legacy_path": "docs/sell_campaign_add_permission_v1_20260722.md",
+      "sha256": "441feeaeba1e0a49849ae5bc5225903d95fad95004a1770cf9eca65f4682c0bf",
+      "size_bytes": 6184
+    },
+    {
+      "archive_member": "legacy/docs/side_specific_action_uplift_existing_split_20260718.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/side_specific_action_uplift_existing_split_20260718.md",
+      "legacy_path": "docs/side_specific_action_uplift_existing_split_20260718.md",
+      "sha256": "9633bb54769c35ab21544e11c5a6da1815d1fc0e0738de159ae80bdb20dd00bc",
+      "size_bytes": 8969
+    },
+    {
+      "archive_member": "legacy/docs/side_specific_taker_flow_research_20260723.md",
+      "canonical_path": "research_08_side_taker_lifecycle/docs/side_specific_taker_flow_research_20260723.md",
+      "legacy_path": "docs/side_specific_taker_flow_research_20260723.md",
+      "sha256": "a9cd6f166a7109a54bbf76af73aefbde7d1258eb57335e3e71d3712b703ba986",
+      "size_bytes": 7347
+    },
+    {
+      "archive_member": "legacy/docs/side_taker_hazard_m0_v1_20260723.md",
+      "canonical_path": "research_08_side_taker_lifecycle/docs/side_taker_hazard_m0_v1_20260723.md",
+      "legacy_path": "docs/side_taker_hazard_m0_v1_20260723.md",
+      "sha256": "ab23ad0a5c322220a3804ffac9a2c2f5c814b5c828614b72b60addba102ad6ee",
+      "size_bytes": 6095
+    },
+    {
+      "archive_member": "legacy/docs/state_conditioned_market_making_literature_map_20260718.md",
+      "canonical_path": "research_07_active_order_continuation/docs/state_conditioned_market_making_literature_map_20260718.md",
+      "legacy_path": "docs/state_conditioned_market_making_literature_map_20260718.md",
+      "sha256": "95d3c722688b206891d913e605522b8236b235ea3e78f54c53741be4bc53fc83",
+      "size_bytes": 16628
+    },
+    {
+      "archive_member": "legacy/docs/state_conditioned_rearm_after85_v1_20260722.md",
+      "canonical_path": "research_09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md",
+      "legacy_path": "docs/state_conditioned_rearm_after85_v1_20260722.md",
+      "sha256": "7ad03ccaaaa7eed939e220927e3c5c18858c30f544364290de3043196c981289",
+      "size_bytes": 8317
+    },
+    {
+      "archive_member": "legacy/docs/time_unit_contract_repair_20260726.md",
+      "canonical_path": "research_11_system_engineering/docs/time_unit_contract_repair_20260726.md",
+      "legacy_path": "docs/time_unit_contract_repair_20260726.md",
+      "sha256": "f718e3afd3168348fa69cc31806756cf75b25acbaf52d53d3d235c60ce84adb7",
+      "size_bytes": 10146
+    },
+    {
+      "archive_member": "legacy/docs/volatility_conditioned_fill_probability_design_20260726.md",
+      "canonical_path": "research_06_placement_fill_cif/docs/volatility_conditioned_fill_probability_design_20260726.md",
+      "legacy_path": "docs/volatility_conditioned_fill_probability_design_20260726.md",
+      "sha256": "624415270f81077cc4e5ce57fca79d235a282a7ce62fdaa43178a2bc0f02dd1c",
+      "size_bytes": 9870
+    },
+    {
+      "archive_member": "legacy/features/external_venue_features.py",
+      "canonical_path": "research_04_external_market_alpha/external_venue_features.py",
+      "legacy_path": "features/external_venue_features.py",
+      "sha256": "777461c00113fb18e5b9782619e74f4b86a54362e6b307f56b6ed12c1f3f75fa",
+      "size_bytes": 21401
+    },
+    {
+      "archive_member": "legacy/models/audit/active_order_queue_closure.py",
+      "canonical_path": "research_07_active_order_continuation/audit/active_order_queue_closure.py",
+      "legacy_path": "models/audit/active_order_queue_closure.py",
+      "sha256": "5d3f430de32bc533f05febcf9957a15f48d639dda58a11917005f86c94ce5a48",
+      "size_bytes": 6815
+    },
+    {
+      "archive_member": "legacy/models/audit/binance_trade_mapping.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/binance_trade_mapping.py",
+      "legacy_path": "models/audit/binance_trade_mapping.py",
+      "sha256": "a48b4bfe23e30f8b6caccdfec39e7092eaaefad683512bc8762c3d48637cf3f3",
+      "size_bytes": 18147
+    },
+    {
+      "archive_member": "legacy/models/audit/buy_conditional_widen_cate.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/buy_conditional_widen_cate.py",
+      "legacy_path": "models/audit/buy_conditional_widen_cate.py",
+      "sha256": "897863f16ed86c9e4b54980213071f3e053433734d03f158545ff3ef14c3c1e9",
+      "size_bytes": 37819
+    },
+    {
+      "archive_member": "legacy/models/audit/campaign_repair_probability.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/campaign_repair_probability.py",
+      "legacy_path": "models/audit/campaign_repair_probability.py",
+      "sha256": "3cdf413511d448aca05bf414769a3cfc52285c63179cdad6989268aab0ccb737",
+      "size_bytes": 24450
+    },
+    {
+      "archive_member": "legacy/models/audit/campaign_tail_score.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/campaign_tail_score.py",
+      "legacy_path": "models/audit/campaign_tail_score.py",
+      "sha256": "85d28603b7aa4e2f8de6bbe4d88da1b24efb90a2b0bef275e78e35e5de7bfcf8",
+      "size_bytes": 31563
+    },
+    {
+      "archive_member": "legacy/models/audit/competing_curve_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/competing_curve_fill_cif.py",
+      "legacy_path": "models/audit/competing_curve_fill_cif.py",
+      "sha256": "93ea9f2edc6c6f8f2b674e88ca1fdea265a43a8cbb3d48b83d0b329492ad302f",
+      "size_bytes": 21048
+    },
+    {
+      "archive_member": "legacy/models/audit/direct_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/direct_fill_cif.py",
+      "legacy_path": "models/audit/direct_fill_cif.py",
+      "sha256": "ab01cb44979a1a84514df448fae5555f0012e593b37bdd27956b2c7888d7478c",
+      "size_bytes": 62496
+    },
+    {
+      "archive_member": "legacy/models/audit/dynamic_fill_hazard.py",
+      "canonical_path": "research_07_active_order_continuation/audit/dynamic_fill_hazard.py",
+      "legacy_path": "models/audit/dynamic_fill_hazard.py",
+      "sha256": "0ca405c3f80154262e2cf8310b054b0a839884a1ed8eae479eb702c319ba337e",
+      "size_bytes": 103549
+    },
+    {
+      "archive_member": "legacy/models/audit/dynamic_mechanism_campaign_audit.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/dynamic_mechanism_campaign_audit.py",
+      "legacy_path": "models/audit/dynamic_mechanism_campaign_audit.py",
+      "sha256": "b3e7796f9ae5e859628db352a4ba4b472d93ef4eaa46b8b365c896655ad3fb68",
+      "size_bytes": 66153
+    },
+    {
+      "archive_member": "legacy/models/audit/enrich_safe_add_rearm_paths.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/enrich_safe_add_rearm_paths.py",
+      "legacy_path": "models/audit/enrich_safe_add_rearm_paths.py",
+      "sha256": "82db791292f8b96cbfa5e5b7f4214f89c6f07bb6d0d43dd1810722ee0a3b0e79",
+      "size_bytes": 7626
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_competing_curve_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_competing_curve_cif.py",
+      "legacy_path": "models/audit/evaluate_competing_curve_cif.py",
+      "sha256": "984c2e2293ff9cfcbbd9bbaf702d4b3352d832a9041243bf8ea3111eae37649b",
+      "size_bytes": 11491
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_direct_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_direct_fill_cif.py",
+      "legacy_path": "models/audit/evaluate_direct_fill_cif.py",
+      "sha256": "5ab7f86d77c7d9ef963d5565bd41011ff35b4902f21d4c3982fd5cfeb7b5c952",
+      "size_bytes": 12906
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_empirical_pending_nuisance.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_empirical_pending_nuisance.py",
+      "legacy_path": "models/audit/evaluate_empirical_pending_nuisance.py",
+      "sha256": "1007efc0a6c26d159cac94ed57671b0d5432824fc49a8d670d6ccca27f60d20c",
+      "size_bytes": 47222
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_full_curve_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_full_curve_fill_cif.py",
+      "legacy_path": "models/audit/evaluate_full_curve_fill_cif.py",
+      "sha256": "cb933c2f7e76e4a85c861aaacdd3d52d26405635a8d2579a0ed478686d22d715",
+      "size_bytes": 9589
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_nested_role_competing_curve_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_nested_role_competing_curve_cif.py",
+      "legacy_path": "models/audit/evaluate_nested_role_competing_curve_cif.py",
+      "sha256": "f77b48a4185cd9546c24fb52b4f93cadcea29d75890755ae3fea2c18897d454b",
+      "size_bytes": 4728
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_policy_clock_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_policy_clock_fill_cif.py",
+      "legacy_path": "models/audit/evaluate_policy_clock_fill_cif.py",
+      "sha256": "08e46e1481b030d6eb17c750c3b2708c25a7ab6b73cdfb8990f245ef0818d27e",
+      "size_bytes": 15216
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_request_state_race.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_request_state_race.py",
+      "legacy_path": "models/audit/evaluate_request_state_race.py",
+      "sha256": "1fd6579722820400424fe65f1b0601c3ba339640b09df89ef9e5c7336ec65f67",
+      "size_bytes": 35983
+    },
+    {
+      "archive_member": "legacy/models/audit/evaluate_role_calibrated_competing_curve_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/evaluate_role_calibrated_competing_curve_cif.py",
+      "legacy_path": "models/audit/evaluate_role_calibrated_competing_curve_cif.py",
+      "sha256": "a9635a296c00064a0d53f1e56b6c7e94ff5c7648438abbc69c946e92917e07bb",
+      "size_bytes": 4757
+    },
+    {
+      "archive_member": "legacy/models/audit/event_identity_and_riskset.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/event_identity_and_riskset.py",
+      "legacy_path": "models/audit/event_identity_and_riskset.py",
+      "sha256": "ee26554f162f49c0d659b9f8b7f594019e2b50c838d609b6b1f2589cfc84fa5f",
+      "size_bytes": 14734
+    },
+    {
+      "archive_member": "legacy/models/audit/event_identity_and_riskset_v2.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/event_identity_and_riskset_v2.py",
+      "legacy_path": "models/audit/event_identity_and_riskset_v2.py",
+      "sha256": "a1d49dd42b7d23e26025f3a2c88e12381b138b92643732d6c09951ae572a7a43",
+      "size_bytes": 12953
+    },
+    {
+      "archive_member": "legacy/models/audit/external_venue_shadow_panel.py",
+      "canonical_path": "research_04_external_market_alpha/audit/external_venue_shadow_panel.py",
+      "legacy_path": "models/audit/external_venue_shadow_panel.py",
+      "sha256": "2041899c789b5d276401333f179dce77536e7c838a244757d4d438182acaf524",
+      "size_bytes": 27525
+    },
+    {
+      "archive_member": "legacy/models/audit/fast3_direction_policy_audit.py",
+      "canonical_path": "research_04_external_market_alpha/audit/fast3_direction_policy_audit.py",
+      "legacy_path": "models/audit/fast3_direction_policy_audit.py",
+      "sha256": "061acf4272f08b6b7d2c8e827856ed7a5e13f94c475d61d0a6c652f5347caa16",
+      "size_bytes": 17288
+    },
+    {
+      "archive_member": "legacy/models/audit/fill_inventory_lifecycle.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/fill_inventory_lifecycle.py",
+      "legacy_path": "models/audit/fill_inventory_lifecycle.py",
+      "sha256": "5f8afe5bc566b55222830092c292c038f5d9a7e996415022f2ae8138fe4e1d7c",
+      "size_bytes": 14079
+    },
+    {
+      "archive_member": "legacy/models/audit/fill_selection_score.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/fill_selection_score.py",
+      "legacy_path": "models/audit/fill_selection_score.py",
+      "sha256": "8ab679fc2cfb3503ed2d2a625687d815c93882ae8cbf75c528af6098c38d4575",
+      "size_bytes": 58922
+    },
+    {
+      "archive_member": "legacy/models/audit/fill_toxicity.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/fill_toxicity.py",
+      "legacy_path": "models/audit/fill_toxicity.py",
+      "sha256": "ac18ce433a662d06b70b6bcd405945c26b9ca2222bc139d6cdf23038e7785706",
+      "size_bytes": 24501
+    },
+    {
+      "archive_member": "legacy/models/audit/fill_toxicity_incremental.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/fill_toxicity_incremental.py",
+      "legacy_path": "models/audit/fill_toxicity_incremental.py",
+      "sha256": "c21d61cf64757ef264e7b57b4e434a4e2ae65a7155d815c3d4600933eb8b0a5e",
+      "size_bytes": 32216
+    },
+    {
+      "archive_member": "legacy/models/audit/fixed_spread_support.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/fixed_spread_support.py",
+      "legacy_path": "models/audit/fixed_spread_support.py",
+      "sha256": "34ee39f25d0ee1c399b3fc933ca40d4dfc3e0a64509dc22d7f82b9ac492d4367",
+      "size_bytes": 10299
+    },
+    {
+      "archive_member": "legacy/models/audit/full_curve_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/full_curve_fill_cif.py",
+      "legacy_path": "models/audit/full_curve_fill_cif.py",
+      "sha256": "a77814e64e22f9b59efc61320b42bbf720995934aef74ec796e085a3b1c0c415",
+      "size_bytes": 44718
+    },
+    {
+      "archive_member": "legacy/models/audit/historical_live_aggtrade_parity.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/historical_live_aggtrade_parity.py",
+      "legacy_path": "models/audit/historical_live_aggtrade_parity.py",
+      "sha256": "d456332cb47a73d57a1bee95239c7422e377d352a4105ba860a29f93122ca46e",
+      "size_bytes": 18690
+    },
+    {
+      "archive_member": "legacy/models/audit/live_order_fill_closure.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/live_order_fill_closure.py",
+      "legacy_path": "models/audit/live_order_fill_closure.py",
+      "sha256": "952949c39bc85a22dce33e36d5cebf93082507adb96662b4301f53f8116eacd4",
+      "size_bytes": 9098
+    },
+    {
+      "archive_member": "legacy/models/audit/live_taker_flow_parity.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/live_taker_flow_parity.py",
+      "legacy_path": "models/audit/live_taker_flow_parity.py",
+      "sha256": "9eaf05730ac249148c795e6801a52e4b98d0c5ac9dbb6be09a51bc638f5671f2",
+      "size_bytes": 12148
+    },
+    {
+      "archive_member": "legacy/models/audit/local_action_ope_report.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/local_action_ope_report.py",
+      "legacy_path": "models/audit/local_action_ope_report.py",
+      "sha256": "a4bbaf0ce3901ac7692ef9039a71811c891649391a47827fc2d4e4d77bbc829a",
+      "size_bytes": 45215
+    },
+    {
+      "archive_member": "legacy/models/audit/local_action_uplift.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/local_action_uplift.py",
+      "legacy_path": "models/audit/local_action_uplift.py",
+      "sha256": "5afdfb09215b666ebc88a18ea4e34c34a95489072b1f0f5694a519668a1297b9",
+      "size_bytes": 82153
+    },
+    {
+      "archive_member": "legacy/models/audit/local_order_value_panel.py",
+      "canonical_path": "research_07_active_order_continuation/audit/local_order_value_panel.py",
+      "legacy_path": "models/audit/local_order_value_panel.py",
+      "sha256": "b0863af4b8d548e8592fd5b585782222f5e95fe95b4201b4d885d59ed3e11f4c",
+      "size_bytes": 31891
+    },
+    {
+      "archive_member": "legacy/models/audit/local_order_value_replay.py",
+      "canonical_path": "research_07_active_order_continuation/audit/local_order_value_replay.py",
+      "legacy_path": "models/audit/local_order_value_replay.py",
+      "sha256": "6d1c048511c55062d4fd62f632d53cf493e4f4eb339373e657c66f3d90e72f12",
+      "size_bytes": 77422
+    },
+    {
+      "archive_member": "legacy/models/audit/maker_lifecycle_panel.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/maker_lifecycle_panel.py",
+      "legacy_path": "models/audit/maker_lifecycle_panel.py",
+      "sha256": "4bf9d4b78ec99bd8724268cf8114bd1d189e5a94eefeeb7416f4bc16f4de142a",
+      "size_bytes": 31782
+    },
+    {
+      "archive_member": "legacy/models/audit/maker_lifecycle_screen.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/maker_lifecycle_screen.py",
+      "legacy_path": "models/audit/maker_lifecycle_screen.py",
+      "sha256": "c8d9e8b1b5cbf2c62aa9d186473c694e88fdd04dc75c81bb5aac9cc2e187b44b",
+      "size_bytes": 19700
+    },
+    {
+      "archive_member": "legacy/models/audit/market_data_latency.py",
+      "canonical_path": "research_11_system_engineering/audit/market_data_latency.py",
+      "legacy_path": "models/audit/market_data_latency.py",
+      "sha256": "644b2871a5959c475467f6e83010ae781ca780b64bdace326f084131c458fc98",
+      "size_bytes": 15085
+    },
+    {
+      "archive_member": "legacy/models/audit/metrics.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/metrics.py",
+      "legacy_path": "models/audit/metrics.py",
+      "sha256": "a1e209bab888f0a6ef49a317820399d04d115a36e9ed0b6b1f9b2812b304330d",
+      "size_bytes": 278790
+    },
+    {
+      "archive_member": "legacy/models/audit/nested_role_calibrated_competing_curve_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/nested_role_calibrated_competing_curve_cif.py",
+      "legacy_path": "models/audit/nested_role_calibrated_competing_curve_cif.py",
+      "sha256": "a8c378c352080d0bb90180731464ade0e89ac9513ca7b3b454a8cf0708db441e",
+      "size_bytes": 24683
+    },
+    {
+      "archive_member": "legacy/models/audit/null_baseline_panel.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/null_baseline_panel.py",
+      "legacy_path": "models/audit/null_baseline_panel.py",
+      "sha256": "68b6778dd13ef6bdca4cce04d40697603f164e4f17a8b3df0731d22fe9c2a7fc",
+      "size_bytes": 15142
+    },
+    {
+      "archive_member": "legacy/models/audit/offline_policy_evaluation.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/offline_policy_evaluation.py",
+      "legacy_path": "models/audit/offline_policy_evaluation.py",
+      "sha256": "0ae59da6cb64727fd25213387b182cc62aa184695449afccc1569c33c6db3c9f",
+      "size_bytes": 53571
+    },
+    {
+      "archive_member": "legacy/models/audit/order_level_panel.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/order_level_panel.py",
+      "legacy_path": "models/audit/order_level_panel.py",
+      "sha256": "55d0a1376fcf5404e26ea93aedae61232c30d74369239e025db51f61814aec33",
+      "size_bytes": 16314
+    },
+    {
+      "archive_member": "legacy/models/audit/order_score_fast.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/audit/order_score_fast.py",
+      "legacy_path": "models/audit/order_score_fast.py",
+      "sha256": "aa4decc333005be348978018a9ae0ebb124c9081a6edaffe57e171d7419a694c",
+      "size_bytes": 79204
+    },
+    {
+      "archive_member": "legacy/models/audit/p3_touch_calibration.py",
+      "canonical_path": "research_02_empirical_p3_touch/audit/p3_touch_calibration.py",
+      "legacy_path": "models/audit/p3_touch_calibration.py",
+      "sha256": "0961d291a79c6fd7b19bd618e898c27486deb7c4dbf5eebd2c16af55f694d982",
+      "size_bytes": 13358
+    },
+    {
+      "archive_member": "legacy/models/audit/paired_fixed_spread_monotonic.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/paired_fixed_spread_monotonic.py",
+      "legacy_path": "models/audit/paired_fixed_spread_monotonic.py",
+      "sha256": "f5071109f315e63e3ceeeebd2b88a73f32b856a284f7d71851858d24798099ff",
+      "size_bytes": 38822
+    },
+    {
+      "archive_member": "legacy/models/audit/paired_order_lifecycle.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/paired_order_lifecycle.py",
+      "legacy_path": "models/audit/paired_order_lifecycle.py",
+      "sha256": "056f70b277eaa80e2d12804511c6243acfe7bf1f8d317545a2e093b573611b4f",
+      "size_bytes": 24348
+    },
+    {
+      "archive_member": "legacy/models/audit/paired_order_lifecycle_smoke.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/paired_order_lifecycle_smoke.py",
+      "legacy_path": "models/audit/paired_order_lifecycle_smoke.py",
+      "sha256": "49c9d05f326f9fa84e3d0154b9d6d9ea8da6c4375b2e269e3fccdfbaebfad586",
+      "size_bytes": 27617
+    },
+    {
+      "archive_member": "legacy/models/audit/paired_screening.py",
+      "canonical_path": "research_01_fixed_parameter_racing/audit/paired_screening.py",
+      "legacy_path": "models/audit/paired_screening.py",
+      "sha256": "6a10e79fcedb410c13a49316f0aee77a0ba0d383ec01e4001313b3d021433621",
+      "size_bytes": 6597
+    },
+    {
+      "archive_member": "legacy/models/audit/placement_fill_panel.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/placement_fill_panel.py",
+      "legacy_path": "models/audit/placement_fill_panel.py",
+      "sha256": "d9a76505baa07f4b6f874ee78a6a9a25eda7d10a43aa46dd34aa33647ce49969",
+      "size_bytes": 47794
+    },
+    {
+      "archive_member": "legacy/models/audit/placement_fill_spec.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/placement_fill_spec.py",
+      "legacy_path": "models/audit/placement_fill_spec.py",
+      "sha256": "8dd5ffdc9f0cb017af2ef94f2d20206cdc9f5ddc3cbfb0afeee463cc5677830c",
+      "size_bytes": 1701
+    },
+    {
+      "archive_member": "legacy/models/audit/policy_clock_fill_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/policy_clock_fill_cif.py",
+      "legacy_path": "models/audit/policy_clock_fill_cif.py",
+      "sha256": "f55b28b56ecfa930fdf8627c6d79d23e43664471cf95b87cf244bd12197a2285",
+      "size_bytes": 44645
+    },
+    {
+      "archive_member": "legacy/models/audit/post_fill_response_kernel.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/post_fill_response_kernel.py",
+      "legacy_path": "models/audit/post_fill_response_kernel.py",
+      "sha256": "348e54edb67c966edfd440835cc0726509fe45abccef21b4170f141d8cda17b1",
+      "size_bytes": 34682
+    },
+    {
+      "archive_member": "legacy/models/audit/post_fill_stop_add_paired.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/post_fill_stop_add_paired.py",
+      "legacy_path": "models/audit/post_fill_stop_add_paired.py",
+      "sha256": "f00820606907ffbf2dc975882ee7f3ea14175b84b6d8b746707fcb5e02914cd6",
+      "size_bytes": 16375
+    },
+    {
+      "archive_member": "legacy/models/audit/queue_value_competing_risk.py",
+      "canonical_path": "research_07_active_order_continuation/audit/queue_value_competing_risk.py",
+      "legacy_path": "models/audit/queue_value_competing_risk.py",
+      "sha256": "7b692e8337fc35cbe7a087d1f4ec37f01e0ab036953c2979db96a29111477b68",
+      "size_bytes": 41927
+    },
+    {
+      "archive_member": "legacy/models/audit/queue_value_models.py",
+      "canonical_path": "research_07_active_order_continuation/audit/queue_value_models.py",
+      "legacy_path": "models/audit/queue_value_models.py",
+      "sha256": "d7deb0daa4e527d980593806f65f3c286c4ead43bfcab85b942be285b713c086",
+      "size_bytes": 75306
+    },
+    {
+      "archive_member": "legacy/models/audit/randomized_action_contrast.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/randomized_action_contrast.py",
+      "legacy_path": "models/audit/randomized_action_contrast.py",
+      "sha256": "09b399cf8104b82abdfca78b30f745383f09d5f7a9d391bc39bae8270a4e1c2b",
+      "size_bytes": 27255
+    },
+    {
+      "archive_member": "legacy/models/audit/receive_time_tape.py",
+      "canonical_path": "research_11_system_engineering/audit/receive_time_tape.py",
+      "legacy_path": "models/audit/receive_time_tape.py",
+      "sha256": "ea5ab4234560b72038c0b257fde522cadd9e5d323fede675c0d2e4e27cd7f17b",
+      "size_bytes": 18042
+    },
+    {
+      "archive_member": "legacy/models/audit/recovery_event_support_preflight.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/recovery_event_support_preflight.py",
+      "legacy_path": "models/audit/recovery_event_support_preflight.py",
+      "sha256": "3455dd4fbc8c7a0b65bb800f9fd00f25c924a358d38a3f6e21cc77cde80231d4",
+      "size_bytes": 21698
+    },
+    {
+      "archive_member": "legacy/models/audit/request_state_features.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/request_state_features.py",
+      "legacy_path": "models/audit/request_state_features.py",
+      "sha256": "a67311c444ab7a8c248ef082a61598df976a3b8478c115f5ae7a119cafed4f8e",
+      "size_bytes": 14797
+    },
+    {
+      "archive_member": "legacy/models/audit/request_state_panel.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/request_state_panel.py",
+      "legacy_path": "models/audit/request_state_panel.py",
+      "sha256": "02d1d2ce97f86186962196c0365a2b4ee04592f6d98c04fc5994c64beb4ef138",
+      "size_bytes": 29158
+    },
+    {
+      "archive_member": "legacy/models/audit/request_state_race.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/request_state_race.py",
+      "legacy_path": "models/audit/request_state_race.py",
+      "sha256": "17a5b5cb4f5713d1e30c9a72a7b2f778569749ce7338185bcafad916d8f38117",
+      "size_bytes": 13223
+    },
+    {
+      "archive_member": "legacy/models/audit/rest_latency_calibration.py",
+      "canonical_path": "research_11_system_engineering/audit/rest_latency_calibration.py",
+      "legacy_path": "models/audit/rest_latency_calibration.py",
+      "sha256": "c610bc33477a70196ae292ffd4f45b96cacae38913372d37d3c01066056ab1ec",
+      "size_bytes": 5816
+    },
+    {
+      "archive_member": "legacy/models/audit/risk_set_expansion.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/risk_set_expansion.py",
+      "legacy_path": "models/audit/risk_set_expansion.py",
+      "sha256": "d4f4fe783ff00e91ca1cf24c0393e6609b97659d879469d2272bc3b5393d5cfa",
+      "size_bytes": 3058
+    },
+    {
+      "archive_member": "legacy/models/audit/role_calibrated_competing_curve_cif.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/role_calibrated_competing_curve_cif.py",
+      "legacy_path": "models/audit/role_calibrated_competing_curve_cif.py",
+      "sha256": "be32f9b060b35070abe601691865c6fc10b87a62fe985484241aa465a8e23998",
+      "size_bytes": 15453
+    },
+    {
+      "archive_member": "legacy/models/audit/runner.py",
+      "canonical_path": "research_10_live_replay_attribution/audit/runner.py",
+      "legacy_path": "models/audit/runner.py",
+      "sha256": "4079e3cd5a7479619f2fe00e52e7ccf6f72ce8ed2998c905cead3725a187565f",
+      "size_bytes": 35112
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_hazard.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_hazard.py",
+      "legacy_path": "models/audit/safe_add_rearm_hazard.py",
+      "sha256": "60975f684133f8be402074df6d967d569e3565b78507b414facaf654c372fbd1",
+      "size_bytes": 25661
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_ope_panel.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_ope_panel.py",
+      "legacy_path": "models/audit/safe_add_rearm_ope_panel.py",
+      "sha256": "f07eacfc617e9490b65994859f960f0ef0f7b19012c33bfc6bcfcd5ce4555571",
+      "size_bytes": 14764
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_outcome_report.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_outcome_report.py",
+      "legacy_path": "models/audit/safe_add_rearm_outcome_report.py",
+      "sha256": "229027f47bf1b70ef0abbcc259fcd35187d979ea11024b05874dca6acdc41847",
+      "size_bytes": 32666
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_randomized.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_randomized.py",
+      "legacy_path": "models/audit/safe_add_rearm_randomized.py",
+      "sha256": "5eef639cf9aee1cab64b964854ffa3476cdcc92d47eb8dfa1d66f1c20ce9b40f",
+      "size_bytes": 19897
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_state_policy.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_state_policy.py",
+      "legacy_path": "models/audit/safe_add_rearm_state_policy.py",
+      "sha256": "69181206f7369745e8c28e04d551ab832f19e7347835afb3cb5e0afcad6bb026",
+      "size_bytes": 36447
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_add_rearm_support_preflight.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_add_rearm_support_preflight.py",
+      "legacy_path": "models/audit/safe_add_rearm_support_preflight.py",
+      "sha256": "fb09b93d5b27d033c55a8147cf837892cfb7a515825372c072088e77329d27d3",
+      "size_bytes": 10193
+    },
+    {
+      "archive_member": "legacy/models/audit/safe_policy_improvement.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/safe_policy_improvement.py",
+      "legacy_path": "models/audit/safe_policy_improvement.py",
+      "sha256": "a86cc6a2fbd0fe13076702d2876db03043f5fcb73ff73ac9c60146f0672fb8a1",
+      "size_bytes": 16609
+    },
+    {
+      "archive_member": "legacy/models/audit/sell_campaign_add_permission_cate.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/sell_campaign_add_permission_cate.py",
+      "legacy_path": "models/audit/sell_campaign_add_permission_cate.py",
+      "sha256": "87ef75f35d9b9605a597a388f3f47d0ad024643b4698143e0aa6fd80192e91df",
+      "size_bytes": 38747
+    },
+    {
+      "archive_member": "legacy/models/audit/sell_repair_trend_skip_cate.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/sell_repair_trend_skip_cate.py",
+      "legacy_path": "models/audit/sell_repair_trend_skip_cate.py",
+      "sha256": "90195e441acf64e374b44d27ad9ffbde7dc32006a43c4b3a2a63db3304443057",
+      "size_bytes": 37836
+    },
+    {
+      "archive_member": "legacy/models/audit/side_taker_flow_panel.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/side_taker_flow_panel.py",
+      "legacy_path": "models/audit/side_taker_flow_panel.py",
+      "sha256": "380975136a7642ba18ca729d9df7b05817f3c50b9b93c58ef04c2324f9082048",
+      "size_bytes": 45570
+    },
+    {
+      "archive_member": "legacy/models/audit/side_taker_hazard_calibration.py",
+      "canonical_path": "research_08_side_taker_lifecycle/audit/side_taker_hazard_calibration.py",
+      "legacy_path": "models/audit/side_taker_hazard_calibration.py",
+      "sha256": "d3d2fa667bb8968fc0c9c61c3cdd2dfab728609902223928a9318e15adac1e06",
+      "size_bytes": 33093
+    },
+    {
+      "archive_member": "legacy/models/audit/sparse_order_lifecycle.py",
+      "canonical_path": "research_06_placement_fill_cif/audit/sparse_order_lifecycle.py",
+      "legacy_path": "models/audit/sparse_order_lifecycle.py",
+      "sha256": "b201d1f98abcab97ed8a94211c3e44e884d85b898cb1f8de7376fb5fcb82b4b4",
+      "size_bytes": 17631
+    },
+    {
+      "archive_member": "legacy/models/audit/state_conditioned_policy_artifact.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/state_conditioned_policy_artifact.py",
+      "legacy_path": "models/audit/state_conditioned_policy_artifact.py",
+      "sha256": "f15d68da3b512bef0eb0f2b22565d9f60ef76e0068dacb5d5b8750fa17a44824",
+      "size_bytes": 28256
+    },
+    {
+      "archive_member": "legacy/models/audit/state_conditioned_rearm_ope.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/state_conditioned_rearm_ope.py",
+      "legacy_path": "models/audit/state_conditioned_rearm_ope.py",
+      "sha256": "1c3fa024208f6c80b6b90023c6e5aaa826b266bcaf94c15bfc2bae9c68bf3993",
+      "size_bytes": 30486
+    },
+    {
+      "archive_member": "legacy/models/audit/state_conditioned_rearm_randomized.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/state_conditioned_rearm_randomized.py",
+      "legacy_path": "models/audit/state_conditioned_rearm_randomized.py",
+      "sha256": "450fc3a874c9c276140997b249d61fdcbd80e9b1dc3c7494da54b35299cbd0e8",
+      "size_bytes": 28424
+    },
+    {
+      "archive_member": "legacy/models/audit/toxic_fill_selectivity.py",
+      "canonical_path": "research_09_campaign_action_uplift/audit/toxic_fill_selectivity.py",
+      "legacy_path": "models/audit/toxic_fill_selectivity.py",
+      "sha256": "0ec9d334de191a339161712ac461efac67f1162a44ae61f47dd11062bdb0441c",
+      "size_bytes": 17268
+    },
+    {
+      "archive_member": "legacy/models/campaign_outcome_replay_audit.py",
+      "canonical_path": "research_01_fixed_parameter_racing/campaign_outcome_replay_audit.py",
+      "legacy_path": "models/campaign_outcome_replay_audit.py",
+      "sha256": "a96b129aa6f8ee11544d06bbcf9ab628a69806f85ee3749bfa1ece6cdbb0a23c",
+      "size_bytes": 149876
+    },
+    {
+      "archive_member": "legacy/models/causal_path_features.py",
+      "canonical_path": "research_09_campaign_action_uplift/causal_path_features.py",
+      "legacy_path": "models/causal_path_features.py",
+      "sha256": "56748b6573fb275dbdd1324024278cfca07fbfd66b1663f9557dd4c20838a714",
+      "size_bytes": 13509
+    },
+    {
+      "archive_member": "legacy/models/cross_market_shock_audit.py",
+      "canonical_path": "research_04_external_market_alpha/cross_market_shock_audit.py",
+      "legacy_path": "models/cross_market_shock_audit.py",
+      "sha256": "71bed5021f5919775f574d73eebab99993374cd450c52caccc892358757ab612",
+      "size_bytes": 26014
+    },
+    {
+      "archive_member": "legacy/models/daily_smoke_sweep.py",
+      "canonical_path": "research_01_fixed_parameter_racing/daily_smoke_sweep.py",
+      "legacy_path": "models/daily_smoke_sweep.py",
+      "sha256": "069a7c6d34492250fc37298919ecd1bed52870551a48c5b56b56850d2dd04ee8",
+      "size_bytes": 49234
+    },
+    {
+      "archive_member": "legacy/models/external_consensus_layer.py",
+      "canonical_path": "research_04_external_market_alpha/external_consensus_layer.py",
+      "legacy_path": "models/external_consensus_layer.py",
+      "sha256": "983069cd1d1a57d35c778d879767c6ea083a415d007d03d8f6247fd8b6cb4503",
+      "size_bytes": 47644
+    },
+    {
+      "archive_member": "legacy/models/external_venue_model.py",
+      "canonical_path": "research_04_external_market_alpha/external_venue_model.py",
+      "legacy_path": "models/external_venue_model.py",
+      "sha256": "5e420330e4ee1d8e44b8f4b45f6632936ac4083e3701fc2be1458f95ca34ce95",
+      "size_bytes": 55015
+    },
+    {
+      "archive_member": "legacy/models/feature_variants.py",
+      "canonical_path": "research_03_causal_13_head/feature_variants.py",
+      "legacy_path": "models/feature_variants.py",
+      "sha256": "a219721424c2a154b3fff912c26f3605e1bcff43b07f23b40b7dde8866e092c4",
+      "size_bytes": 10521
+    },
+    {
+      "archive_member": "legacy/models/fill_probability.py",
+      "canonical_path": "research_02_empirical_p3_touch/fill_probability.py",
+      "legacy_path": "models/fill_probability.py",
+      "sha256": "a09efb5a22e91d79a218e1db06ce1c099a18c5cabc5b731047570a8942255046",
+      "size_bytes": 17866
+    },
+    {
+      "archive_member": "legacy/models/ml_model.py",
+      "canonical_path": "research_03_causal_13_head/ml_model.py",
+      "legacy_path": "models/ml_model.py",
+      "sha256": "7356766e78f21e6b7104dcbb3455af8baa10688582fb197c5d907ff256fab0ea",
+      "size_bytes": 55388
+    },
+    {
+      "archive_member": "legacy/models/parameter_racing_sweep.py",
+      "canonical_path": "research_01_fixed_parameter_racing/parameter_racing_sweep.py",
+      "legacy_path": "models/parameter_racing_sweep.py",
+      "sha256": "32e67a1c3937f395762c2648e36ae09fc95495a8b01cc0979967dee28b683849",
+      "size_bytes": 43279
+    },
+    {
+      "archive_member": "legacy/models/parameter_selection.py",
+      "canonical_path": "research_01_fixed_parameter_racing/parameter_selection.py",
+      "legacy_path": "models/parameter_selection.py",
+      "sha256": "c8f74ac5ae54e783ed5ac9bf85740bd6d98692b253eb6f1fe756566f440723d2",
+      "size_bytes": 81022
+    },
+    {
+      "archive_member": "legacy/models/quote_ev.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/quote_ev.py",
+      "legacy_path": "models/quote_ev.py",
+      "sha256": "821dbec9874c100628218a31edd96b87b8cd7d976f05f396842bdc87a1aec241",
+      "size_bytes": 32155
+    },
+    {
+      "archive_member": "legacy/models/quote_ev_shadow_eval.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/quote_ev_shadow_eval.py",
+      "legacy_path": "models/quote_ev_shadow_eval.py",
+      "sha256": "e83ae36314fb1296ba1f4473074bcfb649ae084c5ee66bdca5713335efc5d85d",
+      "size_bytes": 10677
+    },
+    {
+      "archive_member": "legacy/models/reference_replay.py",
+      "canonical_path": "research_04_external_market_alpha/reference_replay.py",
+      "legacy_path": "models/reference_replay.py",
+      "sha256": "0a0e5a3d4b47cc807c6e0248ca17b8f4be500cd274a6f27c201439c957d6cc8f",
+      "size_bytes": 18960
+    },
+    {
+      "archive_member": "legacy/models/taker_tempo_features.py",
+      "canonical_path": "research_03_causal_13_head/taker_tempo_features.py",
+      "legacy_path": "models/taker_tempo_features.py",
+      "sha256": "ff57ea143b301c120a344492dfd9b553a293ca093a32d59ca878784fd875bf5b",
+      "size_bytes": 24225
+    },
+    {
+      "archive_member": "legacy/models/train_quote_ev.py",
+      "canonical_path": "research_05_fill_quality_quote_ev/train_quote_ev.py",
+      "legacy_path": "models/train_quote_ev.py",
+      "sha256": "09e4eef21f6a0daf3b8bae09d7b31f64392ff01b39880d40cfa33ba5c6bfd34c",
+      "size_bytes": 85215
+    }
+  ],
+  "schema": "narrowgate.research_path_migration.v1"
+}

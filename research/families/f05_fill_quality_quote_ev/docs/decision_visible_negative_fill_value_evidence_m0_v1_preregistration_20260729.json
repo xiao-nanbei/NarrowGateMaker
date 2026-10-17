@@ -1,0 +1,56 @@
+{
+  "schema_version": "decision_visible_negative_fill_value_evidence.preregistration.v1",
+  "identity": "decision_visible_negative_fill_value_evidence_m0_v1",
+  "status": "preregistered_blocked_on_native_f10_artifact",
+  "scope": "Decision-visible Development evidence for negative first-add order and campaign value; prediction evidence only, never fill-conditioned action value or action authorization.",
+  "canonical_spec_sha256": "f756e2f889115987e3f639b47d1df77641e39f521928005ad340f45d210e5f72",
+  "upstream": {
+    "family": "F10",
+    "identity": "first_add_decision_to_terminal_loss_diagnostic_v1",
+    "required_trace_schema": "first_add_decision_to_terminal_trace.v1",
+    "required_artifact_sha256": "must_be_frozen_in_separate_fit_identity_before_any_outcome_read",
+    "old_14_84_percent_matched_subset_forbidden": true
+  },
+  "denominator": {
+    "unit": "one_first_actual_exposure_increasing_add_fill_generating_order_decision_per_campaign",
+    "include_non_terminal_day_end_mtm_censoring": true,
+    "buy_sell_separate": true,
+    "opener_or_reducing_rows_forbidden": true,
+    "nearest_time_join_forbidden": true
+  },
+  "authoritative_targets": {
+    "order_value_usdc_per_decision": "sum_quantity_weighted_maker_signed_value_minus_fees_with_unfilled_quantity_zero",
+    "campaign_value_usdc_per_decision": "campaign_terminal_equity_usdc_minus_decision_equity_usdc",
+    "primary": "campaign_value_usdc_per_decision",
+    "fill_probability_times_average_markout_is_diagnostic_only": true,
+    "expected_maker_markout_bps_per_opportunity_30s_is_not_usdc_action_value": true
+  },
+  "model_contract": {
+    "outer_folds": "expanding_chronological_past_only",
+    "inner_folds": "expanding_chronological_past_only_for_nuisance_and_calibration",
+    "primary_panel": "F10_24_grade_A_days",
+    "grade_B_panel": "preregistered_sensitivity_only",
+    "buy_sell_separate": true,
+    "campaign_state_only_baseline": true,
+    "local_microstructure_incremental_model": true,
+    "high_risk_state_frozen_inside_outer_train": true,
+    "day_and_campaign_clustered_simultaneous_intervals": true
+  },
+  "gates": {
+    "exact_native_lifecycle_coverage": 1.0,
+    "feature_clock_violations": 0,
+    "high_risk_campaign_value_upper_bound": "strictly_below_zero",
+    "daily_negative_direction_stability": "freeze_numeric_threshold_in_fit_identity_before_outcome_read",
+    "local_incremental_value_lower_bound": "strictly_positive_vs_campaign_state_only_baseline",
+    "grade_B_sensitivity_must_not_reverse_direction": true,
+    "prediction_does_not_authorize_action": true
+  },
+  "permissions": {
+    "development_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f09_action_registration": false,
+    "live_deployment": false
+  },
+  "next_transition": "Only a stable cross-day decision-visible negative-value mechanism may motivate a genuinely new F09 action identity; variance-time threshold or budget variants remain forbidden."
+}

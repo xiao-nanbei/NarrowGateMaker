@@ -1,0 +1,101 @@
+{
+  "schema": "narrowgate.family_research_questions.v1",
+  "family": "F09",
+  "updated": "2026-10-17",
+  "scope": "Current applicability questions; accepted current-source economics and engineering evidence are retained separately.",
+  "execution_authorized_by_index": false,
+  "scan_rule": "Follow research/registry.json families[].research_questions and select status=pending_validation. Read current_evidence separately; a pending hypothesis does not invalidate an accepted bounded result.",
+  "current_evidence": [
+    {
+      "source_ref": "research/families/f09_inventory_lifecycle_action_uplift/README.md",
+      "role": "current_scope_and_accepted_evidence",
+      "boundary": "Current Defense/Urgency and mechanism-ablation observations remain attached to F01 and their own frozen B0. They do not establish every temporal-permission, inventory-price or exposure-guard hypothesis. The current inventory-soft-control experiment is separate; no completed result is asserted here."
+    }
+  ],
+  "questions": [
+    {
+      "id": "F09-TEMPORAL-PERMISSION",
+      "status": "pending_validation",
+      "question": "Can cooldown/rearm timing reduce adverse exposure without suppressing useful repair?",
+      "question_zh": "冷却或重新准入的时机，能否减少不利敞口且不压制有价值的库存修复？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/cooldown_action_leverage_frontier_v1_development_20260730.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/cooldown_release_one_cycle_mechanics_reaudit_v1_development_20260730.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/post_cooldown_incremental_inventory_budget_feasibility_v1_2_development_20260801.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_feasibility_v1_development_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_feasibility_v2_1_development_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_negative_result_attribution_v1_development_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_development_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Volatility-Time-Add-Rearm-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Sell-Add-Inventory-Price-Penalty-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Ranked-Toxicity-Exposure-Guard-Research/",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/recovery_event_rearm_v1_20260722.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/sell_inventory_lifecycle_add_permission_v1_20260722.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_blocker_attribution_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_development_20260729.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/cooldown_action_leverage_frontier_v1_errata_20260730.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/lineage_randomized_outcome_contract_v2.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/post_cooldown_incremental_inventory_budget_feasibility_v1_design.md"
+      ],
+      "gaps": [
+        "Historical near-noop or overbroad participation findings are hypotheses, not universal current failures; ongoing inventory-soft-control results are not complete evidence.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Separate one-cycle skips, until-flat restrictions, recovery-state and variance-time policies; compare total/unit net returns, participation and inventory on declared matched support.",
+      "resolution": null
+    },
+    {
+      "id": "F09-INVENTORY-ACTIONS",
+      "status": "pending_validation",
+      "question": "Can inventory-aware add prices, quantity limits or reducing aggression improve net value?",
+      "question_zh": "库存相关的加仓价格、数量限制或减仓激进度能否改善净价值？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/cross_venue_fair_center_shift_randomized_replay_v1_1_development_20260801.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/multi_short_reducing_buy_aggression_v1_1_development_20260801.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/sell_add_inventory_price_penalty_randomized_replay_v1_development_20260801.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Volatility-Time-Add-Rearm-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Sell-Add-Inventory-Price-Penalty-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Ranked-Toxicity-Exposure-Guard-Research/",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/cross_venue_fair_center_shift_randomized_replay_v1_implementation_failure_20260801.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/side_specific_action_uplift_existing_split_20260718.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/volatility_time_add_rearm_blocker_attribution_20260729.md"
+      ],
+      "gaps": [
+        "Lower inventory or faster repair does not itself identify the economic effect of the intervention.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Declare one intervention at a time; separate opener/add/reducing roles and full paths, accounting for delayed fills, terminal valuation and tail exposure.",
+      "resolution": null
+    },
+    {
+      "id": "F09-EXPOSURE-GUARD",
+      "status": "pending_validation",
+      "question": "Does a decision-visible exposure guard select better risk rather than merely trade less?",
+      "question_zh": "决策前可见的敞口过滤器，是改善风险选择还是仅减少交易？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_development_20260809.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_2_execution_result_20260803.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Volatility-Time-Add-Rearm-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Sell-Add-Inventory-Price-Penalty-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Ranked-Toxicity-Exposure-Guard-Research/",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_1_execution_failure_20260803.md",
+        "research/families/f09_inventory_lifecycle_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_implementation_20260803.md"
+      ],
+      "gaps": [
+        "Old q90/BER/ranked-toxicity outcomes have different identity and visibility limitations; no aggregate old ranking is current authority.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Bind ownership across inventory episodes and cancel acknowledgments; compare effective actions, matched participation controls and complete net accounting.",
+      "resolution": null
+    }
+  ]
+}

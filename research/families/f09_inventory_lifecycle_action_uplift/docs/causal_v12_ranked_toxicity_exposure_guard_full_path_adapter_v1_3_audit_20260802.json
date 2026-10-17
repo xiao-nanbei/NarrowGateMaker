@@ -1,0 +1,28 @@
+{
+  "canonical_spec_identity_sha256": "b0884193d21a6d2d057877274f6273e2c9a20bc65e8171b9ea93e19af1aaae01",
+  "continuous_path_outcome_contract_valid": true,
+  "continuous_path_profile_contract": {
+    "profile_id": "action_execution_selective_v3",
+    "profile_sha256": "1024e254b9e2b301e7621d2b1fa1986f210cdf5072da1e7cdc1e722f1efef13a",
+    "schema_version": "narrowgate_score_profile.v2"
+  },
+  "economic_outcome_columns_read": [],
+  "frozen_v1_action_contract_valid": true,
+  "historical_scorecard_profiles_preserved": true,
+  "historical_v1_2_bytes_valid": true,
+  "implementation_hashes_valid": true,
+  "permissions": {
+    "action_experiment_authorized": false,
+    "adapter_contract_tests_passed": true,
+    "adapter_registration": true,
+    "development_economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "mechanics_execution_eligible": true,
+    "mechanics_read": false,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "ranked_toxicity_guard_full_path_execution_amendment.v1.3.audit",
+  "stage": "v1_3_continuous_path_scorecard_hash_bound_mechanics_not_run"
+}

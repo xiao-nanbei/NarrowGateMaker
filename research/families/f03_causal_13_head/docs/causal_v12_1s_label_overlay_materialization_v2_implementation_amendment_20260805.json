@@ -1,0 +1,93 @@
+{
+  "schema_version": "causal_v12_1s_label_overlay_materialization_amendment.v2",
+  "identity": "causal_v12_1s_daily_label_overlay_materialization_v2",
+  "date": "2026-08-05",
+  "status": "implemented_local_contract_verified_not_materialized_for_training",
+  "predecessor": {
+    "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+    "design_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_label_generator_v1_design_20260805.json",
+    "design_sha256": "e5ea3105a660af91ce1480f8931c28301f4809a595a655ce30a73311af0727e7",
+    "frozen_semantics_preserved": true,
+    "amended_field": "storage.materialization",
+    "old_value": "in_memory_join_only",
+    "new_value": "independent_hash_bound_daily_label_overlay",
+    "old_design_rewritten": false
+  },
+  "scope": {
+    "unit": "one_complete_target_utc_day",
+    "formal_row_count": 86400,
+    "input_feature_panel_must_be_atomically_admitted": true,
+    "input_feature_panel_columns_copied": false,
+    "label_source": "same_daily_source_bundle_dense_local_1s_bars",
+    "predictions_read": false,
+    "economic_outcomes_read": false,
+    "training_performed": false
+  },
+  "input_bindings": {
+    "feature_panel_manifest_sha256": "required_runtime_binding",
+    "feature_panel_parquet_sha256": "required_runtime_binding",
+    "feature_panel_cache_identity_sha256": "required_runtime_binding",
+    "feature_panel_schema_sha256": "required_runtime_binding",
+    "daily_source_bundle_identity_sha256": "required_runtime_binding",
+    "label_generator_sha256": "required_runtime_binding",
+    "label_quote_config_sha256": "required_runtime_binding",
+    "p3_v2_artifact_sha256": "required_runtime_binding"
+  },
+  "output_contract": {
+    "filename": "label_overlay.parquet",
+    "compression": "zstd",
+    "join_keys": [
+      "cutoff_exclusive_ms",
+      "decision_ts_ms",
+      "feature_ready_ts_ms",
+      "feature_row_fingerprint_sha256"
+    ],
+    "head_count": 13,
+    "per_head_fields": [
+      "label",
+      "label_valid",
+      "sample_weight",
+      "overlap_uniqueness"
+    ],
+    "exact_schema_required": true,
+    "join_keys_unique": true,
+    "feature_columns_copied": false,
+    "prediction_columns_allowed": false,
+    "economic_outcome_columns_allowed": false
+  },
+  "admission": {
+    "temporary_sibling_directory": true,
+    "parquet_fsync": true,
+    "manifest_fsync": true,
+    "success_marker_binds_manifest_sha256": true,
+    "directory_fsync_before_replace": true,
+    "publish_method": "os.replace",
+    "parent_directory_fsync_after_replace": true,
+    "incomplete_day_formally_admitted": false,
+    "hash_compatible_existing_output_reused": true,
+    "hash_incompatible_existing_output_rejected": true
+  },
+  "implementation": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_label_overlay_materializer.py",
+    "sha256": "225a720d7afdbeb54a155dd30ddbcd4267de8d6a00ac380459480b7befc6fe8a",
+    "label_generator_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_label_generator.py",
+    "label_generator_sha256": "523008dbea5536ddf6b3468af0c33b88e9e3cd0f205521d5a7b2550b00850d03",
+    "test_path": "tests/test_causal_v12_1s_label_overlay_materializer.py",
+    "test_sha256": "f6a4abd51f7a0ac4067e8386e569dd80f4ec0fef6f486c67eb6d622ca7b47325"
+  },
+  "verification": {
+    "python": "3.12.13",
+    "pytest_command": ".venv/bin/python -m pytest -q tests/test_causal_v12_1s_label_overlay_materializer.py",
+    "pytest_result": "5 passed",
+    "ruff_check": "passed",
+    "ruff_format_check": "passed",
+    "formal_real_day_overlay_materialized": false
+  },
+  "permissions": {
+    "training_authorized": false,
+    "prediction_read_authorized": false,
+    "economic_outcome_read_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

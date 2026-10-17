@@ -1,0 +1,127 @@
+{
+  "identity": "causal_v12_1s_native_historical_minimal141_source_profile_v1",
+  "status": "implemented_and_40_day_read_only_probe_passed",
+  "implemented_at_utc": "2026-08-05",
+  "profile": {
+    "profile_id": "native_historical_minimal141_individual_reference_v1",
+    "market_data_root": "${NARROWGATE_DATA_ROOT}",
+    "local_trade_tempo_dir": "trade_features_causal_v5_expanded_20250801_20260725/BTCUSDC",
+    "local_manifest_path": "trade_features_causal_v5_expanded_20250801_20260725/manifest.json",
+    "execution_l2_dir": "normalized_l2_100ms_v2_minimal141_20260727/l2",
+    "execution_l2_manifest_path": "normalized_l2_100ms_v2_minimal141_20260727/manifest.json",
+    "execution_l2_quality_path": "normalized_l2_100ms_v2_minimal141_20260727/daily_quality.csv",
+    "execution_l2_quality_authority": "registry_manifest_daily_csv_v1",
+    "execution_l2_clock_identity": "cryptohft_transaction_time_100ms_grid",
+    "metrics_dir": "raw_metrics",
+    "reference_bar_dir": "reference_bars_1s_trades_v1",
+    "reference_source_identity": "binance_futures_reference_individual_trades_1s.v1"
+  },
+  "authority_sha256": {
+    "coverage_audit_json": "2b2e4551977e3efa43072dab0b9e1e8cfdc94fb46eb720c4916cf33fae86ed8e",
+    "local_trade_tempo_manifest": "33ad6222f02722f493aa7f2b5d8f65312ffc249cf5fa9d95463c1c158594d8f5",
+    "native_l2_manifest": "61b219e212f43fa8de942637354603f906a25d9b6f5a22a8950989e4d09e5064",
+    "native_l2_daily_quality": "5da3d182457e42ac64fdc47d78dc38f79739590ab48f5548fe4807c4bf1dd041",
+    "daily_sources_probe_implementation": "57f912ad7073dde1bec8b516199cd7feeae038fb9bc6bb1f26adf85c1055c29a",
+    "resolver_implementation": "a86850a66e138e12772206effc0b823d163efb9f4b3702332b05254e3cfd667a",
+    "resolver_tests": "31a57353e72b47b8ec1bbbe271966a58bf6e523f2b31dcaff97f3464f02cf73a"
+  },
+  "development_40": {
+    "day_count": 40,
+    "days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "resolve_probe_accepted": 40,
+    "resolve_probe_rejected": 0,
+    "previous_natural_utc_day_required": true,
+    "substitute_warmup_allowed": false
+  },
+  "validation_contract": {
+    "target_l2_requires": [
+      "formal_eligible",
+      "target_source_valid",
+      "sequence_valid"
+    ],
+    "warmup_l2_requires": [
+      "warmup_valid"
+    ],
+    "manifest_and_daily_quality_bind_l2_sha256_size_and_rows": true,
+    "fallback_discovery_allowed": false,
+    "aggregate_reference_bars_allowed": false,
+    "provider_profile_semantics_modified": false,
+    "existing_native_profile_semantics_modified": false,
+    "metrics_authority_delegated_to_daily_probe_source_bundle": true,
+    "metrics_physical_row_order_assumed_causal": false,
+    "repaired_metrics_clock_days_probed": [
+      "2026-07-19",
+      "2026-07-20"
+    ]
+  },
+  "remaining_22_plus_22_source_gap": {
+    "metrics_blocker": false,
+    "missing_individual_trade_reference_artifact_days": [
+      "2026-04-12",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-14",
+      "2026-05-16"
+    ],
+    "expected_coverage_after_exact_reference_admission": "44/44",
+    "reference_substitution_authorized": false
+  },
+  "verification": {
+    "python": ".venv/bin/python",
+    "unit": "11 passed, 2 skipped",
+    "orico_40_day_plus_metrics_repair_integration": "13 passed in 162.08s",
+    "ruff_check": "passed",
+    "ruff_format_check": "passed"
+  },
+  "permissions": {
+    "features_materialized": false,
+    "predictions_read": false,
+    "pnl_read": false,
+    "training_authorized": false,
+    "economic_replay_authorized": false,
+    "live_authorized": false
+  }
+}

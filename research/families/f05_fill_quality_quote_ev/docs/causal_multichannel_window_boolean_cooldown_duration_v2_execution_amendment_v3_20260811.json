@@ -1,0 +1,117 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v3",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v3",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v2_20260811.json",
+    "sha256": "1086b39cd5f26f0e678c47d1885bbb4b99c88d129866a6a5ce4d21b0953993a7"
+  },
+  "implementation_binding_replacements": {
+    "shared_prefix_executor": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "sha256": "06e39316f18e340a203a4762ed468cb5d079ddc8b385957d819359d22dcb4380",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "test_sha256": "f72f8d4bef3162fe0866de2dd5a6d3f14934d2e685ca3776bbdbcf784831692c"
+    },
+    "strict_label_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "sha256": "1ec9d65fae06a7810a63702a6c2da479b12151199ce8449ecce456baf2dd0404",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "test_sha256": "e109dd95de19c949603759526c431a1ba78e76311a84ff8069dac97e54ec720c"
+    },
+    "label_panel": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "sha256": "2c75cf6acdb9130082eeb7c97273cadf725f05598d8a0e6be1efcc9b9ab47fda",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "test_sha256": "9816ae9c7776c39461aac29e049bba528997adfe9301287daffe91805cdccf4c"
+    },
+    "study_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "b6cdb0f3bfa27ae839b2099be55d88d37dd13c9f1c2903e1b1b6007d6f563ba2",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "1b878cdf835ea8f4100dfe8cf9c2b59f6bc3b4f2fb7859c83c9a79cb0ae9641f"
+    },
+    "python_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "293770d921f71341223240e016339b00260f037cf72dbbc2bcfcbc6fedbcd87c",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_binding.py",
+      "test_sha256": "3bb75abd7a99ea1f857d503f3c4ba44708d910e50472f3229b8ac7cf110ebefe"
+    }
+  },
+  "formal_identity_hardening": {
+    "shared_prefix_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.posix_cow_shared_prefix.v4",
+    "opportunity_manifest_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_one_shot_opportunity.v4",
+    "arm_result_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_one_shot_arm.v5",
+    "label_panel_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_label_panel.v2",
+    "opportunity_identity_additions": [
+      "partial_fill_ordinal",
+      "fill_qty_btc"
+    ],
+    "snapshot_parquet_additions": [
+      "receive_time_transport_eligible",
+      "snapshot_payload_json",
+      "snapshot_payload_sha256"
+    ],
+    "admission_cross_checks": [
+      "recompute opportunity identity from complete opportunity_contract",
+      "recompute full snapshot payload SHA256",
+      "opportunity source contract equals day source contract",
+      "opportunity execution identities equal snapshot identity hashes",
+      "opportunity and snapshot source bundles match",
+      "side and role match opportunity, M0, feature row, and arm traces",
+      "partial-fill ordinal and quantity match snapshot and M0",
+      "fill-visible, fill-exchange, and assignment clocks match",
+      "baseline duration matches opportunity, M0, and all arm traces",
+      "joined feature state cannot overwrite explicit opportunity identity"
+    ]
+  },
+  "post_outer_oof_gate_contract": {
+    "statistical_gate_reported_separately": true,
+    "effective_gate_external_blockers": [
+      "partial_identification_unresolved",
+      "R0 reproduction block is not final-candidate eligible"
+    ],
+    "feature_family_selection": {
+      "unrestricted_best_of_R0_M0_M1_M2_forbidden": true,
+      "R0_role": "pipeline reproduction only",
+      "hierarchy": [
+        "M0 absolute post-outer-OOF gate",
+        "M1 may supersede M0 only when paired M1-minus-M0 LCB is positive and M1 absolute gate passes",
+        "M2 may supersede M1 only when paired M2-minus-M1 LCB is positive and M2 absolute gate passes"
+      ],
+      "incremental_comparison_count": 2,
+      "multiple_comparison_control": "Bonferroni familywise confidence over the two paired incremental comparisons",
+      "cluster_unit": "UTC day over campaign-weighted paired opportunity rows",
+      "buy_sell_pooled": false
+    },
+    "continuous_state_comparator": {
+      "status": "not_run",
+      "required_before_unified_policy_freeze": true,
+      "may_be_fabricated_from_boolean_OOF": false
+    }
+  },
+  "cache_and_benchmark_compatibility": {
+    "raw_native_source_cache_semantics_changed": false,
+    "in_progress_outcome_blind_source_prebuild_reusable": true,
+    "duration_vocabulary_changed": false,
+    "queue_or_fill_semantics_changed": false,
+    "one_shot_label_estimand_changed": false,
+    "benchmark_v10_remains_engineering_evidence": true,
+    "benchmark_v10_may_be_reused_as_formal_label_or_identity_evidence": false,
+    "formal_labels_must_use_v4_opportunity_and_v2_snapshot_panel_schemas": true
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

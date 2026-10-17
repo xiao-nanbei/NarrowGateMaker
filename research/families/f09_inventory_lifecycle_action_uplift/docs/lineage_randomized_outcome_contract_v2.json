@@ -1,0 +1,157 @@
+{
+  "schema_version": "lineage_randomized_outcome_contract.v2",
+  "contract_id": "lineage_randomized_outcome_contract_v2",
+  "last_materially_modified": "2026-07-29",
+  "status": "foundation_active_variance_time_action_dormant",
+  "scope": "Shared fail-closed accounting, randomization-registration, and native lineage-trace contract for future F09 actions; this contract contains no action, result, panel read, or promotion authority.",
+  "canonical_contract_sha256": "317d8fe6bfdd617d70faa9eb0eddeaafa8d066e5637d307fa307b60f6469fa6d",
+  "outcome_contract": {
+    "primary_estimand": "decision_to_campaign_terminal_value_usdc",
+    "unit": "USDC_per_lineage_assignment",
+    "time_origin": "assignment_ts_ms",
+    "primary_estimand_frozen_before_outcome_read": true,
+    "identity": "decision_to_campaign_terminal_value_usdc = lineage_reward_usdc + post_lineage_continuation_value_usdc = campaign_terminal_equity_usdc - assignment_equity_usdc",
+    "pre_assignment_campaign_pnl": {
+      "definition": "assignment_equity_usdc - campaign_start_equity_usdc",
+      "allowed_uses": [
+        "covariate",
+        "balance_diagnostic"
+      ],
+      "outcome_eligible": false
+    },
+    "lineage_reward": "lineage_terminal_equity_usdc - assignment_equity_usdc",
+    "continuation": "campaign_terminal_equity_usdc - lineage_terminal_equity_usdc",
+    "campaign_terminal_from_campaign_start_is_not_an_action_outcome": true,
+    "identity_tolerance_usdc": 1e-09
+  },
+  "randomization_contract": {
+    "stratification_keys": [
+      "UTC_day",
+      "side"
+    ],
+    "design": "independent_prf_bernoulli_0.5",
+    "prf": "HMAC_SHA256(seed, family_id, UTC_day, side, pre_assignment_lineage_uid)",
+    "reason": "Future lineage existence is path-dependent, so an action cannot depend on an earlier lineage assignment.",
+    "probabilities": {
+      "baseline": 0.5,
+      "candidate": 0.5
+    },
+    "assignment_unit_must_be_declared_by_action": true,
+    "assignment_fixed_until_registered_terminal": true
+  },
+  "sequential_treatment_contract": {
+    "downstream_assignment_policy": "persist_to_campaign_terminal_no_rerandomization",
+    "maximum_assignments_per_campaign": 1,
+    "sequential_regime_estimators_supported": false,
+    "reason": "Decision-to-campaign-terminal value cannot contain a later independently randomized action under the current per-row ITT estimator."
+  },
+  "future_action_registration": {
+    "required_fields": [
+      "action_family_id",
+      "action_semantics",
+      "mechanism_extension_schema",
+      "primary_estimand",
+      "covariate_adjustment",
+      "randomization_seed",
+      "producer_identity",
+      "trace_schema_version"
+    ],
+    "covariate_adjustment_must_be_explicitly_enabled_or_disabled": true,
+    "allowed_covariates": [
+      "pre_assignment_campaign_pnl_usdc",
+      "assignment_inventory_btc",
+      "campaign_age_at_assignment_ms"
+    ],
+    "outcome_adaptive_covariate_selection_forbidden": true
+  },
+  "native_trace_contract": {
+    "schema_version": "narrowgate_lineage_randomized_trace.v2",
+    "event_journal_schema_version": "narrowgate_lineage_event_journal.v2",
+    "producer": "authoritative randomized replay path",
+    "post_hoc_baseline_trace_matching_forbidden": true,
+    "coverage_must_equal_one_or_fail": true,
+    "producer_denominator_audit_required": true,
+    "nullable_timestamp_rule": "A not-observed timestamp must be zero/null and carry an explicit observed/censored/no-change status.",
+    "core_required_columns": [
+      "accounting_identity_error_usdc",
+      "action",
+      "assignment_before_downstream_path",
+      "assignment_equity_usdc",
+      "assignment_fixed_within_lineage",
+      "assignment_inventory_btc",
+      "assignment_ts_ms",
+      "behavior_propensity",
+      "campaign_age_at_assignment_ms",
+      "campaign_id",
+      "campaign_start_equity_usdc",
+      "campaign_terminal_equity_usdc",
+      "campaign_terminal_reason",
+      "campaign_terminal_ts_ms",
+      "day",
+      "decision_to_campaign_terminal_value_usdc",
+      "final_action_change_status",
+      "final_action_change_ts_ms",
+      "final_blocker",
+      "lineage_id",
+      "lineage_reward_usdc",
+      "lineage_terminal_equity_usdc",
+      "lineage_terminal_reason",
+      "lineage_terminal_ts_ms",
+      "lineage_uid",
+      "mechanism_extension_schema",
+      "post_lineage_continuation_value_usdc",
+      "pre_assignment_campaign_pnl_usdc",
+      "randomization_stratum",
+      "side",
+      "trace_schema_version"
+    ],
+    "event_journal_required_columns": [
+      "action",
+      "campaign_id",
+      "day",
+      "episode_index",
+      "event_schema_version",
+      "event_seq",
+      "event_ts_ms",
+      "event_type",
+      "lineage_id",
+      "lineage_uid",
+      "side"
+    ],
+    "mechanism_extensions": {
+      "none": [],
+      "variance_time_v1": [
+        "assignment_consecutive_same_side_fill_units",
+        "clock_direction",
+        "terminal_consecutive_same_side_fill_units",
+        "variance_accumulated_qv_bps2_at_terminal",
+        "variance_budget_bps2_at_assignment",
+        "variance_budget_bps2_at_terminal",
+        "variance_ready_status",
+        "variance_ready_ts_ms",
+        "wall_ready_ts_ms"
+      ]
+    }
+  },
+  "research_transition": {
+    "variance_time_add_rearm_randomized_replay_v1": "closed_on_Development",
+    "variance_time_threshold_or_budget_retuning": "forbidden",
+    "variance_time_v1_validation_or_holdout_read": "forbidden",
+    "next_evidence_order": [
+      "F10_live_replay_attribution",
+      "F05_fill_quality_net_fill_value",
+      "genuinely_new_F09_action_only_after_decision_visible_cross_day_mechanism"
+    ]
+  },
+  "permissions": {
+    "development_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "implementation_identity": {
+    "contract_module_sha256": "089c715896a0f5d2633e5c33361c86bea4bc8650153c40080119cf52dcf1fce9",
+    "contract_test_sha256": "96c1453d7eeeb16ff8a3e48377934ec0320a58650e8060969cb6a1088fb8c10d"
+  }
+}

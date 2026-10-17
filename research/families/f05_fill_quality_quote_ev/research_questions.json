@@ -1,0 +1,135 @@
+{
+  "schema": "narrowgate.family_research_questions.v1",
+  "updated": "2026-10-17",
+  "scope": "Current applicability questions; accepted current-source economics and engineering evidence are retained separately.",
+  "scan_rule": "Follow research/registry.json families[].research_questions and select status=pending_validation. Read current_evidence separately; a pending hypothesis does not invalidate an accepted bounded result.",
+  "execution_authorized_by_index": false,
+  "family": "F05",
+  "questions": [
+    {
+      "id": "F05-JOINT-QUOTE-VALUE",
+      "status": "pending_validation",
+      "question": "Can a joint quote/value mapping improve full-account net value?",
+      "question_zh": "联合报价与价值映射能否改善完整账户净价值？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f05_fill_quality_quote_ev/docs/buy_soft_widen_release_single_decision_action_value_v1_development_20260804.md",
+        "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_sparse_value_diagnostic_v1_development_20260804.md",
+        "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_quote_mapping_status_closure_v1_20260804.md",
+        "research/families/f05_fill_quality_quote_ev/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Decision-Visible-Negative-Fill-Value-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Full-Multiscale-Boolean-Cooldown-Research/",
+        "research/families/f05_fill_quality_quote_ev/docs/offensive_defensive_arm_taxonomy_20260706.md"
+      ],
+      "gaps": [
+        "The completed prefill E/C and bounded risk-widen results are separate contracts, not a validation of every historical joint-P3 or soft-widen selector.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Bind the POST/WAIT or quote-widen intervention, decision-visible features and non-fill opportunities; compare net total/unit returns and inventory rather than selected fills alone.",
+      "resolution": null
+    },
+    {
+      "id": "F05-FIRST-FILL-VALUE",
+      "status": "pending_validation",
+      "question": "Which decision-visible states predict marginal fill value including subsequent inventory repair?",
+      "question_zh": "哪些决策前可见状态能预测包含后续库存修复的边际成交价值？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f05_fill_quality_quote_ev/docs/decision_visible_negative_fill_value_evidence_m0_v1_1_development_20260729.md",
+        "research/families/f05_fill_quality_quote_ev/docs/sell_first_fill_conditional_value_feasibility_v3_development_20260730.md",
+        "research/families/f05_fill_quality_quote_ev/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Decision-Visible-Negative-Fill-Value-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Full-Multiscale-Boolean-Cooldown-Research/"
+      ],
+      "gaps": [
+        "Ex-post bad fills and survival-conditioned subsets do not establish a profitable intervention.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Include filled, unfilled and cancelled opportunities; distinguish short markout, marginal lot value and full-account terminal accounting.",
+      "resolution": null
+    },
+    {
+      "id": "F05-MULTISCALE-COOLDOWN-CURRENT-SOURCE",
+      "status": "pending_validation",
+      "question": "Can multiscale market state select post-fill cooldowns that improve complete-account net value rather than merely suppress turnover or delay useful inventory reduction?",
+      "question_zh": "多尺度市场状态选择成交后冷却时长，能否改善完整账户净价值，而非仅压低成交或延误有价值的减仓？",
+      "historical_observation": "The August Development report described a favorable BUY E3 relative point estimate, negative absolute value and unmet interval/hierarchy conditions. Neither success nor universal invalidity on the current source follows.",
+      "source_refs": [
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Full-Multiscale-Boolean-Cooldown-Research/",
+        "research/families/f05_fill_quality_quote_ev/README.md",
+        "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_development_20260809.md",
+        "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_exploratory_oof_v1_development_20260810.md",
+        "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_development_20260810.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Decision-Visible-Negative-Fill-Value-Research/",
+        "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_exploratory_selection_errata_20260810.md",
+        "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.md"
+      ],
+      "evidence_status": "historical_method_audit_recorded_current_source_validation_pending",
+      "gaps": [
+        "Historical30-day panel, old baseline and modeled execution semantics.",
+        "Model-selection performance is not independent confirmation of a final refit.",
+        "Old side-specific repairs and previous-use must be bound; do not inherit every old threshold as a universal gate."
+      ],
+      "next_validation": "Continue the already authorized same-family redo after current training/data/baseline bindings. Preserve the declared action question and compare complete matched accounting, action-frequency controls and inventory effects; do not merely remove failed historical conditions.",
+      "owner_artifact_id": "F05_FULL_MULTISCALE_CURRENT_SOURCE_20261017",
+      "resolution": null
+    },
+    {
+      "id": "F05-STALE-QUOTE-ADVERSE-FILL",
+      "status": "pending_validation",
+      "question": "Are slow quote updates associated with fills at locally unfavorable prices, and does a defined update intervention improve complete-account value?",
+      "question_zh": "是否有一类挂单更新偏慢、容易在局部不利位置成交的情况？",
+      "source_refs": [
+        "research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py",
+        "research/families/f05_fill_quality_quote_ev/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Decision-Visible-Negative-Fill-Value-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Full-Multiscale-Boolean-Cooldown-Research/"
+      ],
+      "evidence_status": "obsolete_shadow_reports_deleted_by_owner_question_retained_no_current_validation",
+      "gaps": [
+        "Historical ex-post shadow labels are not causal proof.",
+        "Separate stale input, decision/KEEP behavior, cancel acknowledgment delay, queue effects and cancel-fill races.",
+        "Include comparable unfilled/cancelled opportunities, not only selected bad fills."
+      ],
+      "next_validation": "Define decision-visible features and timing; examine short-horizon markout curves and matched opportunity denominators. Any later behavioral test needs a separately bound paired experiment, not an automatic change to a running study.",
+      "owner_artifact_id": "F05_STALE_QUOTE_LIFECYCLE_MARKOUT_20261017",
+      "resolution": null
+    },
+    {
+      "id": "F05-MARKOUT-HOLDING-LIFECYCLE",
+      "status": "pending_validation",
+      "question": "How should markout horizons relate to marginal inventory holding time and risk-reducing actions instead of assuming30seconds or a fixed lifecycle fraction is optimal?",
+      "question_zh": "markout期限应怎样关联持仓生命周期，而不是默认30秒或某个固定百分比最合适？",
+      "source_refs": [
+        "research/families/f05_fill_quality_quote_ev/quote_ev.py",
+        "research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py",
+        "research/families/f05_fill_quality_quote_ev/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Decision-Visible-Negative-Fill-Value-Research/",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Full-Multiscale-Boolean-Cooldown-Research/",
+        "research/families/f10_live_replay_attribution/docs/fill_inventory_lifecycle_retained111_20260713.md"
+      ],
+      "evidence_status": "implementation_horizons_identified_optimal_horizon_not_validated",
+      "gaps": [
+        "Order lifetime, marginal-fill holding time and flat-to-flat inventory episode differ.",
+        "Realized future exit time cannot be a known decision-time input.",
+        "Policy-dependent exits, partial closes and censoring can bias normalized-horizon comparisons.",
+        "Gross markout is not round-trip net profit; risk reduction may be valuable despite adverse short markout."
+      ],
+      "next_validation": "Retain common fixed short-horizon diagnostics alongside lifecycle net accounting. Study holding-time distributions using authorized training/development support; any adaptive decision horizon uses past-information estimates, not realized future duration. No percentage selected yet.",
+      "owner_artifact_id": "F05_STALE_QUOTE_LIFECYCLE_MARKOUT_20261017",
+      "resolution": null
+    }
+  ],
+  "current_evidence": [
+    {
+      "source_ref": "research/families/f05_fill_quality_quote_ev/README.md",
+      "role": "current_scope_and_accepted_evidence",
+      "boundary": "Current-source prefill E/C completed 204 independent accounts × ten paths, with four fitted surfaces and train-only T100 labels. All full-calendar and Final paths remain negative; E/EC reduced total loss versus their own B0, C incremental effects were inconsistent, and E Final turnover-normalized returns worsened. Two random seeds do not establish stable selectivity. A separate bounded ten-head risk-widen comparison was negative. Neither result completes multiscale cooldown or every historical first-fill/joint-quote question."
+    },
+    {
+      "source_ref": "research/recompute_407.json",
+      "role": "accepted_scope_source",
+      "boundary": "Read the original baseline, completed coverage, previous-use and limitations; this source does not resolve unrelated pending questions."
+    }
+  ]
+}

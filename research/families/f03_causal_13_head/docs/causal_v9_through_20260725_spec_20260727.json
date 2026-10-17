@@ -1,0 +1,52 @@
+{
+  "schema_version": "narrowgate_causal_model_replay_spec.v1",
+  "experiment_id": "causal_v9_through_20260725_20260727",
+  "status": "frozen_before_feature_rebuild_model_fit_and_test_outcomes",
+  "source_identity": {
+    "good_days": 133,
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_20260727",
+    "normalized_l2_manifest_sha256": "88ff8faeef9976a10b1cf03e887e624e3cce5abb3d17de1b7920a58bb0de1275",
+    "normalized_l2_daily_quality_sha256": "e2aa9122b26cdb229fd739a626eec4ba58db5b876e1af1b4bde785e3e308131e",
+    "taker_tempo_root": "${NARROWGATE_RETIRED_DATA_ROOT}/trade_features_causal_v3_20260727",
+    "taker_tempo_manifest_sha256": "af385300d2852c0e6cc8d3e5f1b50984e649dee6e33450cf44740dc189a72292",
+    "taker_tempo_daily_manifest_sha256": "278d5ce1f706e6902162e2cbdacac2c632bd6a86b214412d0b59ec81faea4a5e",
+    "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "feature_config_sha256": "52e11a695137037cff6edc6533ba3671d35e4b112bb9cb600fd3c7aacdf82595",
+    "formal_config_sha256": "5c3229598384c606e7185c6f854c9ad5fa2de8ce3d27ce84ecb669082800a741"
+  },
+  "split": {
+    "train": "106 good days through 2026-06-28",
+    "embargo_1": ["2026-06-29"],
+    "validation": "20 good days from 2026-06-30 through 2026-07-19",
+    "embargo_2": ["2026-07-20"],
+    "test": ["2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25"],
+    "formal_replay_test": ["2026-07-21", "2026-07-22", "2026-07-23", "2026-07-25"],
+    "diagnostic_only": {
+      "2026-07-24": "normalized L2 coverage 97.8925%, below formal 99% gate"
+    }
+  },
+  "candidate": {
+    "model": "13-head LightGBM, source profile all",
+    "paired_control": "ML OFF",
+    "paired_candidate": "ML ON",
+    "only_arm_difference": "ml_enabled",
+    "buy_fill_selection_action": false,
+    "dynamic_fill_hazard_action": false,
+    "placement_fill_cif_v1": "excluded; prediction-only and not action-authorized"
+  },
+  "deployment_gate": {
+    "formal_raw_pnl_delta": "> 0",
+    "formal_terminal_campaign_pnl_delta": ">= 0",
+    "formal_tail_campaign_delta": "<= 0",
+    "formal_fill_retention": ">= 0.85",
+    "formal_absolute_inventory_time_ratio": "<= 1.10",
+    "formal_raw_same_sign_days": ">= 3 of 4",
+    "pass_action": "deploy only the v9 13-head bundle as a small live trial",
+    "fail_action": "remain ML OFF and do not tune on Test5"
+  },
+  "calibration_governance": {
+    "placement_cif_v1_intercept_tolerance": "remains frozen at 0.01 for v1",
+    "threshold_relaxation": false,
+    "future_v2": "derive cell-specific tolerance from a preregistered action-EV error budget"
+  }
+}

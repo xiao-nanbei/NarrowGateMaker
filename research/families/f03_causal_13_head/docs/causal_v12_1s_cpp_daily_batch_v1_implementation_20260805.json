@@ -1,0 +1,163 @@
+{
+  "artifact_identity": "causal_v12_1s_cpp_daily_batch_v1_implementation_20260805",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "targeted_parity_and_real_small_sample_performance_passed",
+  "scope": {
+    "bulk_66_day_materialization_started": false,
+    "economic_outcomes_read": false,
+    "full_day_materialization_started": false,
+    "labels_read": false,
+    "live_modified": false,
+    "predictions_read": false,
+    "strategy_modified": false,
+    "training_started": false
+  },
+  "engine_contract": {
+    "batch_abi": "causal_v12_1s_cpp_daily_batch.v1",
+    "bulk_engine": "cpp_batch",
+    "default_engine": null,
+    "default_engine_behavior": "fail_closed",
+    "feature_count": 173,
+    "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+    "python_bitwise_row_fingerprint_claimed": false,
+    "python_oracle_bulk_authorized": false,
+    "python_precomputed_feature_values_accepted": false,
+    "raw_inputs_only": true,
+    "row_fingerprint": "engine_native_canonical_feature_row.v1",
+    "ten_second_feature_rows_reused_or_forward_filled": false
+  },
+  "code_identities": {
+    "batch_bridge": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_cpp_batch.py",
+      "sha256": "829d8d832b1ad3e4971bd65de583505e83bafe6819eb8b58a47a46066bdcd6f7"
+    },
+    "benchmark": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_materialization_benchmark.py",
+      "sha256": "ae8f0a0a398b1c8ab12b949c188ba62a3f72699f840fe7e0dbd03c3f04e839ab"
+    },
+    "bindings": {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "b62cea5dfa1f5fe2be73bd3f79efdae90d15b27db9a5a227ddc2a7d7743b6d9f"
+    },
+    "cpp_header": {
+      "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.hpp",
+      "sha256": "24767818cc885729d9cf270a3a03215518ef9ef52045bb1c4256957b0b281645"
+    },
+    "cpp_kernel": {
+      "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp",
+      "sha256": "8b0a2ea147347d9d190c3c88226c50c92f51ef804f9743a6344fc1a7a21ebac7"
+    },
+    "materializer": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_panel_materializer.py",
+      "sha256": "c79ea928b32369b31ef9e134f4eaae2194c50c4831c4d3bf12d4d326b4f5ec50"
+    },
+    "tests_batch": {
+      "path": "tests/test_causal_v12_1s_cpp_batch.py",
+      "sha256": "74e29feed4ae400e0b770d09510ff238a8c74170da475f7224068756fa3d0114"
+    },
+    "tests_materializer": {
+      "path": "tests/test_causal_v12_1s_panel_materializer.py",
+      "sha256": "0193622368c8687b0f82496e5da3365b30e47f1275d5d4614da3caac4f2bad99"
+    }
+  },
+  "numeric_parity_contract": {
+    "absolute_tolerance": 2e-12,
+    "exact_fields": [
+      "feature_order",
+      "valid",
+      "source_latest_ts",
+      "feature_ready_ts",
+      "observation_count",
+      "lag_state",
+      "null_location"
+    ],
+    "relative_tolerance": 2e-12
+  },
+  "physical_sample": {
+    "source_spec_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_spec_20250802_v1/source-spec.json",
+    "source_spec_sha256": "c56588464a5b6e36bae570f0310cfe5ff239eedbd8ab0d4aeea6dd6cf781e59a",
+    "target_day": "2025-08-02",
+    "warmup_day": "2025-08-01"
+  },
+  "parity_results": [
+    {
+      "feature_cells": 17300,
+      "max_absolute_difference": 9.313225746e-10,
+      "metadata_mismatches": 0,
+      "null_mismatches": 0,
+      "numeric_tolerance_passed": true,
+      "rows": 100
+    },
+    {
+      "feature_cells": 173000,
+      "max_absolute_difference": 3.492459655e-09,
+      "metadata_mismatches": 0,
+      "null_mismatches": 0,
+      "numeric_tolerance_passed": true,
+      "rows": 1000
+    }
+  ],
+  "benchmarks": [
+    {
+      "cpp_benchmark_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_cpp_batch_benchmark_20250802_v1/rows_100/benchmark.json",
+      "cpp_benchmark_sha256": "4108dbbc3bac0c18aa652574fefd7728e3dd6c1bcc723503d86c6b29df743f17",
+      "cpp_estimated_full_day_wall_seconds": 84.48391276714392,
+      "cpp_feature_rows_per_second": 1206.5619355066133,
+      "end_to_end_extrapolated_speedup": 167.06,
+      "feature_compute_speedup": 196.92,
+      "full_day_estimate_is_measured": false,
+      "old_python_benchmark_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_100/benchmark.json",
+      "old_python_benchmark_sha256": "304fa84338b78b4404bbfaa4b46fe00ecbc579687a86b201082a41b2cda599eb",
+      "old_python_estimated_full_day_wall_seconds": 14114.031098954147,
+      "old_python_feature_rows_per_second": 6.126822045771811,
+      "panel_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_cpp_batch_benchmark_20250802_v1/rows_100/panel.parquet",
+      "panel_sha256": "cf9510a0723e0d2a612016a53ebc014e548d21aeed61efcd3998ffb870519692",
+      "rows": 100
+    },
+    {
+      "cpp_benchmark_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_cpp_batch_benchmark_20250802_v1/rows_1000/benchmark.json",
+      "cpp_benchmark_sha256": "e23a9ca9600eaa32d8df85cc57407fe923e0c5c844e727ab13280f00f96c6b44",
+      "cpp_estimated_full_day_wall_seconds": 76.8809127070941,
+      "cpp_feature_rows_per_second": 1303.233852568765,
+      "end_to_end_extrapolated_speedup": 185.37,
+      "feature_compute_speedup": 214.80,
+      "full_day_estimate_is_measured": false,
+      "old_python_benchmark_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_orico_benchmark_20250802_v1/rows_1000/benchmark.json",
+      "old_python_benchmark_sha256": "672a4ec576045ecd072110ce842f1298c1682a7dac1c51e669de414e93bd2899",
+      "old_python_estimated_full_day_wall_seconds": 14251.897531686165,
+      "old_python_feature_rows_per_second": 6.067130867490411,
+      "panel_path": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_cpp_batch_benchmark_20250802_v1/rows_1000/panel.parquet",
+      "panel_sha256": "a4b3385cc1676c416fea01d3aeae52d26f43a345f8926382b4ac169582371bf8",
+      "peak_rss_bytes": 1542881280,
+      "rows": 1000
+    }
+  ],
+  "performance_gate": {
+    "minimum_speedup": 100.0,
+    "passed": true,
+    "scope": "feature_compute_and_end_to_end_small_sample_extrapolation"
+  },
+  "remaining_blockers": [
+    "No measured 86400-row full-day runtime or full-artifact admission exists because this implementation intentionally stopped at the requested small benchmark.",
+    "Native 2026 physical-source parity is outside this provider-normalized 2025 small-sample identity.",
+    "Training remains fail-closed until a separately admitted full-day artifact binds all physical source manifests and validates all 86400 rows."
+  ],
+  "verification": {
+    "cpp_strict_syntax": "passed_cxx20_wall_wextra_werror",
+    "git_diff_check": "passed",
+    "json_parse": "passed",
+    "pytest": {
+      "passed": 65,
+      "skipped": 1,
+      "status": "passed"
+    },
+    "ruff_check": "passed"
+  },
+  "permissions": {
+    "bulk_66_day_materialization_authorized": false,
+    "full_day_materialization_authorized_by_this_identity": false,
+    "live_authorized": false,
+    "training_authorized": false
+  }
+}

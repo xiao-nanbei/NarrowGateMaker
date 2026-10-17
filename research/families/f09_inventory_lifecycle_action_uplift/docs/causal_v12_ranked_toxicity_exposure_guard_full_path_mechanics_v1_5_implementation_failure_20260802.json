@@ -1,0 +1,110 @@
+{
+  "schema_version": "causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics.implementation_failure.v1",
+  "identity": "causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics_v1_5",
+  "date": "2026-08-02",
+  "status": "execution_preflight_failed_before_formal_mechanics_result",
+  "research_family": "F09_campaign_action_uplift",
+  "classification": "outcome_blind_execution_contract_failure",
+  "development_smoke_day": "2026-04-17",
+  "frozen_predecessor": {
+    "identity": "causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_4",
+    "execution_amendment_path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_4_execution_amendment_20260802.json",
+    "execution_amendment_sha256": "02d53bc1aa625fd81e80c48f6d966326e6a93dd3e107db4758f98fc9c59d08b9",
+    "modified": false,
+    "previous_mechanics_execution_eligible_claim_withdrawn": true
+  },
+  "attempted_execution": {
+    "authoritative_replay_binding_path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_authoritative_replay_v1_5.py",
+    "authoritative_replay_binding_sha256": "437007289f96a6b139f2bf3df72e9e3bfa5f05eee533755af41a1c10c77bf418",
+    "daily_runner_path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_mechanics.py",
+    "daily_runner_sha256": "27a693ed093eb4bc56637fb8129d8c8c7b7b8c9b389217b6127e9559ba90b474",
+    "feature_manifest_path": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802/causal_feature_manifest.json",
+    "feature_manifest_sha256": "1e21d6a8aee511d1ebed8db04d76c5b6d8803724999c284b2256bd83f5d36a90",
+    "v12_bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "operational_config_sha256": "0b0f137461db59eafbb05519da178e61bac0b3e6242d4ee8a35ea746580d6a64"
+  },
+  "journals": {
+    "baseline": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_ranked_toxicity_v15_smoke_20260802/smoke_v4/2026-04-17/baseline_v1_5/manifest.json",
+      "sha256": "87c598f76ea82dc74651af7bccd1525fc95533ad73f08957de34882999cde9e2",
+      "closed": true,
+      "rows": 29072
+    },
+    "candidate_buy_partial": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_ranked_toxicity_v15_smoke_20260802/smoke_v7/2026-04-17/candidate_v1_5/buy/manifest.json",
+      "sha256": "7806349bf3fb4f0901a32510e9ac6ac209d0b0d155035c54fbff02ddc80ca5a6",
+      "closed": false,
+      "rows": 66,
+      "formal_evidence": false
+    },
+    "candidate_sell_partial": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_ranked_toxicity_v15_smoke_20260802/smoke_v7/2026-04-17/candidate_v1_5/sell/manifest.json",
+      "sha256": "c279c510c74294df5bd0df8c46f43ea788c3d422d0bf97829bb82f7e27b5d42e",
+      "closed": false,
+      "rows": 67,
+      "formal_evidence": false
+    }
+  },
+  "failure": {
+    "exception_type": "AdapterContractViolation",
+    "exception_message": "cannot end prospective campaign with active exposure orders: ['16']",
+    "root_cause": "an exchange-active exposure order submitted under one prospective campaign-side assignment remains resting after the inventory campaign closes and is reclassified under the next campaign-side lineage",
+    "treatment_carryover": true,
+    "campaign_side_randomization_valid": false,
+    "events": [
+      {
+        "event_ts_ns": 1776384157900000000,
+        "event_ts_utc": "2026-04-17T00:02:37.900Z",
+        "side": "BUY",
+        "order_id": "16",
+        "event": "submitted_and_activated",
+        "role": "add",
+        "untreated_lineage_ordinal": 1
+      },
+      {
+        "event_ts_ns": 1776384163617000000,
+        "event_ts_utc": "2026-04-17T00:02:43.617Z",
+        "side": "SELL",
+        "order_id": "17",
+        "event": "full_fill_flattens_inventory_and_ends_campaign"
+      },
+      {
+        "event_ts_ns": 1776384165769000000,
+        "event_ts_utc": "2026-04-17T00:02:45.769Z",
+        "side": "BUY",
+        "order_id": "16",
+        "event": "same_active_order_observed_as_opener",
+        "role": "opener",
+        "untreated_lineage_ordinal": 2
+      }
+    ]
+  },
+  "separate_replay_fix": {
+    "description": "requote cancellation now ignores orders whose remaining quantity is below one lot after a full fill",
+    "path": "models/backtest_tick.py",
+    "sha256": "c853fdaa5ba2e6a37a68e76bfd1df3688bdc300e24b348635bcc4edbcd94a9b1",
+    "root_cause_of_assignment_failure": false
+  },
+  "read_boundary": {
+    "execution_preflight_journal_read": true,
+    "formal_40_day_mechanics_result_read": false,
+    "economic_outcome_read": false,
+    "pnl_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "decision": "withdraw_v1_4_mechanics_execution_eligibility_and_require_new_assignment_carryover_identity",
+  "successor_requirements": [
+    "freeze a treatment unit that remains stable while any order submitted under it is exchange-active",
+    "define assignment carryover and washout before reading mechanics or economics",
+    "prevent a new assignment from controlling an inherited active order",
+    "preserve prospective zero-fill opportunities and side-specific treatment semantics",
+    "rerun one-day outcome-blind execution preflight before any 40-day mechanics run"
+  ],
+  "permissions": {
+    "mechanics_execution_eligible": false,
+    "prediction_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

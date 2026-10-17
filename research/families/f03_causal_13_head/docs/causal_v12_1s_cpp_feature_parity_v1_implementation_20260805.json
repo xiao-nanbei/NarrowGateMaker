@@ -1,0 +1,72 @@
+{
+  "schema_version": "causal_v12_1s_cpp_feature_parity_implementation.v1",
+  "identity": "causal_v12_1s_cpp_feature_parity_v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "cpp_173_field_kernel_and_pybind_implemented_synthetic_python_cpp_parity_passed_no_training_or_live_authority",
+  "feature_contract": {
+    "cadence_ms": 1000,
+    "feature_count": 173,
+    "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+    "feature_dag_id": "causal_v12_full_trainable_1s.v1",
+    "feature_semantics_identity": "causal_v12_full_trainable_features_canonical_1s.v1",
+    "ten_second_feature_rows_accepted_as_input": false,
+    "labels_predictions_or_economic_outcomes_read": false
+  },
+  "cpp_output_fields_per_feature": [
+    "value",
+    "valid",
+    "source_latest_ts_ms",
+    "feature_ready_ts_ms",
+    "observation_count",
+    "lag_state"
+  ],
+  "implementation_sha256": {
+    "python_schema": "2279a9f1d8bc8043007842429d9e12112097368f15bdd77fa0c12ff280cc775c",
+    "python_base_generator": "65862a0387c21016474be27bf7047b1d1d19637786f39a3380f0114cb8d65409",
+    "python_full_schema": "83a706e61e8db0bcb1d0e296a07b648f233a06f1e8739a67830f32420dc21d47",
+    "cpp_header": "85e58f7ffdad0ae191de012422a870117282fe5d47450fea139e8d7aff8aaceb",
+    "cpp_source": "3b387003feafb6079929d935c316068b103c9dc8ed27668ea1b84d5660b329dc",
+    "bindings": "b07f4c709929fb57e44a1484b82204216151dde7919e007e3ad8446f76bbda85",
+    "cmake": "a82d90b0bf7ad6f5e333f0cad527aed78be0a4a21f53f25829dc96ea61bc640b",
+    "python_full_schema_test": "02a1e37bf12a4032031a4960a90d2164d473fc637de8d9d106de233aff9acea5",
+    "cpp_parity_test": "5ca7cefe7ab4ba1c0cc1181ed5a4591f8b36617f1e0e2079e7859f3fdb3fd35a"
+  },
+  "verification": {
+    "focused_cpp_parity_tests_passed": 13,
+    "related_f03_and_cutoff_tests_passed": 55,
+    "editable_cpp_build_passed": true,
+    "clang_wall_wextra_werror_passed": true,
+    "ruff_passed": true,
+    "all_173_fields_compared": true,
+    "value_validity_clock_count_and_lag_state_compared": true,
+    "cutoff_minus_one_ms_visible": true,
+    "cutoff_source_time_excluded": true,
+    "next_second_perturbation_invariant": true,
+    "long_window_lag_state_transition_tested": true,
+    "multisecond_gap_fail_closed": true,
+    "ten_second_feature_rows_rejected_by_typed_input_abi": true,
+    "explicit_contiguous_raw_no_trade_bars_tested": true,
+    "calendar_holiday_and_dst_boundaries_tested": true,
+    "numeric_tolerance": {
+      "rtol": 2e-12,
+      "atol": 2e-12
+    }
+  },
+  "permissions": {
+    "large_panel_materialization_authorized": false,
+    "training_authorized": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_deployment_authorized": false,
+    "baseline_update_authorized": false
+  },
+  "remaining_physical_source_parity_blockers": [
+    "admitted real 1s daily source materializer and D-1 warmup manifest",
+    "execution-L2 quality artifact and exact feature-ready clock binding",
+    "metrics CSV parser and source/ready clock identity",
+    "real 2025 provider and 2026 native daily fingerprint comparison",
+    "live/offline kernel integration and replay source transport",
+    "frozen chronological folds, overlap weights and embargo before training"
+  ]
+}

@@ -1,0 +1,155 @@
+{
+  "schema_version": "buy_q90_dual_clock_terminal_routing_contract.v2",
+  "identity": "buy_q90_dual_clock_terminal_routing_contract_v2",
+  "date": "2026-08-02",
+  "classification": "baseline_integrity_mechanics_only",
+  "status": "implementation_verified_targeted_and_full_repository_tests_full_panel_transport_not_run",
+  "historical_predecessor": {
+    "identity": "buy_q90_terminal_recovery_contract_v1",
+    "implementation_identity": "research/families/f10_live_replay_attribution/docs/buy_q90_terminal_recovery_contract_v1_implementation_20260802.json",
+    "implementation_identity_sha256": "2b8e93c12f3a7a913e0a8a409d867be2aad7322429b6ae04c5d52cbc44a8f3c4",
+    "implementation_report": "research/families/f10_live_replay_attribution/docs/buy_q90_terminal_recovery_contract_v1_implementation_20260802.md",
+    "implementation_report_sha256": "41bd4e26fdb9feb23dfe3cd9762a799d69be8b0d41e01b2bd0a2cb0232931b69",
+    "frozen_files_modified": false
+  },
+  "exposure_contract": {
+    "unit": "BTC*s",
+    "legacy_field": "quantity_time_exposure_btc_s",
+    "legacy_field_semantics": "strategy_visible_quantity_time_exposure",
+    "visible_field": "quantity_time_exposure_visible_btc_s",
+    "visible_estimand": "integral_of_remaining_quantity_over_visibility_time_while_exchange_order_is_in_fill_risk_set",
+    "exchange_field": "quantity_time_exposure_exchange_btc_s",
+    "exchange_estimand": "integral_of_remaining_quantity_over_exchange_event_time_from_exchange_activation_to_exchange_terminal",
+    "clock_difference_field": "quantity_time_exposure_visibility_minus_exchange_btc_s",
+    "missing_exchange_timestamp_policy": "return_null_and_record_invalid_reason_without_borrowing_visibility_time",
+    "exchange_timestamp_regression_policy": "return_null_and_record_invalid_reason",
+    "first_fill_latency_visible_field": "first_fill_latency_visible_s",
+    "first_fill_latency_exchange_field": "first_fill_latency_exchange_s",
+    "physical_exposure_authority_requires_complete_exchange_clock": true,
+    "missing_activation_timestamp_immediate_state": {
+      "exchange_exposure_valid": false,
+      "exchange_exposure_complete": false,
+      "exchange_exposure_value": null,
+      "exchange_exposure_invalid_reason": "missing_exchange_timestamp:activate"
+    }
+  },
+  "lifecycle_journal_contract": {
+    "schema_version": "order_lifecycle_journal.v1",
+    "live_persisted": true,
+    "python_replay_emitted": true,
+    "fields": [
+      "quantity_time_exposure_visible_btc_s",
+      "quantity_time_exposure_exchange_btc_s",
+      "quantity_time_exposure_visibility_minus_exchange_btc_s",
+      "exchange_exposure_valid",
+      "exchange_exposure_complete",
+      "exchange_exposure_invalid_reason",
+      "remaining_quantity_before",
+      "remaining_quantity_after",
+      "terminal_reason",
+      "terminal_policy_route"
+    ],
+    "exchange_clock_coverage_audit_emitted": true,
+    "cpp_exposure_authority": false,
+    "three_runtime_exposure_parity_claimed": false
+  },
+  "fill_risk_set": [
+    "ACTIVE",
+    "PARTIALLY_FILLED",
+    "CANCEL_PENDING"
+  ],
+  "terminal_routing_contract": {
+    "cancel_ack_with_remaining_quantity": "PROSPECTIVE_CANCEL_REENTRY",
+    "full_fill_or_zero_remaining_quantity": "TERMINAL_COMPLETE",
+    "rejected_or_expired": "BASELINE_RESUBMIT",
+    "administrative_or_shutdown_terminal": "SHUTDOWN_NO_REENTRY",
+    "unknown_terminal_reason": "UNSUPPORTED_FAIL_CLOSED",
+    "post_terminal_active_hazard_allowed": false,
+    "terminal_depth_cursor_retention_allowed": false,
+    "full_fill_post_cancel_recovery_allowed": false,
+    "shutdown_reentry_allowed": false
+  },
+  "prospective_cancel_reentry_contract": {
+    "eligible_terminal_route": "PROSPECTIVE_CANCEL_REENTRY",
+    "required_terminal_reason": "cancel_ack_or_cancel_ack_reconciled",
+    "positive_remaining_quantity_required": true,
+    "fresh_candidate_price_required": true,
+    "age_reset_to_zero_required": true,
+    "fresh_queue_at_tail_required": true,
+    "current_causal_market_state_required": true,
+    "activation_and_gtx_probability_required": true,
+    "prospective_placement_evaluator_implemented": false,
+    "automatic_reentry_authorized": false
+  },
+  "native_abi": "dynamic_fill_hazard_native_book_q90.v3",
+  "feature_graph": {
+    "graph_id": "buy_q90_visibility_lifecycle_path_score.v3",
+    "sha256": "25e88ffb95994fd7ab7a2071f2187c364984b4b35988dd10305c214438a70ef9",
+    "dual_exposure_nodes_registered": true
+  },
+  "parity_scope": {
+    "python_live_replay_dual_exposure_journal": true,
+    "python_cpp_terminal_route_path_score_cancel_recovery": true,
+    "python_cpp_quantity_time_exposure": false
+  },
+  "q90_runtime_state": {
+    "shadow_enabled": true,
+    "action_enabled": false,
+    "local_repair_deployed": false
+  },
+  "implementation_sha256": {
+    "execution/order_lifecycle.py": "95ce4d15d7e4b5020323cc85b6f8f7c203b558d5acaefed76bd2f184d0a4d0ec",
+    "execution/order_lifecycle_journal.py": "6acbdf1158549557dab7f8469108b1ae5600039514b9efd34edb1609cf96ed6e",
+    "execution/active_order_depth_path.py": "147719b82f50f8374fc117cc9d9a1a5d905e9de07df9f5e9eff9fa9e5ade61a7",
+    "live/config.py": "8631d5a6ffd6bcf79e92d264cb96168888faf975fcca62dd68118cf68bbe7edc",
+    "live/config.yaml": "7bea9cbc756a616824d9e5d35ec9545509848fb37b79df0f2b40fc33e00c81ad",
+    "strategy/order_manager.py": "329641fee3b2657be6d1eca2d6a586822af085710968e696f1342be70827cddc",
+    "strategy/maker_engine.py": "cec19fbf0ebd79a3f02d8c9a66faf7b30b88f8a0f5e8fcb3c00de9ffaf504cab",
+    "strategy/dynamic_fill_hazard_model.py": "90dd5e0aaf8772905d28cce45898aedc95a6aa53deb7f545bafd392f09fa8697",
+    "features/feature_dag.py": "846b5bb3bdbd2d5fb28498e270de0f1f97e58b2114ffe2c725c586d9ef910097",
+    "live/ws_handler.py": "c817f147394cc892489b5fbdf13e572a9f6bd391529182880ff7f87a4618d294",
+    "models/backtest_tick.py": "eed9caa2f3de972efa90b0c1ca91dd470bd5d1c6955b315db702beb40eb14872",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "8f0ee8ddfde833e0ade6133c75b281797c3dccc0fc808b7e24b82594d161b154",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "d8cd495d3b61025940166b82cbeb869e5f62ea4b2dcf52a158b274942e58c13c",
+    "cpp/narrowgate_cpp/bindings.cpp": "e6aff7f73d256eb0c584071462bb5c4565847348c79eb8cc79a38949df11fdca",
+    "tests/test_execution_order_lifecycle.py": "91a7c370783fd5772b41fb2ed77f082670dc54292cc8cb0d86af6fc49e810c41",
+    "tests/test_order_lifecycle_journal.py": "e58927f92222125742c6b9244db931ac7b4165635215ea38528bec085a5f7de2",
+    "tests/test_dynamic_fill_hazard_live_action.py": "9f8ca7309ce3aaadf6f808b117f0896186a6f98e2f23743f533c25de6962e05e",
+    "tests/test_dynamic_fill_hazard_cpp_parity.py": "28880d5d0226c4b568a5725129de45206a1be90dd302d8969067e0a891e6c1af",
+    "tests/test_feature_dag.py": "64dbd72e30972580ab0d27392c15834288480fb90f53c0fa043fd58965b13732",
+    "tests/test_replay_path_dependent_controls.py": "c9bdfb853945a7003f9a7fb4b14ba6351e68ff4057da31075e2b1c21c982f1a1",
+    "tests/test_buy_q90_dual_clock_terminal_routing_contract_v2.py": "9f8326cd22dd51f5e454bb298f381860652f197c0254afbd2e128628e698c855"
+  },
+  "verification": {
+    "targeted_tests_passed": 89,
+    "targeted_test_failures": 0,
+    "targeted_test_command": ".venv/bin/python -m pytest -q tests/test_execution_order_lifecycle.py tests/test_order_lifecycle_journal.py tests/test_dynamic_fill_hazard.py tests/test_dynamic_fill_hazard_live_action.py tests/test_dynamic_fill_hazard_live_shadow.py tests/test_dynamic_fill_hazard_cpp_parity.py tests/test_feature_dag.py tests/test_replay_path_dependent_controls.py tests/test_buy_q90_causal_visibility_clock_parity.py tests/test_buy_q90_same_date_mechanics.py tests/test_buy_q90_terminal_hold_riskset_audit.py tests/test_preflight_live_deploy.py tests/test_buy_q90_dual_clock_terminal_routing_contract_v2.py",
+    "scoped_ruff_passed": true,
+    "scoped_ruff_command": ".venv/bin/ruff check execution/order_lifecycle.py execution/order_lifecycle_journal.py research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_adapter_contract_v1_2.py tests/test_execution_order_lifecycle.py tests/test_order_lifecycle_journal.py tests/test_buy_q90_dual_clock_terminal_routing_contract_v2.py tests/test_ranked_toxicity_guard_full_path_adapter_contract.py",
+    "python_compile_passed": true,
+    "python_compile_command": ".venv/bin/python -m py_compile execution/order_lifecycle.py execution/order_lifecycle_journal.py strategy/order_manager.py strategy/maker_engine.py models/backtest_tick.py research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_adapter_contract_v1_2.py tests/test_order_lifecycle_journal.py tests/test_ranked_toxicity_guard_full_path_adapter_contract.py",
+    "python_version": "3.12.13",
+    "native_extension_rebuilt": true,
+    "full_repository_suite_rerun_for_v2": true,
+    "full_repository_command": ".venv/bin/python -m pytest -q",
+    "full_repository_result": "1341 passed, 4 skipped, 1 warning in 86.36s",
+    "forty_day_lockstep_rerun": false,
+    "same_date_aws_transport_rerun": false
+  },
+  "unresolved_gates": [
+    "fresh prospective placement recovery evaluator",
+    "exchange-clock exposure coverage and left-censor audit",
+    "40-day Python/C++ event-lockstep under ABI v3",
+    "same-date AWS receive-time transport",
+    "inherited valid-fraction absolute-delta gate",
+    "inherited cancel-role total-variation gate",
+    "independent q90 ON/OFF economic attribution after mechanics pass"
+  ],
+  "economic_outcome_read": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "prediction_supported": false,
+  "transport_supported": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false
+}
