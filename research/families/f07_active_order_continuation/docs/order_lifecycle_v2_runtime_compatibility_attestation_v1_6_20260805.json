@@ -1,0 +1,305 @@
+{
+  "bound_runtime_call_surface": {
+    "forbidden_helper_references": [],
+    "passed": true,
+    "scanned_artifacts": [
+      {
+        "path": "execution/order_lifecycle_journal_v2_strict_native.py",
+        "sha256": "edba96fa6b2c556d5f786ee0011d1d8daa5db176f0daf620de13e8365661c44c",
+        "size_bytes": 45612
+      },
+      {
+        "path": "execution/order_lifecycle_journal_writer_v2_strict_native.py",
+        "sha256": "607443341fc967a9381d70f24e1ab1ddcd49c74aa0700df57873c9465dfd04ad",
+        "size_bytes": 53270
+      },
+      {
+        "path": "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+        "sha256": "27c292be987dcfc447aa7fc43a0d7413cce76eaa85b0bf959781466bee9a3bba",
+        "size_bytes": 13177
+      },
+      {
+        "path": "execution/order_lifecycle_quantity_contract.py",
+        "sha256": "dcb37675dca018142a1e44ae207f9c4bdf3eda3a48426676d2069cf17ba04e52",
+        "size_bytes": 2572
+      },
+      {
+        "path": "models/backtest_config.py",
+        "sha256": "7cb4e197bf612a85fdfdd05df88d00ee268f8b147e956b7e5d75ff26855ea61d",
+        "size_bytes": 51245
+      },
+      {
+        "path": "models/backtest_tick.py",
+        "sha256": "bbec62c6cdd0fbf92ae76e0c1588bfd3f6e910539d738c4c4f854a27a90de36f",
+        "size_bytes": 1338176
+      },
+      {
+        "path": "models/data_windows.py",
+        "sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223",
+        "size_bytes": 49382
+      },
+      {
+        "path": "models/exchange_book_replay.py",
+        "sha256": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177",
+        "size_bytes": 47954
+      },
+      {
+        "path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+        "sha256": "1be258a8ba53dc234cec5c6dcccefa4c299118e3298f16e91acab665771a5fda",
+        "size_bytes": 20096
+      },
+      {
+        "path": "models/replay_contract.py",
+        "sha256": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+        "size_bytes": 42041
+      },
+      {
+        "path": "strategy/fill_cooldown.py",
+        "sha256": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+        "size_bytes": 24701
+      },
+      {
+        "path": "strategy/policy_guards.py",
+        "sha256": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+        "size_bytes": 19781
+      },
+      {
+        "path": "strategy/quote_core.py",
+        "sha256": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+        "size_bytes": 95857
+      },
+      {
+        "path": "strategy/replay_controls.py",
+        "sha256": "14ef3578dfdb74ff28bef42d276f9e6ec0f4e012c54e2e0e5a80015ae8d002c5",
+        "size_bytes": 18972
+      },
+      {
+        "path": "strategy/signal.py",
+        "sha256": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f",
+        "size_bytes": 136908
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+        "sha256": "727df6b20cf60b083c718fe9ba33c45034f9d4409efb2d46f3592e7ad57e9e82",
+        "size_bytes": 15563
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py",
+        "sha256": "fed14237be760069e006b77cbc255cf4557003901dfab80baa361cdcbe5db79b",
+        "size_bytes": 111780
+      }
+    ]
+  },
+  "canonical_attestation_sha256": "46a5f6338190525d5c304a28f8e0258d220b6985e87ff887131e9877614b851b",
+  "deterministic_behavior_equivalence": {
+    "exact_payload_match": true,
+    "passed": true,
+    "predecessor_fingerprint_sha256": "b723bfce3a499d3407ee2e2f3bb6b0319944f25ffddff45c877e881569dc5595",
+    "scenario_count": 4,
+    "successor_fingerprint_sha256": "b723bfce3a499d3407ee2e2f3bb6b0319944f25ffddff45c877e881569dc5595"
+  },
+  "gates": {
+    "bound_f07_runtime_does_not_reference_helpers": true,
+    "deterministic_lifecycle_payloads_match": true,
+    "economic_outcomes_not_read": true,
+    "other_bound_runtime_artifacts_match_plan": true,
+    "predecessor_plan_hash_bound": true,
+    "predecessor_reconstructed_exactly": true,
+    "source_delta_only_adds_frozen_helpers": true
+  },
+  "generated_at_utc": "2026-08-05T09:02:58.273488+00:00",
+  "identity": "f07_order_lifecycle_v2_runtime_compatibility_v1_6",
+  "mechanical_reconstruction": {
+    "reconstructed_sha256": "447c21ef8150891e8faffefbb16665d33cf4325e214ac1e5538b902ccf137ec8",
+    "reconstructed_size_bytes": 23802,
+    "removed_byte_count": 531,
+    "removed_helper_block_sha256": "6bfbdf378a9d92d7178565f96dac57bbb0dd5326668755d20eb766c48cb8ca6d",
+    "removed_import_sha256": "7c48b5e27737ec742a1f16533de41a4e7145c1b4a7798d680c2cafd946d67ca9"
+  },
+  "other_bound_runtime_artifacts": [
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "execution/order_lifecycle_journal_v2_strict_native.py",
+      "path": "execution/order_lifecycle_journal_v2_strict_native.py",
+      "sha256": "edba96fa6b2c556d5f786ee0011d1d8daa5db176f0daf620de13e8365661c44c",
+      "size_bytes": 45612
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "execution/order_lifecycle_journal_writer_v2_strict_native.py",
+      "path": "execution/order_lifecycle_journal_writer_v2_strict_native.py",
+      "sha256": "607443341fc967a9381d70f24e1ab1ddcd49c74aa0700df57873c9465dfd04ad",
+      "size_bytes": 53270
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+      "path": "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+      "sha256": "27c292be987dcfc447aa7fc43a0d7413cce76eaa85b0bf959781466bee9a3bba",
+      "size_bytes": 13177
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "execution/order_lifecycle_quantity_contract.py",
+      "path": "execution/order_lifecycle_quantity_contract.py",
+      "sha256": "dcb37675dca018142a1e44ae207f9c4bdf3eda3a48426676d2069cf17ba04e52",
+      "size_bytes": 2572
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/backtest_config.py",
+      "path": "models/backtest_config.py",
+      "sha256": "7cb4e197bf612a85fdfdd05df88d00ee268f8b147e956b7e5d75ff26855ea61d",
+      "size_bytes": 51245
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/backtest_tick.py",
+      "path": "models/backtest_tick.py",
+      "sha256": "bbec62c6cdd0fbf92ae76e0c1588bfd3f6e910539d738c4c4f854a27a90de36f",
+      "size_bytes": 1338176
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/data_windows.py",
+      "path": "models/data_windows.py",
+      "sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223",
+      "size_bytes": 49382
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/exchange_book_replay.py",
+      "path": "models/exchange_book_replay.py",
+      "sha256": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177",
+      "size_bytes": 47954
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+      "path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+      "sha256": "1be258a8ba53dc234cec5c6dcccefa4c299118e3298f16e91acab665771a5fda",
+      "size_bytes": 20096
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "models/replay_contract.py",
+      "path": "models/replay_contract.py",
+      "sha256": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "size_bytes": 42041
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "strategy/fill_cooldown.py",
+      "path": "strategy/fill_cooldown.py",
+      "sha256": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+      "size_bytes": 24701
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "strategy/policy_guards.py",
+      "path": "strategy/policy_guards.py",
+      "sha256": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+      "size_bytes": 19781
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "strategy/quote_core.py",
+      "path": "strategy/quote_core.py",
+      "sha256": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+      "size_bytes": 95857
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "strategy/replay_controls.py",
+      "path": "strategy/replay_controls.py",
+      "sha256": "14ef3578dfdb74ff28bef42d276f9e6ec0f4e012c54e2e0e5a80015ae8d002c5",
+      "size_bytes": 18972
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "strategy/signal.py",
+      "path": "strategy/signal.py",
+      "sha256": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f",
+      "size_bytes": 136908
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "cpp/narrowgate_cpp/bindings.cpp",
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0",
+      "size_bytes": 221376
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp",
+      "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp",
+      "sha256": "b73db8d7e967144d99c5ee49232d778d515e5c62d1371d693c69bf9e450b41f0",
+      "size_bytes": 16080
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp",
+      "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp",
+      "sha256": "256de756267de1abcf7efe8bf64609540b3f06e02a1bc36e2cf0246f7f1c6eb5",
+      "size_bytes": 5573
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+      "sha256": "727df6b20cf60b083c718fe9ba33c45034f9d4409efb2d46f3592e7ad57e9e82",
+      "size_bytes": 15563
+    },
+    {
+      "exact_plan_byte_match": true,
+      "logical_path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py",
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py",
+      "sha256": "fed14237be760069e006b77cbc255cf4557003901dfab80baa361cdcbe5db79b",
+      "size_bytes": 111780
+    }
+  ],
+  "permissions": {
+    "action": false,
+    "economic_evaluation": false,
+    "live_deployment": false,
+    "live_transport": false,
+    "q90_action": false
+  },
+  "predecessor_execution_plan": {
+    "canonical_plan_sha256": "6a83e033cd143b20aeefc657938a3c32fb5eae237783e351b58023512e717d0a",
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4/execution_plan.json",
+    "sha256": "30693fe79f423d2c563aa705219a0069ee290c3a1c0e972a66a4121525158bd2",
+    "size_bytes": 1086305
+  },
+  "predecessor_source": {
+    "logical_path": "execution/order_lifecycle.py",
+    "path": "execution/order_lifecycle.py",
+    "sha256": "447c21ef8150891e8faffefbb16665d33cf4325e214ac1e5538b902ccf137ec8",
+    "size_bytes": 23802
+  },
+  "schema_version": "f07_order_lifecycle_v2_runtime_compatibility.v1_6",
+  "scope": {
+    "economic_outcomes_read": false,
+    "mechanics_only": true,
+    "source_compatibility_only": true
+  },
+  "semantic_ast_diff": {
+    "added_definitions": [
+      "QuantityWeightedOrderLifecycle.journal_snapshot",
+      "QuantityWeightedOrderLifecycle.latest_event"
+    ],
+    "changed_shared_definitions": [],
+    "expected_added_definitions": [
+      "QuantityWeightedOrderLifecycle.journal_snapshot",
+      "QuantityWeightedOrderLifecycle.latest_event"
+    ],
+    "passed": true,
+    "removed_definitions": []
+  },
+  "status": "passed",
+  "successor_source": {
+    "path": "execution/order_lifecycle.py",
+    "sha256": "2981b6154f8e7e5aaa2af6c8f2e2720877f7ad214b2a2692f31f8af291496d33",
+    "size_bytes": 24333
+  }
+}

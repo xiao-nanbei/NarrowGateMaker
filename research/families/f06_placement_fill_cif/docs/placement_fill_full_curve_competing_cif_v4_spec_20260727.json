@@ -1,0 +1,82 @@
+{
+  "extends": "placement_fill_full_curve_cif_v3_spec_20260727.json",
+  "extends_sha256": "5084a3f81a9f439e8c21bb5eeb4f111b47328ddf76cc9b35406557fc9b0dbe3b",
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v4",
+  "family_id": "placement_fill_full_curve_competing_cif_v4",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v4_competing_curve_development_fit",
+  "revision_reason": "export and calibrate fill and cancel-ACK OOF CIFs on the same probability simplex, then apply one pre-frozen curve-level gate rather than independent horizon-cell gates",
+  "evidence_scope": "v3 exposed only the fill CIF; v4 implementation, output schema, gate and evaluator were frozen before reading any separately exported cancel-ACK OOF curve",
+  "lineage": {
+    "v3_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_cif_v3_development_20260727/report.json",
+    "v3_development_report_sha256": "884a978beaeac48d2d1f94d275cd74ed3474f2019b5e8970e410dd0740734a6a",
+    "v3_boundary": "cancel ACK entered common survival but was not exported as an independently auditable OOF CIF",
+    "implementation": "models/audit/competing_curve_fill_cif.py",
+    "implementation_sha256": "93ea9f2edc6c6f8f2b674e88ca1fdea265a43a8cbb3d48b83d0b329492ad302f",
+    "evaluator": "models/audit/evaluate_competing_curve_cif.py",
+    "evaluator_sha256": "984c2e2293ff9cfcbbd9bbaf702d4b3352d832a9041243bf8ea3111eae37649b"
+  },
+  "placement_estimand": {
+    "decision_curve": "P(T_fill <= t and T_fill < T_cancelACK | do(action), x0)",
+    "exported_probability_simplex": [
+      "fill_probability",
+      "cancel_ack_probability",
+      "no_event_probability"
+    ],
+    "exported_targets": [
+      "fill_target",
+      "cancel_ack_target",
+      "no_event_target"
+    ],
+    "cancel_ack_identity": "baseline-policy stopping process, not an action-independent market cause",
+    "fixed_horizon_training_labels": false
+  },
+  "reporting": {
+    "curve_level_gate": {
+      "gate_unit": "side x inventory_role curve integrated equally across frozen Development p25/p50/p75 report points",
+      "curve_count": 6,
+      "horizon_cell_pass_fail": false,
+      "primary_proper_score": "three-state Brier improvement for fill/cancelACK/no-event",
+      "cause_specific_scores": [
+        "binary fill Brier improvement",
+        "binary cancel-ACK Brier improvement"
+      ],
+      "calibration": "day-clustered integrated predicted-minus-observed bias for each cause",
+      "bootstrap_unit": "UTC day",
+      "bootstrap_samples": 5000,
+      "bootstrap_seed": 20260727,
+      "bootstrap_confidence": 0.95,
+      "minimum_oof_days": 20,
+      "minimum_events_per_cause": 100,
+      "probability_simplex_tolerance": 1e-6,
+      "monotonicity_tolerance": 1e-5,
+      "hard_identity_requirements": [
+        "fill + cancelACK + no-event probability equals one",
+        "targets are mutually exclusive and exhaustive",
+        "fill and cancel-ACK CIFs are nondecreasing in time",
+        "fill CIF is nonincreasing as paired placement distance increases"
+      ],
+      "development_pass_requirements": [
+        "all six curves pass minimum day and cause-event support",
+        "all six curves have positive 95% day-cluster lower bound for integrated three-state Brier improvement",
+        "all six curves have positive 95% day-cluster lower bound for both cause-specific Brier improvements",
+        "all six curves have fill and cancel-ACK integrated calibration-bias intervals containing zero",
+        "all hard probability and monotonicity identities pass"
+      ],
+      "classification": {
+        "probability identities and proper-score form": "theory_or_identity",
+        "OOF scores, event counts and bias intervals": "empirical_estimate",
+        "95% confidence, 20 days, 100 events and numerical tolerances": "judgmental_engineering"
+      },
+      "development_pass_effect": "recommend one-time Validation access through the independent panel promotion controller only",
+      "development_fail_effect": "close v4 on Development without reading Validation"
+    }
+  },
+  "permissions": {
+    "validation_access": false,
+    "validation_unlock": "conditional on frozen v4 Development curve gate plus independent panel controller",
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

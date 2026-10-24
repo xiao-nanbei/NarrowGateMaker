@@ -1,0 +1,112 @@
+{
+  "schema_version": "causal_v12_1s_feature_generator_design.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1_feature_generator_prototype",
+  "date": "2026-08-04",
+  "status": "engineering_preflight_only_not_training_eligible",
+  "implementation": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_feature_generator.py",
+    "feature_dag_id": "live_1s_signal_cutoff.v1",
+    "feature_semantics_identity": "causal_13_head_features_canonical_1s.v1",
+    "feature_contract_sha256": "f426bc6756f8fc6a375c33cfd03f7c26315754a57b1adab409618b59ba760719",
+    "cadence_ms": 1000,
+    "feature_namespace": "feature",
+    "label_namespace_present": false
+  },
+  "clock_contract": {
+    "source_clock": "exchange_bucket_start_ms",
+    "availability_clock": "finalized_1s_bar_time_ms",
+    "cutoff_rule": "bar.start_ts_ms < cutoff_exclusive_ms and bar.finalized_ts_ms <= cutoff_exclusive_ms",
+    "feature_ready_rule": "feature_ready_ts_ms <= cutoff_exclusive_ms <= decision_ts_ms",
+    "canonical_decision_grid_ms": 1000,
+    "future_next_bar_visible": false,
+    "late_bar_retroactive_admission": false,
+    "gap_behavior": "fail_closed",
+    "duplicate_source_clock_behavior": "fail_closed",
+    "catch_up_behavior": "emit_every_unseen_canonical_cutoff_once_with_atomic_cursor_advance"
+  },
+  "input_contract": {
+    "accepted_primary_input": "raw_completed_1s_bars",
+    "accepted_reference_input": "raw_completed_1s_reference_bars",
+    "precomputed_10s_feature_rows_accepted": false,
+    "forward_fill_of_current_10s_model_output": false,
+    "economic_outcomes_read": false,
+    "labels_read": false
+  },
+  "node_contract": {
+    "prototype_node_count": 44,
+    "required_metadata": [
+      "name",
+      "dependencies",
+      "unit",
+      "cadence_ms",
+      "lookback_ms",
+      "source",
+      "source_clock",
+      "availability_clock",
+      "lag_state_rule",
+      "minimum_observations",
+      "stateful",
+      "namespace"
+    ],
+    "retained_multiscale_basis": {
+      "tick_momentum_s": [3, 5, 10],
+      "taker_quote_imbalance_s": [5, 10, 30, 60],
+      "local_microstructure_s": [5, 30, 60, 300],
+      "cross_market_return_s": [10, 30, 60],
+      "volatility_regime_s": [21600, 86400]
+    },
+    "missing_value_contract": "null_value_plus_explicit_lag_state_no_default_zero",
+    "label_or_outcome_dependency_allowed": false
+  },
+  "canonical_fingerprint": {
+    "includes": [
+      "feature_contract_sha256",
+      "cutoff_exclusive_ms",
+      "feature_dag_id",
+      "feature_semantics_identity",
+      "sorted_node_value_hex",
+      "source_latest_ts_ms",
+      "feature_ready_ts_ms",
+      "observation_count",
+      "lag_state"
+    ],
+    "excludes": [
+      "input_iteration_order",
+      "bars_at_or_after_cutoff",
+      "wall_clock_execution_time",
+      "labels",
+      "economic_outcomes"
+    ]
+  },
+  "prototype_scope": {
+    "implemented": [
+      "raw_bar_state",
+      "tick_momentum_basis",
+      "taker_quote_imbalance_basis",
+      "local_microstructure_basis",
+      "volatility_regime_basis",
+      "raw_cross_market_return_basis"
+    ],
+    "remaining_before_retraining": [
+      "full_v12_feature_schema_mapping",
+      "metrics_and_execution_L2_1s_nodes",
+      "calendar_node_parity",
+      "Python_CPP_field_parity",
+      "cadence_source_manifest",
+      "cadence_feature_manifest",
+      "overlapping_label_training_contract",
+      "chronological_calibration_contract",
+      "model_output_identity"
+    ]
+  },
+  "authority_boundaries": {
+    "model_training_executed": false,
+    "prediction_outcomes_read": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "registry_modified": false,
+    "existing_feature_dag_modified": false,
+    "existing_signal_or_live_code_modified": false
+  }
+}

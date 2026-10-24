@@ -1,0 +1,155 @@
+{
+  "schema_version": "volatility_time_add_rearm_randomized_postrun_audit.v1",
+  "family_id": "volatility_time_add_rearm_randomized_replay_v1",
+  "created_at_utc": "2026-07-29T10:25:13Z",
+  "decision": "close_variance_time_add_rearm_action_on_development",
+  "spec": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_spec_20260729.json",
+    "file_sha256": "4f071f46209bebab0fc8e6d93d9ca7356ba8241db7ff0ec2b6c328f2b3133b80",
+    "canonical_identity_sha256": "f9cd59bcef6f37bc30d238eca5e4bb240ab1aa18443906fb4e860d5c472bed29"
+  },
+  "denominator": {
+    "panel": "Development",
+    "days": 40,
+    "quality_grade_counts": {
+      "A": 24,
+      "B": 16
+    },
+    "native_sequence_eligible_days": 40,
+    "normalized_formal_eligible_days": 40,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f06_50_day_denominator_used": false
+  },
+  "mechanics": {
+    "lineages": 17460,
+    "buy_rows": 9140,
+    "sell_rows": 8320,
+    "exact_half_propensity_rows": 17460,
+    "day_side_cells_with_both_arms": 80,
+    "day_side_cells_total": 80,
+    "unsupported_rows": 6,
+    "unsupported_mass": 0.0003436426116838488,
+    "reward_identity_max_abs_error_usdc": 1.1102230246251565e-16,
+    "native_source_gap_events": 0,
+    "native_invalid_sequence_messages": 0,
+    "q90_cpp_mismatches": 0,
+    "q90_historical_fill_before_ack_events": 0,
+    "sync_censored_days": 0,
+    "full_cpp_tick_replay_authority": false
+  },
+  "side_results": {
+    "BUY": {
+      "candidate_assignment_rate": 0.500328227571116,
+      "actual_final_action_change_rate": {
+        "estimate": 0.37021648808222174,
+        "lcb95": 0.3193004283278384,
+        "ucb95": 0.41912057414797865,
+        "days": 40
+      },
+      "fills_retention": 1.0480406250336416,
+      "reward_usdc": {
+        "uplift": 0.0007383240118509805,
+        "lcb95": -0.0020000648399560845,
+        "ucb95": 0.003577200623194713,
+        "daily_positive_rate": 0.475
+      },
+      "terminal_campaign_value_usdc": {
+        "uplift": 0.007607362898695649,
+        "lcb95": 0.003348655464941947,
+        "ucb95": 0.012043111684571258
+      },
+      "inventory_time_avoidance_btc_s": {
+        "uplift": 0.009842733278809274,
+        "lcb95": -0.0013940534433336885,
+        "ucb95": 0.023596097359911423
+      },
+      "ranking_score": null,
+      "promotion_status": "development_failed_family_closed"
+    },
+    "SELL": {
+      "candidate_assignment_rate": 0.5066105769230769,
+      "actual_final_action_change_rate": {
+        "estimate": 0.24412811387900357,
+        "lcb95": 0.20765020403588375,
+        "ucb95": 0.281018215128617,
+        "days": 40
+      },
+      "fills_retention": 0.9940667763020469,
+      "reward_usdc": {
+        "uplift": 0.0018750286860875452,
+        "lcb95": -0.0023033149856849693,
+        "ucb95": 0.006241628721930438,
+        "daily_positive_rate": 0.65
+      },
+      "terminal_campaign_value_usdc": {
+        "uplift": -2.7293714347162434e-06,
+        "lcb95": -0.01023750450100359,
+        "ucb95": 0.008852672307215393
+      },
+      "inventory_time_avoidance_btc_s": {
+        "uplift": 0.009464389474976992,
+        "lcb95": -0.002801560784922438,
+        "ucb95": 0.024930511811848213
+      },
+      "ranking_score": null,
+      "promotion_status": "development_failed_family_closed"
+    }
+  },
+  "closure_basis": {
+    "support_failed": false,
+    "overlap_failed": false,
+    "mechanical_action_support_failed": false,
+    "fills_retention_failed": false,
+    "buy_primary_reward_lcb_positive": false,
+    "sell_primary_reward_lcb_positive": false,
+    "buy_all_tail_lifecycle_inventory_gates_passed": false,
+    "sell_all_tail_lifecycle_inventory_gates_passed": false,
+    "pooled_side_rescue_allowed": false
+  },
+  "postrun_limits": {
+    "campaign_cost_is_accounting_residual_not_separately_identified": true,
+    "explicit_queue_reset_cost_usdc": 0.0,
+    "queue_path_and_fill_opportunity_are_regenerated": true,
+    "daily_fresh_start_not_continuous_live_state": true,
+    "aws_receive_time_transport_supported": false,
+    "historical_q90_pre_ack_fill_branch_observed": false,
+    "development_q10_was_pooled_across_control_sides": true,
+    "pooled_q10_may_not_be_reused_as_side_specific_artifact": true,
+    "pooled_q10_cannot_reverse_closure_due_to_independent_reward_and_other_gate_failures": true
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "aws_receive_time_transport_supported": false,
+    "full_cpp_tick_replay_authority": false
+  },
+  "artifacts": {
+    "development_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/report.json",
+      "sha256": "6f940b2d5994d0e647d5c6fda0550ab509fbb894372283417ad7447349f60df7"
+    },
+    "lineage_panel": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/randomized_lineage_panel.parquet",
+      "sha256": "29658261f0881d8f56d58cc28f7f4c5d8c4a0b9acb978cf7b77e5b9d99a08b18"
+    },
+    "daily_summary": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/daily_summary.csv",
+      "sha256": "a3faa9f978f716f3633051c42fec5b70447741f16b1a3dcecfc966c7f6cd25dc"
+    },
+    "canonical_evidence": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/canonical_evidence.json",
+      "sha256": "01171b40dd7ce19b932b90e8984121fced7816bba225d52a260a2c06e3076e9b"
+    },
+    "scorecards": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/scorecards.json",
+      "sha256": "dd38f41593543724915934621f7b0514e8ddced9e9cd3ee99ade05687d2055e2"
+    },
+    "human_report": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_development_20260729.md",
+      "sha256": "5c8887ab083a4bc505d1f5059e91fb9840e2b63b5a86ea5650465cec33c7b667"
+    }
+  }
+}

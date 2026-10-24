@@ -1,0 +1,152 @@
+{
+  "schema_version": "narrowgate_placement_fill_empirical_pending_nuisance_spec.v1",
+  "family_id": "placement_fill_empirical_pending_nuisance_v3",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "preregistered_after_v2_development_closure_before_v3_development_outcomes",
+  "lineage": {
+    "v2_mechanics_spec": {
+      "path": "docs/placement_fill_request_state_race_v2_spec_20260728.json",
+      "sha256": "5b5c89b5c43ea0ca9f3a186da759551be43effbeaca6eb0936bf4fedfaeb3721"
+    },
+    "v2_fit_spec": {
+      "path": "docs/placement_fill_request_state_race_v2_fit_spec_v2_20260728.json",
+      "sha256": "2695b3ddb74f0f146d8f4370c9ebd9cf04d7634c562d6cad13faa07a2da395c5"
+    },
+    "v2_evaluator": {
+      "path": "models/audit/evaluate_request_state_race.py",
+      "sha256": "1fd6579722820400424fe65f1b0601c3ba339640b09df89ef9e5c7336ec65f67"
+    },
+    "v2_development_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/oof_v2/report.json",
+      "sha256": "1f9ea35aafd0429c60a2262ba01afb84447e1c2646b01cf49e8e265a1ec762af"
+    },
+    "v2_daily_metrics": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/oof_v2/daily_curve_metrics.parquet",
+      "sha256": "a649be77a320d7e6d8ecd509931ce531bac228535ef00b065506c074c84a5f90"
+    },
+    "v2_frozen_conclusion": "v2 fixed the cancel policy clock and request-conditioned ACK structure; pre-request fill and ACK are Development-supported side-role aggregate building blocks only; 298 pending fills are an extremely sparse nuisance; the complete learned three-phase family closed on Development",
+    "v2_files_are_immutable": true,
+    "v2_validation_or_holdout_may_not_be_read": true
+  },
+  "source_identity": {
+    "request_state_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/manifest.json",
+      "sha256": "d52ad98d425246cd869e6d3abdeb0711ce95cc3cf4518faa55b8f4fadf510d30"
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1"
+    },
+    "reuse_contract": "reuse hash-verified C++ lifecycle and request-state caches; do not replay raw L2 for this statistical family"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13", "2026-04-17", "2026-04-18", "2026-04-19",
+      "2026-04-20", "2026-04-22", "2026-04-23", "2026-04-30",
+      "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04",
+      "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08",
+      "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12",
+      "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-16",
+      "2026-05-29", "2026-05-30", "2026-05-31", "2026-06-02",
+      "2026-06-03", "2026-06-05", "2026-06-06", "2026-06-07",
+      "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11",
+      "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15",
+      "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19",
+      "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23",
+      "2026-06-24", "2026-06-25"
+    ],
+    "outer_folds": "reuse the six frozen expanding chronological v2 folds and their 29 OOF test days",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "estimand": {
+    "total_fill_cif": "F_total(H)=F_pre(min(H,T_request))+I(H>T_request)*S_pre(T_request)*F_pending(H-T_request | X_request,Q_remaining)",
+    "activation_is_separate": true,
+    "operational_probability": "P(activation | action,x0) times the conditional active-order fill CIF",
+    "gtx_reject": "separate activation and operational outcome; never enter conditional fill monotonicity",
+    "pending_quantity_outputs": [
+      "E[Q_pending_fill]",
+      "P(Q_pending_fill>0)",
+      "E[Q_pending_fill | Q_pending_fill>0]",
+      "Q_pending_fill / Q_remaining_at_request"
+    ],
+    "first_fill_and_quantity_are_distinct": true
+  },
+  "component_contract": {
+    "pre_request_fill": "reuse frozen v2 chronological OOF predictions; reassess calibration and proper score separately for each action",
+    "conditional_ack": "reuse frozen v2 chronological OOF predictions; reassess calibration and residual sufficiency separately for each action",
+    "pending_fill": "replace the rejected learned head with a past-only hierarchical Beta-Binomial nuisance",
+    "joint_brier": "diagnostic only and explicitly labelled ACK-dominated; never evidence for pending-fill predictability",
+    "prediction_does_not_authorize_action": true
+  },
+  "pending_hierarchy": {
+    "primary_level": "side x action",
+    "side_prior": "outer-base-train empirical rate with Jeffreys 0.5/0.5 stabilization",
+    "side_action_parent_equivalent_trials": 10000,
+    "request_reason_diagnostic": "side x action x request_reason posterior centered on side-action parent",
+    "role_diagnostic": "side x action x role posterior centered on side-action parent",
+    "child_equivalent_trials": 5000,
+    "request_reason_and_role_are_not_fully_crossed": true,
+    "posterior_interval": 0.99,
+    "fit_only_on_past_outer_train": true,
+    "complex_pending_ml_head_forbidden": true
+  },
+  "report_horizons_ms": {
+    "pre_request": [4997, 5894, 8382],
+    "pending": [6, 7, 9],
+    "provenance": "frozen v2 first-outer-base-train p25/p50/p75 durations; reporting cuts only"
+  },
+  "action_specific_gate": {
+    "unit": "side x role x action x complete component curve",
+    "required_oof_days": 29,
+    "pre_request_minimum_events": 30,
+    "ack_minimum_events": 100,
+    "proper_score": "day-clustered Brier-improvement 95% lower bound above zero versus the frozen v2 side-role-action exposure-only baseline",
+    "absolute_calibration": "day-clustered observed-minus-expected 95% interval contains zero",
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260728,
+    "all_actions_required_before_action_surface_claim": true
+  },
+  "common_support_monotonicity": {
+    "actions": ["closer_1tick", "current", "farther_1tick"],
+    "eligible_cohort": "all three actions activated successfully, share the same market path and use identical lifecycle rules",
+    "conditional_fill_order": "closer >= current >= farther",
+    "maximum_violation_rate": 0.000001,
+    "gtx_reject_excluded": true,
+    "operational_activation_reported_separately": true
+  },
+  "residual_sufficiency_audit": {
+    "purpose": "model sufficiency only; does not identify or prove conditional independence of latent T_fill and T_ACK",
+    "shared_request_state_features": [
+      "request_active_order_count",
+      "request_pending_cancel_before_count",
+      "request_request_batch_size",
+      "abs_request_market_return_bps_100ms",
+      "abs_request_taker_imbalance_100ms",
+      "request_book_age_ms"
+    ],
+    "tail_thresholds": [0.2, 0.8],
+    "threshold_source": "each fold outer-base-train only",
+    "ack_audit": "day-clustered observed-minus-expected in supported low/high state tails",
+    "pending_audit": "99% Beta-Binomial posterior-predictive coverage; no latent dependence claim",
+    "minimum_days": 10,
+    "minimum_ack_events": 1000,
+    "multiplicity": "Bonferroni-adjusted two-sided 95% day-cluster intervals across supported ACK tail cells",
+    "supported_ack_cells_must_pass": true
+  },
+  "pending_ev_uncertainty": {
+    "stress_fill_value_bps": [10, 20, 50, 100],
+    "formula": "one-sided posterior probability uncertainty times request remaining notional times stress bps",
+    "negligible_reference_usdc_per_decision": 0.0001,
+    "reference_provenance": "one BTCUSDC execution tick 0.1 USDC/BTC times standard 0.001 BTC order",
+    "economic_negligibility_is_reported_not_action_authority": true
+  },
+  "permissions": {
+    "development_access": true,
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "keep_replace_requires_separate_active_order_estimand": true
+  }
+}

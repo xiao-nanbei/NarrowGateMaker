@@ -1,0 +1,98 @@
+{
+  "schema_version": "multi_short_reducing_buy_aggression.postrun_audit.v1",
+  "family_id": "multi_short_reducing_buy_aggression_v1",
+  "implementation_identity": "v1.1",
+  "panel_role": "Development",
+  "frozen_spec": {
+    "path": "research/families/f09_campaign_action_uplift/docs/multi_short_reducing_buy_aggression_v1_1_spec_20260801.json",
+    "sha256": "a8fa44e1a333da9e12b34ce8695e94a650d6c152d4e7e8da2c9a120ccf511c79",
+    "canonical_identity_sha256": "b958fc7813901921583374d483308e7ebf7ad2d36c15d830e09a7f7a365ac1a9"
+  },
+  "authoritative_report": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/multi_short_reducing_buy_aggression_v1_1_20260801/development/report.json",
+    "sha256": "929038b18c3f95e163899385fc3f09b1ed04a67d06ef1b774e6a3514f8f3b5b6"
+  },
+  "artifacts": {
+    "manifest_sha256": "c53fca98672c6183cfdb4ea4355a2df2100863203fe3f69da966824afeb88d11",
+    "campaign_randomized_panel_sha256": "c085066a1b8bce45cb6eeec6238413766b331a200b575dc6179c2cf50587394c",
+    "campaign_event_journal_sha256": "ff646ddac17267546072391ba4093e8ed79303a35d2599eabe394726a70c23b6",
+    "daily_summary_sha256": "0a24724e4f530df55d75129f7892518173718699485b6a7b61263f53f0206004",
+    "canonical_evidence_sha256": "16e486f2f965fe4f91d2bbc0b92ff9ddea315b580d04f69b49c187aa87d904d7",
+    "scorecard_sha256": "362e8f9811f2d236b56d003d7f8dc344e7964a66806ffece3971c50af905c40b"
+  },
+  "development_support": {
+    "days": 40,
+    "grade_a_primary_days": 24,
+    "grade_b_sensitivity_days": 16,
+    "all_assignments": 967,
+    "grade_a_assignments": 627,
+    "grade_a_candidate_assignment_rate": 0.5087719298245614,
+    "grade_a_action_change_rate": 0.9937304075235109,
+    "grade_a_action_change_lcb95": 0.9842271293375394,
+    "grade_a_total_fill_retention": 1.0300268368018635,
+    "grade_a_reducing_buy_fill_ratio": 1.0222548300317926
+  },
+  "grade_a_primary_result": {
+    "reward_uplift_usdc_per_assignment": -0.004435067914464699,
+    "reward_lcb95": -0.030210088531000323,
+    "reward_ucb95": 0.02173583391333839,
+    "reward_daily_positive_rate": 0.4583333333333333,
+    "policy_value_usdc_per_day": -0.15153120766666758,
+    "policy_value_lcb95": -0.8498844442833274,
+    "policy_value_ucb95": 0.5255280166167265,
+    "multilevel_short_loss_protection": -0.004435067914464699,
+    "multilevel_short_loss_lcb95": -0.030786360746686656,
+    "multilevel_short_loss_ucb95": 0.02262443152827546,
+    "inventory_time_avoidance_btc_s": 0.2773386624496169,
+    "inventory_time_avoidance_lcb95": 0.1007893851909766,
+    "repair_time_avoidance_s": 84.82313703537847,
+    "repair_time_avoidance_lcb95": 18.543920725283897,
+    "candidate_q10_usdc": -0.23113999999998783,
+    "control_q10_usdc": -0.21165999999996357,
+    "candidate_cvar10_usdc": -0.451453125,
+    "control_cvar10_usdc": -0.448855454193549
+  },
+  "grade_b_sensitivity_result": {
+    "assignments": 340,
+    "reward_uplift_usdc_per_assignment": -0.023007173243762197,
+    "reward_lcb95": -0.06242287920655596,
+    "reward_ucb95": 0.02406573838056708,
+    "reward_daily_positive_rate": 0.3125,
+    "total_fill_retention": 0.9559507443914711
+  },
+  "mechanics_integrity": {
+    "candidate_quote_count_all_40": 1015,
+    "maker_violations": 0,
+    "action_generated_ioc_or_taker_count": 0,
+    "defense_override_effective_count": 0,
+    "lineage_accounting_max_abs_error_usdc": 0.0,
+    "q90_evaluation_or_action_count": 0,
+    "source_gap_events": 0
+  },
+  "test_evidence": {
+    "tests": 63,
+    "failures": 0,
+    "errors": 0,
+    "junit_sha256": "42313bb22c0a510561dfc08dc95231ba2d96660ff31605933ab28c3ae9aa87a2"
+  },
+  "decision": "close_multi_short_reducing_buy_aggression_on_development",
+  "decision_reasons": [
+    "multilevel_short_loss_lcb_not_positive",
+    "max_inventory_increase_not_excluded",
+    "campaign_mae_worsening_not_excluded",
+    "policy_value_lcb_not_positive",
+    "conditional_net_value_lower_bound_not_positive",
+    "reward_daily_positive_rate_below_0.55",
+    "negative_terminal_protection_lower_bound_negative",
+    "q10_shortfall_protection_lower_bound_negative",
+    "campaign_mae_avoidance_lower_bound_negative"
+  ],
+  "interpretation": "The maker-only reducing-BUY action materially shortened multi-level SHORT repair and inventory exposure, but did not improve assignment-to-terminal value, USDC/day, or tail risk. It is a mechanically effective but economically unsupported action, not a near pass.",
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "bounded_ioc_successor_created": false
+  }
+}

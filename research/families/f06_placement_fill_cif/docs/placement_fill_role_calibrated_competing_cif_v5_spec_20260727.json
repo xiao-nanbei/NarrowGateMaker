@@ -1,0 +1,43 @@
+{
+  "extends": "placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+  "extends_sha256": "0acc7920f07656af0be2cb55b05f5782aaae4520011ba5a00c400bf739563dac",
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v5",
+  "family_id": "placement_fill_role_calibrated_competing_cif_v5",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v5_role_calibrated_development_fit",
+  "revision_reason": "v4 side-level interval-hazard offsets left systematic cancel-ACK CIF underprediction in opener/reducing; v5 calibrates fill and cancel hazards separately by inventory role using only the latest train-only days inside each outer fold",
+  "evidence_scope": "v4 Development was read and closed; v4 Validation and sealed holdout remain unread and are not available to v5 training or calibration",
+  "lineage": {
+    "v4_development_evaluation": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_competing_cif_v4_development_20260727/curve_evaluation.json",
+    "v4_development_evaluation_sha256": "ee962c3543afe6c333a83aabe70068809a6368e0263e7d1ef9c998c6d691f2a9",
+    "v4_failure": "BUY/SELL opener and reducing cancel-ACK integrated calibration-bias intervals were wholly below zero while support, identities and proper scores passed",
+    "implementation": "models/audit/role_calibrated_competing_curve_cif.py",
+    "implementation_sha256": "be32f9b060b35070abe601691865c6fc10b87a62fe985484241aa465a8e23998",
+    "evaluator": "models/audit/evaluate_role_calibrated_competing_curve_cif.py",
+    "evaluator_sha256": "a9635a296c00064a0d53f1e56b6c7e94ff5c7648438abbc69c946e92917e07bb",
+    "base_evaluator": "models/audit/evaluate_competing_curve_cif.py",
+    "base_evaluator_sha256": "984c2e2293ff9cfcbbd9bbaf702d4b3352d832a9041243bf8ea3111eae37649b",
+    "gate_identity": "inherited unchanged from v4"
+  },
+  "development_fit": {
+    "role_aware_nested_calibration": {
+      "method": "within each outer train, fit the common side hazard on all but the final five train days; fit cause-specific logit intercept offsets independently for opener/add/reducing on those final five train-only days; apply only to the subsequent outer test",
+      "roles": ["opener", "add", "reducing"],
+      "causes": ["fill", "cancel_ack"],
+      "calibration_days": 5,
+      "core_fit_excludes_calibration_days": true,
+      "outer_test_excluded_from_fit_and_calibration": true,
+      "fallback": "none; missing role or cause support fails closed"
+    }
+  },
+  "reporting": {
+    "curve_level_gate_identity": "exactly inherited from placement_fill_full_curve_competing_cif_v4; no threshold, confidence level, support rule or pass semantic changed after observing v4"
+  },
+  "permissions": {
+    "validation_access": false,
+    "validation_unlock": "conditional on unchanged v4 Development curve gate plus independent panel controller",
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

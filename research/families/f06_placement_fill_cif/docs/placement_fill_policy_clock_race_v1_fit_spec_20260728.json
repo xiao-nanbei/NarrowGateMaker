@@ -1,0 +1,168 @@
+{
+  "extends": "placement_fill_policy_clock_panel_v1_spec_20260728.json",
+  "extends_sha256": "de2090c4dd755deded63c8e54b4f18fd1abd83f1e61b21e4b491b20d62825659",
+  "schema_version": "narrowgate_placement_fill_policy_clock_race_fit_spec.v1",
+  "family_id": "placement_fill_policy_clock_race_v1",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "research_status": "frozen_before_policy_clock_development_fit",
+  "revision_reason": "estimate fill under a replayed baseline cancel-request stopping time and a separate past-only request-to-ACK latency distribution; do not inherit v5/v6 stationary cancel-hazard calibrators",
+  "evidence_scope": "Development-only expanding chronological OOF; Validation and sealed holdout remain unread",
+  "source_identity": {
+    "placement_panel_roots": [
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_policy_clock_panel_v1_development_20260728",
+        "manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_policy_clock_panel_v1_development_20260728/manifest.json",
+        "manifest_sha256": "0829b307d4d3f8b7a2679db24b399325bb0efa009763cad8b2e0ac356ef02b35"
+      }
+    ],
+    "feature_timing": "feature_ready_ts_ns <= submit_ts_ns",
+    "execution_book": "BTCUSDC native snapshot/delta normalized at 100ms",
+    "external_reference_enabled": false
+  },
+  "lineage": {
+    "structural_contract": "docs/placement_fill_policy_clock_race_v1_spec_20260727.json",
+    "structural_contract_sha256": "f2412f2efa4565b36d90213575c0698b12686dde7ce3d60dfeb3f32a22ff4f79",
+    "panel_spec": "docs/placement_fill_policy_clock_panel_v1_spec_20260728.json",
+    "panel_spec_sha256": "de2090c4dd755deded63c8e54b4f18fd1abd83f1e61b21e4b491b20d62825659",
+    "panel_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_policy_clock_panel_v1_development_20260728/manifest.json",
+    "panel_manifest_sha256": "0829b307d4d3f8b7a2679db24b399325bb0efa009763cad8b2e0ac356ef02b35",
+    "implementation": "models/audit/policy_clock_fill_cif.py",
+    "implementation_sha256": "f55b28b56ecfa930fdf8627c6d79d23e43664471cf95b87cf244bd12197a2285",
+    "evaluator": "models/audit/evaluate_policy_clock_fill_cif.py",
+    "evaluator_sha256": "08e46e1481b030d6eb17c750c3b2708c25a7ab6b73cdfb8990f245ef0818d27e"
+  },
+  "placement_estimand": {
+    "model_actions": [
+      "current"
+    ],
+    "decision_curve": "P(T_fill <= t and T_fill < T_cancelACK | current placement, x0, replayed baseline policy path)",
+    "fill_process": "side-specific dynamic 100ms discrete-time fill hazard",
+    "cancel_request_process": "deterministic timestamp and reason from the frozen baseline replay",
+    "cancel_ack_process": "cancel request plus a side-role past-only empirical request-to-ACK latency distribution",
+    "pending_cancel_process": "partial and full fills remain possible until ACK",
+    "exposure_only_baseline": "same activation, replayed request path and ACK-latency race with a side-role constant fill hazard",
+    "requires_replayed_policy_request_path": true,
+    "online_cancel_request_forecast": false,
+    "keep_replace_is_separate_active_order_estimand": true,
+    "campaign_repair_is_separate_delayed_entry_estimand": true
+  },
+  "development_fit": {
+    "mode": "expanding_chronological",
+    "past_only": true,
+    "minimum_train_days": 20,
+    "embargo_days": 1,
+    "outer_test_days": 5,
+    "hazard_calibration_days": 5,
+    "risk_interval_ms": 100,
+    "risk_interval_basis": "native normalized L2 state resolution",
+    "maximum_negative_intervals_per_action": 8,
+    "risk_sampling": "hash_stratified_v1",
+    "hazard_causes": [
+      "fill"
+    ],
+    "prediction_chunk_size": 5000,
+    "ack_latency_bin_ms": 1,
+    "ack_latency_maximum_ms": 1000,
+    "ack_latency_prior_rows": 200.0,
+    "exposure_baseline_prior_intervals": 1000.0,
+    "model": {
+      "kind": "LightGBM binary discrete fill hazard",
+      "learning_rate": 0.05,
+      "n_estimators": 120,
+      "num_leaves": 7,
+      "max_depth": 3,
+      "min_child_samples": 1000,
+      "reg_lambda": 10.0,
+      "max_bin": 127,
+      "random_state": 20260728,
+      "n_jobs": 6,
+      "monotone_features": {
+        "distance_ticks": -1,
+        "distance_vol_units_elapsed": -1
+      }
+    }
+  },
+  "reporting": {
+    "development_exposure_quantiles": [
+      0.25,
+      0.5,
+      0.75
+    ],
+    "frozen_empirical_horizons_ms": {
+      "p25": 5010,
+      "p50": 5801,
+      "p75": 7801
+    },
+    "maximum_support_quantile": 0.99,
+    "frozen_maximum_support_ms": 34900,
+    "legacy_diagnostic_horizons_ms": [
+      1000,
+      5000,
+      10000
+    ],
+    "legacy_horizons_are_report_only": true,
+    "ack_latency_evaluation_ms": [
+      6,
+      7,
+      9,
+      15,
+      28,
+      90
+    ],
+    "curve_level_gate": {
+      "gate_unit": "side x inventory_role curve integrated equally across frozen Development p25/p50/p75 exposure points",
+      "curve_count": 6,
+      "required_oof_days": 19,
+      "minimum_events_per_cause": 100,
+      "probability_simplex_tolerance": 1e-6,
+      "monotonicity_tolerance": 1e-5,
+      "bootstrap_unit": "UTC day",
+      "bootstrap_samples": 5000,
+      "bootstrap_seed": 20260728,
+      "bootstrap_confidence": 0.95,
+      "primary_proper_score": "three-state Brier improvement over the mechanism-matched exposure-only fill baseline",
+      "development_pass_requirements": [
+        "exact policy request and ACK timestamp parity passes",
+        "all ACK-latency side-threshold curves pass support and day-clustered calibration",
+        "all six fill curves pass support",
+        "all six fill curves have positive 95% day-cluster lower bounds for joint, fill and cancel-ACK Brier improvement",
+        "all six fill and cancel-ACK calibration-bias intervals contain zero",
+        "probability simplex and time monotonicity pass"
+      ],
+      "latency_parity": {
+        "required_oof_days": 19,
+        "minimum_ack_rows_per_side_threshold": 1000,
+        "monotonicity_tolerance": 1e-6,
+        "brier_improvement_is_diagnostic_only": true
+      }
+    }
+  },
+  "value_provenance": {
+    "theory_or_identity": [
+      "fill + cancelACK + no-event probability equals one",
+      "cancel ACK cannot occur before cancel request",
+      "the order remains fillable until ACK",
+      "CIF is nondecreasing in time"
+    ],
+    "empirical_estimate": [
+      "Development p25/p50/p75 active-order exposure cuts",
+      "Development p99 support cut",
+      "past-only request-to-ACK latency PMFs and report quantiles",
+      "state-dependent fill hazard and exposure-only fill baseline"
+    ],
+    "judgmental_engineering": [
+      "100ms fill-risk grid",
+      "1ms ACK-latency grid and 1000ms cap",
+      "LightGBM capacity and negative-interval sample budget",
+      "200-row ACK prior and 1000-interval fill-baseline prior",
+      "95% confidence, 19 OOF days, 100 events and numerical tolerances"
+    ]
+  },
+  "permissions": {
+    "validation_access": false,
+    "validation_unlock": "recommendation only if all three Development gates pass; independent promotion controller still required",
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

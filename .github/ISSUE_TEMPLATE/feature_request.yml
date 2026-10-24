@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a focused improvement to the public project.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before the proposed implementation. A feature proposal does not grant research, action, deployment, or live authority.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Who is affected, and what public workflow is blocked or unnecessarily difficult?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe observable behavior, scope, and compatibility expectations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note existing workflows or smaller changes that might address the problem.
+  - type: dropdown
+    id: research_effect
+    attributes:
+      label: Research contract effect
+      options:
+        - No research contract change
+        - Changes sample, baseline or candidates, folds, estimand, or statistics
+        - Unsure and requesting maintainer classification
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation approach
+      description: Explain how the behavior could be checked with synthetic or public inputs.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and current public documentation.
+          required: true
+        - label: This request contains no security details, secrets, private locators, hosts, datasets, or owner-side evidence.
+          required: true

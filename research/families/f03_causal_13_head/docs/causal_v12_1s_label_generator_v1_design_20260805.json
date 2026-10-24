@@ -1,0 +1,85 @@
+{
+  "schema_version": "causal_v12_1s_label_generator_design.v1",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "last_materially_modified": "2026-08-05",
+  "decision_contract": {
+    "cadence_ms": 1000,
+    "decision_origin": "decision_ts_ms_equals_cutoff_exclusive_ms",
+    "feature_visibility": "feature_ready_ts_ms_le_decision_ts_ms",
+    "legacy_resample_offset_applied": false,
+    "target_day_grid": "exactly_86400_canonical_seconds_[D,D+1)",
+    "cross_utc_day_labels_allowed": false
+  },
+  "label_estimands": {
+    "dir_10s": 20,
+    "ret_10s": 20,
+    "vol_10s": 10,
+    "dir_30s": 60,
+    "ret_30s": 60,
+    "vol_30s": 30,
+    "dir_60s": 120,
+    "ret_60s": 120,
+    "vol_60s": 60,
+    "tox_bid_5s": 10,
+    "tox_ask_5s": 10,
+    "tox_bid_10s": 20,
+    "tox_ask_10s": 20
+  },
+  "source_support": {
+    "clock": "exchange_time_left_labelled_1s",
+    "required_columns": ["close", "high", "low"],
+    "maximum_gap_s": 1.5,
+    "missing_or_cross_segment_future": "censor",
+    "missing_decision_origin_bar": "censor"
+  },
+  "sample_weight": {
+    "base_formula": "exp(-0.1 * days_ago / 30.44)",
+    "base_reference_date": "2026-07-23",
+    "overlap_method": "average_reciprocal_concurrency_within_utc_day",
+    "normalization": "preserve_valid_base_weight_sum_per_utc_day_x_head",
+    "invalid_or_censored": 0.0
+  },
+  "materialization": {
+    "role": "label_overlay",
+    "join_keys": [
+      "cutoff_exclusive_ms",
+      "decision_ts_ms",
+      "feature_row_fingerprint_sha256"
+    ],
+    "trainable_feature_columns_copied": false,
+    "in_memory_join_only": true
+  },
+  "implementation_bindings": {
+    "label_generator": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_label_generator.py",
+      "sha256": "523008dbea5536ddf6b3468af0c33b88e9e3cd0f205521d5a7b2550b00850d03"
+    },
+    "legacy_label_math": {
+      "path": "features/feature_engineer.py",
+      "sha256": "c926fe0cc65e160400cc3c2b034f04288154d8355b0b58d264bf67cdc1d138fa"
+    },
+    "trainable_schema": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py",
+      "sha256": "2279a9f1d8bc8043007842429d9e12112097368f15bdd77fa0c12ff280cc775c"
+    },
+    "training_contract_schema": {
+      "schema_version": "causal_v12_1s_training_contract.v1",
+      "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+      "reverse_file_hash_binding": false
+    }
+  },
+  "admission_requirements": {
+    "daily_feature_panel_manifest_sha256": null,
+    "daily_label_source_manifest_sha256": null,
+    "label_quote_config_sha256": null,
+    "label_p3_v2_artifact_sha256": null,
+    "real_day_python_cpp_fingerprint_parity": null
+  },
+  "authority": {
+    "model_training_executed": false,
+    "prediction_outcomes_read": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

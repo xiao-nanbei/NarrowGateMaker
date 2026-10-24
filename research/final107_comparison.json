@@ -1,0 +1,190 @@
+{
+  "schema": "narrowgate.final107_five_candidate_summary.v1",
+  "as_of_utc": "2026-10-16",
+  "availability": "public_repository",
+  "underlying_evidence_availability": "private_not_distributed",
+  "record_kind": "aggregate_summary_combining_frozen_economic_reports_and_later_archive_closure_not_a_locator_only_projection",
+  "calendar_utc": {
+    "start_inclusive": "2026-05-28",
+    "end_exclusive": "2026-09-12",
+    "days": 107,
+    "independent_accounts": 54,
+    "two_day_accounts": 53,
+    "one_day_accounts": 1
+  },
+  "new_candidate_accounts": 270,
+  "new_control_accounts": 0,
+  "new_continuous_accounts": 0,
+  "fresh_holdout": false,
+  "p3_changed": false,
+  "time_decay_added": false,
+  "baseline": {
+    "identity": "DEFENSE_ON__URGENCY_OFF",
+    "research_baseline": "B0_DEFENSE_URGENCY_OFF_20261011",
+    "net_pnl_usdc": -157.50144765087583,
+    "notional_usdc": 2968121.3505,
+    "pnl_usdc_per_0001_btc": -0.003636690933775331,
+    "pnl_usdc_per_10000_usdc_notional": -0.5306435588435212,
+    "volume_btc": 43.309000000000005
+  },
+  "candidates": [
+    {
+      "id": "A",
+      "configuration": {
+        "training_days": 100,
+        "selection_split_days": [
+          79,
+          1,
+          20
+        ],
+        "weighting": "original_daily_normalization_and_class_adjustment",
+        "direction_features": 41,
+        "other_heads": "original_B0_12_heads"
+      },
+      "accepted_accounts": 54,
+      "market_days": 107,
+      "net_pnl_usdc": -159.6701589953373,
+      "notional_usdc": 2942165.4461000003,
+      "pnl_usdc_per_0001_btc": -0.003719747443106285,
+      "pnl_usdc_per_10000_usdc_notional": -0.5426960581261286,
+      "volume_btc": 42.925000000000004,
+      "delta_pnl_usdc": -2.1687113444614567,
+      "better_accounts": 26,
+      "worse_accounts": 28,
+      "tied_accounts": 0,
+      "model_promoted": false,
+      "economic_status": "closed_complete",
+      "archive_status": "verified_minimal"
+    },
+    {
+      "id": "B",
+      "configuration": {
+        "training_days": 300,
+        "selection_split_days": [
+          239,
+          1,
+          60
+        ],
+        "weighting": "original_daily_normalization_and_class_adjustment",
+        "direction_features": 29,
+        "other_heads": "new_single_market_12_heads"
+      },
+      "accepted_accounts": 54,
+      "market_days": 107,
+      "net_pnl_usdc": -180.9797498787882,
+      "notional_usdc": 2809819.046,
+      "pnl_usdc_per_0001_btc": -0.00442201358220217,
+      "pnl_usdc_per_10000_usdc_notional": -0.6440975269792807,
+      "volume_btc": 40.927,
+      "delta_pnl_usdc": -23.478302227912366,
+      "better_accounts": 23,
+      "worse_accounts": 31,
+      "tied_accounts": 0,
+      "model_promoted": false,
+      "economic_status": "closed_complete",
+      "archive_status": "verified_minimal"
+    },
+    {
+      "id": "C",
+      "configuration": {
+        "training_days": 300,
+        "selection_split_days": [
+          239,
+          1,
+          60
+        ],
+        "weighting": "valid_label_1_no_date_or_class_adjustment",
+        "direction_features": 29,
+        "other_heads": "new_single_market_12_heads"
+      },
+      "accepted_accounts": 54,
+      "market_days": 107,
+      "net_pnl_usdc": -168.9242910047029,
+      "volume_btc": 39.156,
+      "notional_usdc": 2687760.7748000002,
+      "pnl_usdc_per_0001_btc": -0.004314135534904048,
+      "pnl_usdc_per_10000_usdc_notional": -0.6284945170288556,
+      "delta_pnl_usdc": -11.422843353827039,
+      "better_accounts": 25,
+      "worse_accounts": 29,
+      "tied_accounts": 0,
+      "model_promoted": false,
+      "economic_status": "closed_complete",
+      "archive_status": "verified_minimal"
+    },
+    {
+      "id": "D",
+      "configuration": {
+        "training_days": 100,
+        "selection_split_days": [
+          79,
+          1,
+          20
+        ],
+        "weighting": "valid_label_1_no_date_or_class_adjustment",
+        "direction_features": 41,
+        "other_heads": "new_single_market_12_heads"
+      },
+      "accepted_accounts": 54,
+      "market_days": 107,
+      "net_pnl_usdc": -177.4779441560926,
+      "volume_btc": 41.29,
+      "notional_usdc": 2833180.6924,
+      "pnl_usdc_per_0001_btc": -0.00429832754071428,
+      "pnl_usdc_per_10000_usdc_notional": -0.6264264917242192,
+      "delta_pnl_usdc": -19.97649650521677,
+      "better_accounts": 23,
+      "worse_accounts": 31,
+      "tied_accounts": 0,
+      "model_promoted": false,
+      "economic_status": "closed_complete",
+      "archive_status": "verified_minimal"
+    },
+    {
+      "id": "E",
+      "configuration": {
+        "training_days": 100,
+        "selection_split_days": [
+          79,
+          1,
+          20
+        ],
+        "weighting": "valid_label_1_no_date_or_class_adjustment",
+        "direction_features": 29,
+        "other_heads": "same_original_bytes_as_D_12_heads"
+      },
+      "accepted_accounts": 54,
+      "market_days": 107,
+      "net_pnl_usdc": -198.35072700304406,
+      "volume_btc": 41.224000000000004,
+      "notional_usdc": 2832287.4067,
+      "pnl_usdc_per_0001_btc": -0.0048115351980167875,
+      "pnl_usdc_per_10000_usdc_notional": -0.7003199129220774,
+      "delta_pnl_usdc": -40.849279352168224,
+      "better_accounts": 21,
+      "worse_accounts": 33,
+      "tied_accounts": 0,
+      "model_promoted": false,
+      "economic_status": "closed_complete",
+      "archive_status": "verified_minimal"
+    }
+  ],
+  "closure": {
+    "economic_status": "closed_complete",
+    "archive_status": "verified_minimal",
+    "inspection_automation": "deleted",
+    "frozen_economic_reports_rewritten": false,
+    "economic_reruns_for_archival": 0,
+    "retained": "Original formal results, accounting, task/Attempt/exit/durable receipts, source/model/input/B0 bindings, unique failures, shared runtime and pinned recovery dependencies.",
+    "removed": "Only accepted redundant cache/output copies after retained-copy, consumer, recovery and open-file checks."
+  },
+  "limitations": [
+    "Final has previous use; candidate additions followed inspection of partial outcomes, so this is not a fresh holdout.",
+    "B and C train on all Development dates; former Development evaluation partitions are not independent validation for them.",
+    "B versus C changes date and class reweighting together, not an isolated date-weight intervention.",
+    "D versus E changes only the direction inputs and fitted model; the other twelve head bytes and P3 match.",
+    "C versus D also changes training support; their difference cannot isolate the reference market.",
+    "All candidates and the reused baseline lose money; both unit-PnL measures also worsen for every candidate. No promotion, significance, equivalence, future profitability or live authority is established.",
+    "Models, purchased inputs, detailed account payloads and closure receipts remain private; public source and aggregate metrics do not make the full experiment reproducible from a clone."
+  ]
+}

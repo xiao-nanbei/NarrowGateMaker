@@ -1,0 +1,56 @@
+{
+  "schema_version": "causal_v12_1s_training_execution_governance_implementation.v2",
+  "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "implemented_unit_verified_no_model_or_live_authority",
+  "frozen_design_unchanged": true,
+  "frozen_design": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_training_contract_v1_design_20260805.json",
+    "sha256": "98b57a3fe28263178d9df3df9aee9154bc0e9ae8281535cc26d5afcdb41d70d3"
+  },
+  "implementation": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_training.py",
+    "sha256": "62115a585371c241a2c36dccdc027a2b30e988ac76758dc3a9c494be93902647"
+  },
+  "tests": {
+    "path": "tests/test_causal_v12_1s_training.py",
+    "sha256": "c6128b83088431bc54185c260eb130aab2fae0e7659b2eb25d8af44d39db6e1c",
+    "pytest_passed": 35,
+    "strict_xfail_remaining": 0,
+    "ruff_check_passed": true,
+    "ruff_format_check_passed": true
+  },
+  "declared_missing_execution_artifacts": [
+    "model_output_identity",
+    "one_second_feature_panel_manifest",
+    "training_implementation_sha256"
+  ],
+  "resolved_design_preconditions": [
+    "one_second_feature_panel_manifest",
+    "training_implementation_sha256"
+  ],
+  "model_output_identity_role": "atomic_training_postcondition",
+  "matrix_contract": {
+    "schema_version": "causal_v12_1s_training_matrix_cache.v1",
+    "atomic_admission_required": true
+  },
+  "lightgbm_runtime_abi": {
+    "schema_version": "causal_v12_1s_lightgbm_runtime_abi.v1",
+    "lightgbm_version": "4.6.0",
+    "numpy_version": "2.4.6",
+    "native_library_sha256": "39cd8a13dc50d615b876b5dbdcacca722469617eec0f1b627697f09d72bdd8ef",
+    "matrix_storage_dtype": "float32",
+    "sequence_input_dtype": "float64"
+  },
+  "authority": {
+    "real_predictions_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "holdout_read": false,
+    "model_training_executed": false,
+    "prediction_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

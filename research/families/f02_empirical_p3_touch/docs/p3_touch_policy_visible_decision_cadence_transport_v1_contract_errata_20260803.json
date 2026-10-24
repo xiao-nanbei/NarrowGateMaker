@@ -1,0 +1,43 @@
+{
+  "canonical_identity_sha256": "7d824608ed15335d41f7e112ce20e8cf6c875acf0e9be91cefa8fd12a43f29ce",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "decision_impact": {
+    "direct_value_fit_remains_blocked": true,
+    "frozen_gate_results_modified": false,
+    "frozen_output_modified": false,
+    "frozen_spec_modified": false,
+    "prediction_sensitivity_metrics_modified": false
+  },
+  "identity": "p3_touch_policy_visible_decision_cadence_transport_v1_contract_errata",
+  "interpretation": {
+    "aws_receive_time_transport_supported": false,
+    "exact_f06_feature_state_parity": false,
+    "exact_f06_current_bbo_coordinate_match_required": true,
+    "formal_description": "historical Development decision-cadence prediction sensitivity under a deterministic sampled visibility-age context",
+    "history_clock": "each of 61 synthetic one-second history queries independently uses the frozen keyed visibility sampler",
+    "history_is_f06_persisted_state": false,
+    "synthetic_feature_ready_clock": true
+  },
+  "predecessor_artifacts": {
+    "authoritative_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_policy_visible_decision_cadence_transport_v1_development_20260803/manifest.json",
+      "sha256": "fc2af579da8a0a1f754e4a991a6aca96bfb3187651d657de5c080126b2c0822c"
+    },
+    "authoritative_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_policy_visible_decision_cadence_transport_v1_development_20260803/report.json",
+      "sha256": "ccb6ef4c489f4573ae636fa1def044d56c3256ba09e8972ccb866353584becf1"
+    },
+    "spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_policy_visible_decision_cadence_transport_v1_spec_20260803.json",
+      "sha256": "32f6661494283a5a3d4aa6e885996bad5da2d8e01672f2892eb7bc576669acc8"
+    }
+  },
+  "required_future_successor_contract": {
+    "bind_actual_context_parameters_in_spec": true,
+    "bind_or_verify_each_f06_partition_visibility_command": true,
+    "bbo_duplicate_timestamp_policy": "stable_sort_keep_last_before_asof_lookup",
+    "feature_ready_clock_must_cover_all_dependencies": true,
+    "must_not_claim_exact_f06_state_without_persisted_or_lockstep_state": true
+  },
+  "schema_version": "narrowgate_contract_errata.v1"
+}

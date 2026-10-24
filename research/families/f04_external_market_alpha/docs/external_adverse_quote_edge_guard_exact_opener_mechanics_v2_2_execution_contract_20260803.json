@@ -1,0 +1,157 @@
+{
+  "schema_version": "external_adverse_quote_edge_guard_exact_opener_execution_contract.v2.2",
+  "identity": "external_adverse_quote_edge_guard_exact_opener_mechanics_v2_2",
+  "research_family": "F04_external_market_alpha",
+  "babel_layer": "E6/P2",
+  "frozen_at_utc": "2026-08-03T00:00:00Z",
+  "status": "collection_preflight_passed_collection_disabled",
+  "canonical_spec_identity_sha256": "6db316751912183e1438687205892eb8ec4e740f453bdf4f7314621fb4fe26b3",
+  "scope": "Production, health, local staging, and atomic ${NARROWGATE_PRIVATE_EVIDENCE_ROOT} admission contract for the exact-opener mechanics tape. This identity reads no economic result and grants no strategy permission.",
+  "frozen_v2_1_predecessor": {
+    "path": "research/families/f04_external_market_alpha/docs/external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1_execution_amendment_20260802.json",
+    "sha256": "d0ed2bd06ad1492eb66d1fd5e97072a42d761dd6817cae26cd05837a0989232e",
+    "modified": false
+  },
+  "runtime_contract": {
+    "runtime_producer_identity_bound": true,
+    "fair_state_and_config_identity_bound": true,
+    "three_venue_anchor_shadow_only_fail_closed": true,
+    "writer_health_complete": true,
+    "writer_health_fields": [
+      "heartbeat",
+      "queue_depth",
+      "rows_dropped",
+      "error_count",
+      "last_error",
+      "last_enqueue",
+      "last_flush"
+    ],
+    "hot_start_quarantine": true,
+    "cancel_reject_restores_active_lifecycle": true,
+    "candidate_may_modify_live_order": false,
+    "bounded_seven_tape_capture_modified": false
+  },
+  "admission_contract": {
+    "local_session_day_staging": true,
+    "ready_manifest_required": true,
+    "row_schema_file_sha256_verified": true,
+    "atomic_orico_admission": true,
+    "crash_restart_idempotent": true,
+    "overlap_or_half_window_splicing_forbidden": true,
+    "orphan_partial_admissible": false,
+    "runtime_staging_on_removable_volume_allowed": false,
+    "authoritative_root": "${NARROWGATE_DATA_ROOT}/exact_opportunity_tape"
+  },
+  "outcome_boundary": {
+    "economic_outcomes_read": false,
+    "external_outcome_tables_read": false,
+    "operational_lifecycle_outcomes_read": true,
+    "PnL_markout_reward_campaign_terminal_labels_forbidden": true
+  },
+  "public_config": {
+    "path": "live/config.yaml",
+    "sha256": "e6da75bc3eaaccc94d33ff621581f86680889e98d460944112ca35445e5d2040",
+    "exact_opportunity_tape_enabled": false
+  },
+  "implementation_identity": {
+    "tape_schema": {
+      "path": "execution/exact_opportunity_tape.py",
+      "sha256": "9df7753b9e9560804a2df5168f1d5da2b428d17945eb1f905fb6395fe2cbb492"
+    },
+    "runtime_writer": {
+      "path": "execution/exact_opportunity_tape_runtime.py",
+      "sha256": "0c59b3e0745864bc5aa85c25f3430e0b50cafa48179bdf47fc6ced7d85037a86"
+    },
+    "order_lifecycle": {
+      "path": "execution/order_lifecycle.py",
+      "sha256": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957"
+    },
+    "order_lifecycle_journal": {
+      "path": "execution/order_lifecycle_journal.py",
+      "sha256": "6acbdf1158549557dab7f8469108b1ae5600039514b9efd34edb1609cf96ed6e"
+    },
+    "feature_dag": {
+      "path": "features/feature_dag.py",
+      "sha256": "846b5bb3bdbd2d5fb28498e270de0f1f97e58b2114ffe2c725c586d9ef910097"
+    },
+    "live_config_loader": {
+      "path": "live/config.py",
+      "sha256": "a38d0b4678b2f2d2e3f19ff4b5f49d3fd29f50f54ee3e47a41d74c45ad5a7cc2"
+    },
+    "live_main": {
+      "path": "live/main.py",
+      "sha256": "553e7616cad33f4378986f45993269a27ac421353f7a9a73f3614fe18db2c4e0"
+    },
+    "fair_state": {
+      "path": "strategy/cross_venue_fair_price.py",
+      "sha256": "fd72138572382eff3d02f749a1272598a0cf0c0d8b9b80c24d2fd389da45ecaa"
+    },
+    "edge_guard": {
+      "path": "strategy/external_adverse_quote_edge_guard.py",
+      "sha256": "b83e2b7af539f0ed4f35bbd4ffc4f96e5aa96dc2d611374261fe8c52e89d925a"
+    },
+    "runtime_producer": {
+      "path": "strategy/maker_engine.py",
+      "sha256": "d3f536dd36f376d3a89bfac7a8d4966c5b81bce06135fa654985f02d2af2363c"
+    },
+    "order_manager": {
+      "path": "strategy/order_manager.py",
+      "sha256": "0f08be64cb394ab697dc1c620c454b685c19e7bd95a6001b02af93a6b1a09976"
+    },
+    "exact_denominator_validator": {
+      "path": "research/families/f04_external_market_alpha/audit/exact_opener_opportunity_tape.py",
+      "sha256": "4190204a1c03fcc5f4621a33dac10769dfbf65d2dfab1c457f3615150e2a4089"
+    },
+    "chunk_validator_and_admission": {
+      "path": "research/families/f04_external_market_alpha/audit/exact_opener_opportunity_tape_v2_2.py",
+      "sha256": "e12584a18709889b732bab1a03791b1da978e91fc113e37e069d850073b5e248"
+    },
+    "execution_contract_validator": {
+      "path": "research/families/f04_external_market_alpha/audit/exact_opener_opportunity_tape_contract_v2_2.py",
+      "sha256": "3a5680e861de567da519c558c8ed9b7a34d39798cf1e2a9fd8a5a98951cb58fe"
+    },
+    "collector_cli": {
+      "path": "scripts/exact_opportunity_tape_v2_2.py",
+      "sha256": "b7f5a92db6c4d4c1f5a251816b8646d586269d296252dddbb48f6391316740d1"
+    },
+    "runtime_tests": {
+      "path": "tests/test_exact_opportunity_tape_v2_2.py",
+      "sha256": "98b2fcc04d9640e96441feacf6948046847ba69d257b6ac24257eb5576120a7f"
+    },
+    "contract_tests": {
+      "path": "tests/test_exact_opener_opportunity_tape_contract_v2_2.py",
+      "sha256": "28973fdca89b0ae816a377258d73fdf84569ad04c6c9a471e69d1ae67dc88f7c"
+    }
+  },
+  "test_evidence": {
+    "targeted_extended_passed": true,
+    "targeted_extended_result": "83 passed",
+    "full_repository_suite_run_for_v2_2": false,
+    "full_repository_result": "pending after minimizing shared runtime surface",
+    "full_repository_failure_class": "expected F10 identity governance only; targeted F10 run found no behavioral failure",
+    "F09_or_F10_files_modified_by_v2_2": false
+  },
+  "collection_preflight": {
+    "performed_at_utc_date": "2026-08-03",
+    "temporary_config_only_change": "exact_opportunity_tape_enabled=true",
+    "config_identity_sha256": "8a276a72535232f7b305444625ed187bdb8304314c67b770c69d38b06df18f84",
+    "runtime_identity_sha256": "e93bea4e5186021a4f0aea94545c28f384ed56447c34274c0e39f27bb0d1ea3a",
+    "enabled_venues": ["bitget", "bybit", "okx"],
+    "shadow_only": true,
+    "staging_root": "logs/exact_opportunity_tape_staging",
+    "destination_root": "${NARROWGATE_DATA_ROOT}/exact_opportunity_tape",
+    "passed": true,
+    "collection_started": false
+  },
+  "permissions": {
+    "implementation_preflight_eligible": true,
+    "prospective_collection_eligible": true,
+    "prospective_collection_enabled": false,
+    "prospective_tape_read": false,
+    "economic_outcome_read": false,
+    "prediction_authority": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

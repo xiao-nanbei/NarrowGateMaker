@@ -1,0 +1,131 @@
+{
+  "additional_noncompensable_risk_gates": {
+    "campaign_cvar10_protection": "day_clustered_lower_bound_nonnegative",
+    "inventory_time_avoidance": "day_clustered_lower_bound_nonnegative",
+    "maximum_inventory_avoidance": "day_clustered_lower_bound_nonnegative"
+  },
+  "closed_campaign_value_gate": "day_clustered_lower_bound_strictly_positive",
+  "continuous_path_accounting": {
+    "absolute_tolerance_usdc": 0.000001,
+    "cash_inventory_campaign_state_cross_UTC_midnight": "required",
+    "daily_identity": "realized_d + q_end * mid_end - q_start * mid_start",
+    "daily_sum_equals_continuous_panel_pnl": "required",
+    "forced_day_end_liquidation_reset_or_campaign_terminal": "forbidden",
+    "panel_final_inventory_mtm": "required_even_when_nonzero",
+    "schema_version": "narrowgate_continuous_path_accounting.v1"
+  },
+  "diagnostic_only_metrics": [
+    "day_end_inventory_btc",
+    "day_end_open_campaign_mtm",
+    "day_end_open_campaign_mtm_usdc",
+    "censoring_avoidance",
+    "day_end_censoring_avoidance"
+  ],
+  "hard_gates": {
+    "candidate_rate": [
+      0.05,
+      0.75
+    ],
+    "maximum_overlap_violations": 0,
+    "maximum_unsupported_mass": 0.05,
+    "minimum_behavior_propensity": 0.05,
+    "minimum_days": 10,
+    "minimum_effective_sample_size": 100.0,
+    "minimum_fills_retention": 0.85,
+    "minimum_reward_daily_positive_rate": 0.55,
+    "minimum_rows": 200,
+    "require_positive_reward_lcb": true
+  },
+  "metrics": [
+    {
+      "component": "value",
+      "floor": 0.0,
+      "name": "closed_campaign_value",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.02,
+      "target": 1.0,
+      "weight": 0.5
+    },
+    {
+      "component": "value",
+      "floor": 0.0,
+      "name": "conditional_net_value",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.02,
+      "target": 1.0,
+      "weight": 0.04
+    },
+    {
+      "component": "tail",
+      "floor": 0.0,
+      "name": "negative_terminal_protection",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.02,
+      "target": 1.0,
+      "weight": 0.11
+    },
+    {
+      "component": "tail",
+      "floor": 0.0,
+      "name": "q10_shortfall_protection",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.02,
+      "target": 1.0,
+      "weight": 0.09
+    },
+    {
+      "component": "tail",
+      "floor": 0.0,
+      "name": "campaign_mae_avoidance",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.05,
+      "target": 1.0,
+      "weight": 0.05
+    },
+    {
+      "component": "lifecycle",
+      "floor": 0.0,
+      "name": "repair_event",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 0.01,
+      "target": 1.0,
+      "weight": 0.049999999999999996
+    },
+    {
+      "component": "lifecycle",
+      "floor": 0.0,
+      "name": "repair_time_avoidance_s",
+      "normalization": "lcb_scale",
+      "required": true,
+      "scale": 300.0,
+      "target": 1.0,
+      "weight": 0.06
+    },
+    {
+      "component": "mechanism",
+      "floor": 0.85,
+      "name": "fills_retention",
+      "normalization": "floor_to_target",
+      "required": true,
+      "scale": 1.0,
+      "target": 1.0,
+      "weight": 0.1
+    }
+  ],
+  "profile_id": "action_alpha_v2",
+  "research_class": "alpha",
+  "schema_version": "narrowgate_score_profile.v2",
+  "screening_only": false,
+  "value_hierarchy": {
+    "primary": "closed_campaign_value",
+    "secondary": "full_panel_continuous_mtm",
+    "supporting_value_gate": "conditional_net_value",
+    "utc_day_role": "bootstrap_cluster_only"
+  }
+}

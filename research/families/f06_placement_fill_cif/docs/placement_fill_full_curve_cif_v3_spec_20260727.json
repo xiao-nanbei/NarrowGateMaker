@@ -1,0 +1,44 @@
+{
+  "extends": "placement_fill_full_curve_cif_v2_spec_20260727.json",
+  "extends_sha256": "832664c857e2943a638eeb53ab12c7c22bfb0e3d4388d9a209f470d96795cb23",
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v3",
+  "family_id": "placement_fill_full_curve_cif_v3",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v3_competing_risk_development_fit",
+  "revision_reason": "v2 calibrated near median exposure but overpredicted later CIF because it accumulated fill hazard after the baseline policy would have reached cancel ACK; v3 models cancel ACK as a policy-specific competing event",
+  "evidence_scope": "v2 Development exposed the omitted competing boundary; Validation and sealed holdout remain unread and unavailable",
+  "lineage": {
+    "v2_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_cif_v2_development_20260727/report.json",
+    "v2_development_report_sha256": "fe1147f2d1feef168a278fc1c0dc85da9e402fa06e82a611c971164bd5663ec2",
+    "v2_failure": "fill-only survival ignored the action/policy cancel-ACK boundary and increasingly overpredicted beyond the median order exposure",
+    "implementation": "models/audit/full_curve_fill_cif.py",
+    "implementation_sha256": "1e57dbcfb9e36bc115085ddc2a40bb7dfe7d94511213128a21144a4e971dd0b2"
+  },
+  "placement_estimand": {
+    "active_fill_curve": "sum over intervals of survival-before-interval times fill hazard",
+    "cancel_ack": "separate cause-specific policy hazard entering the same survival function",
+    "discrete_survival": "S_j = S_(j-1) * (1 - h_fill_j - h_cancelACK_j)",
+    "fill_cif": "F_fill_j = F_fill_(j-1) + S_(j-1) * h_fill_j"
+  },
+  "development_fit": {
+    "hazard_causes": ["fill", "cancel_ack"],
+    "cause_models": "two side-specific binary cause-specific heads with separate past-only hazard-level calibration",
+    "cause_probability_normalization": "if h_fill + h_cancelACK exceeds one, preserve cause ratio and cap total below one"
+  },
+  "reporting": {
+    "curve_level_gate": "not frozen in v3; Development remains diagnostic and cannot unlock Validation",
+    "required_curve_diagnostics": [
+      "fill CIF calibration through p75 exposure",
+      "cancel-ACK cumulative incidence calibration",
+      "Brier improvement against exposure-only baseline",
+      "time monotonicity",
+      "distance monotonicity"
+    ]
+  },
+  "permissions": {
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

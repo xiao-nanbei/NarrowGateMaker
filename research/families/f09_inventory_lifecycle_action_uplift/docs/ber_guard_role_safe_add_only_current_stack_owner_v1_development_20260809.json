@@ -1,0 +1,104 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.development_result",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-09",
+  "status": "development_complete_candidate_closed",
+  "decision": "close_role_safe_ber_candidate_on_development",
+  "comparison": "role_safe_add_only_minus_global_all_roles_ber",
+  "panel": {
+    "role": "historical_native_development_previously_consumed_not_independent_confirmation",
+    "days": 40,
+    "daily_fresh_start": true,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "mechanics": {
+    "control_requotes": 576479,
+    "candidate_requotes": 575864,
+    "candidate_effective_side_change_rate": 0.14962560604587194,
+    "candidate_pair_change_count": 138605,
+    "candidate_bid_change_count": 82682,
+    "candidate_ask_change_count": 89646,
+    "candidate_bid_change_days": 40,
+    "candidate_ask_change_days": 40,
+    "candidate_buy_add_count": 57047,
+    "candidate_sell_add_count": 50279,
+    "candidate_flat_bypass_count": 35156,
+    "candidate_cap_collision_count": 74,
+    "python_cpp_fill_path_mismatch_count": 0,
+    "python_cpp_ber_state_mismatch_count": 0,
+    "candidate_source_mismatch_count": 0,
+    "candidate_cap_infeasible_count": 0,
+    "all_mechanics_gates_passed": true
+  },
+  "economics": {
+    "control_terminal_mtm_pnl_usdc": -144.25174795199894,
+    "candidate_terminal_mtm_pnl_usdc": -155.91803566399855,
+    "terminal_mtm_delta_usdc": -11.666287711999612,
+    "terminal_mtm_delta_usdc_per_day": -0.2916571927999903,
+    "terminal_mtm_delta_ci95_usdc_per_day": [
+      -1.1439409811825523,
+      0.6813475040600426
+    ],
+    "positive_delta_days": 13,
+    "positive_delta_day_rate": 0.325,
+    "control_closed_campaign_value_usdc": -147.4663479519997,
+    "candidate_closed_campaign_value_usdc": -156.85083566399933,
+    "closed_campaign_delta_usdc": -9.384487711999654,
+    "closed_campaign_delta_usdc_per_day": -0.23461219279999135,
+    "closed_campaign_delta_ci95_usdc_per_day": [
+      -1.0892189373349859,
+      0.7223452746900612
+    ],
+    "fill_retention": 1.1384507535927095,
+    "negative_terminal_protection_usdc_per_day": -0.4620852442000013,
+    "negative_terminal_protection_ci95_usdc_per_day": [
+      -1.1931895887424708,
+      0.42436384898254814
+    ],
+    "campaign_q10_protection_usdc_per_day": 0.018721602450001415,
+    "campaign_q10_protection_ci95_usdc_per_day": [
+      0.006103000175753509,
+      0.03180877731275507
+    ],
+    "campaign_cvar10_protection_usdc_per_day": 0.14217734938683999,
+    "campaign_cvar10_protection_ci95_usdc_per_day": [
+      0.0687705898773441,
+      0.24402357287840618
+    ],
+    "campaign_mae_avoidance_usdc_per_day": 0.806357499999999,
+    "inventory_time_avoidance_btc_s_per_day": 21.381210625013704,
+    "maximum_inventory_avoidance_btc_per_day": 0.0009000000000000004,
+    "multi_level_long_terminal_value_delta_usdc": 7.887102264000269,
+    "multi_level_short_terminal_value_delta_usdc": 5.944208207999644,
+    "buy_maker_value_delta_bps": -0.040860895972101616,
+    "sell_maker_value_delta_bps": 0.05095345468453329
+  },
+  "failed_noncompensable_gates": [
+    "terminal_mtm_lcb_positive",
+    "closed_campaign_lcb_positive",
+    "daily_positive_rate_minimum",
+    "negative_terminal_protection_lcb_nonnegative",
+    "buy_maker_value_lcb_pass",
+    "sell_maker_value_lcb_pass"
+  ],
+  "interpretation": "Removing BER from opener and reducing quotes increased fills and improved several inventory and lower-tail proxies, but worsened terminal and closed-campaign value. Faster repair and lower inventory did not establish economic value. The proposed directional empirical BER v2 was conditional on this role-safe B1 contract and is not advanced.",
+  "baseline_boundary": {
+    "ber_clock_identity": "live_held_completed_10s_feature_sampled_on_completed_1s_callback.v1",
+    "current_live_config_changed": false,
+    "current_global_ber_retained": true,
+    "threshold_1_2_or_multiplier_2_0_validated_as_optimal": false
+  },
+  "authoritative_artifacts": {
+    "report_path": "${NARROWGATE_DATA_ROOT}/reports/ber_guard_role_safe_add_only_current_stack_owner_v1_20260808/development_execution_v2/report.json",
+    "report_sha256": "b01c82a0cad3dcddc3113c5984dce481b12608b79b528e069b6c4da722a1388b",
+    "panel_manifest_sha256": "b85d34e5286455b730be2cb09c88c4426f0a361e1156534320fc244dd229d3db",
+    "support_repaired_scorecard_path": "${NARROWGATE_DATA_ROOT}/reports/ber_guard_role_safe_add_only_current_stack_owner_v1_20260808/development_execution_v2/action-defense-v2-scorecard.support-repaired-v2.json",
+    "support_repaired_scorecard_sha256": "56337214e77e162e15d58e4db7a2815df26a789360bb8365f510379a045ff0fb",
+    "scorecard_errata_sha256": "b27164c6539b0346c27487f5ea58d4f0d744dbd3468cfe62022f508fb382aceb",
+    "scorecard_repair_manifest_sha256": "ad6c79bb544a6b3d455b37734d640998018f93207b628d020cce1f554f1199cd"
+  },
+  "continuous_confirmation_run": false,
+  "action_authorized": false,
+  "live_authorized": false
+}

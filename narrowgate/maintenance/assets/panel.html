@@ -1,0 +1,22 @@
+<link rel="stylesheet" href="search/search.css">
+<section id="global-file-search" aria-labelledby="search-title">
+  <div class="search-heading"><div><span class="search-kicker">本地文件清单 · 全局检索</span><h2 id="search-title">先搜文件，再看清理依据</h2></div><span class="private-label">仅本机 · 不上传</span></div>
+  <p class="search-intro">搜索所有月份和分页，不只是当前页面。支持多个关键词（空格分隔，需全部命中），不区分大小写。</p>
+  <form id="file-search-form">
+    <label for="file-search-query">文件名或路径关键词</label>
+    <div class="query-line"><input type="search" id="file-search-query" placeholder="例如：checkpoint、prepare、maker.log" autocomplete="off" maxlength="500" required><button id="file-search-submit" type="submit">搜索全部清单</button><button id="file-search-cancel" type="button" hidden>停止搜索</button></div>
+    <div class="search-filters">
+      <label>搜索范围 <select id="file-search-field"><option value="path">文件名和完整路径</option><option value="name">仅文件名</option></select></label>
+      <label>存储位置 <select id="file-search-root"><option value="all">全部位置</option></select></label>
+      <label>清理判断 <select id="file-search-status"><option value="all">全部判断</option><option value="candidate">清理候选（仍需核验）</option><option value="review">用途待核验</option><option value="keep">应保留</option></select></label>
+    </div>
+  </form>
+  <div class="search-legend"><span class="verdict candidate">清理候选</span> 不等于可直接删除 <span class="verdict review">用途待核验</span> 信息不足 <span class="verdict keep">应保留</span> 有保留依据</div>
+  <p class="search-warning">这是清单快照，不是实时磁盘检测。页面不能核实活动进程、任务依赖或归档完整性，也不会删除文件。候选须先核验；原始数据、模型、正式结果和唯一证据未经明确授权应保留。搜索不到不代表文件不存在。</p>
+  <p id="file-search-meta" class="search-meta">正在载入索引说明……</p>
+  <p id="file-search-progress" role="status" aria-live="polite">输入关键词后开始搜索；未搜索时不加载文件明细。</p>
+  <div id="file-search-results" aria-busy="false"></div>
+  <noscript><p>请启用 JavaScript 使用全局搜索；下方原有分页仍可直接浏览。</p></noscript>
+</section>
+<script src="search/manifest.js"></script>
+<script src="search/search.js"></script>

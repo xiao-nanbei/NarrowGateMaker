@@ -1,0 +1,36 @@
+---
+name: mm-as-glft-ml-spread
+description: Audit or change NarrowGate quote units, empirical P3 touch semantics, ML-to-quote adapters and order-action propagation. Use for quote-controller research or semantic parity; not routine downloads, repository cleanup or deployment.
+metadata:
+  short-description: Audit NarrowGate quote semantics and action effects
+---
+
+# NarrowGate quote semantics
+
+Last materially modified: 2026-10-18
+
+This skill applies to the source tree containing it. Read the root [AGENTS.md](../../../AGENTS.md), which owns evidence sufficiency and change-scoped verification. Read an actual experiment contract for execution, evaluation, behavior changes or an identified frozen dependency, not automatically for a local explanation or refactor. A different remote or historical skill is not a second current rule set. Scope/source facts live in [dataset_scope.json](../../../data/dataset_scope.json), not here. Policy is not acceptance evidence.
+
+## Workflow
+
+1. Identify whether the request is a unit audit, behavior-preserving repair or behavior-changing experiment. Identify execution/reference markets and the exact consumer/configuration.
+2. Trace enough of the implemented path to support this task; expand when shared effects or missing evidence require it. Read [quote semantics](references/quote-semantics.md) when units, P3 or proxy terminology are at issue. A local unit explanation does not automatically require the whole historical signal-to-PnL chain.
+3. For learning or economics, select the applicable method in [research methods](references/research-methods.md). Do not impose OPE requirements on supervised learning or direct paired simulation.
+4. Validate at the layer changed. Preserve safety behavior for an engineering repair; measure actual intervention propagation for a candidate.
+5. Report only task-relevant evidence, assumptions, changes, validation and limitations. Implementation parity, predictive skill and economic value are different conclusions.
+
+## Action-effect acceptance
+
+For behavior-changing candidates trace:
+
+signal → decision → raw target quote/action → tick rounding/post-only/risk-filtered action → submitted/kept/cancelled order → fill/inventory path → net PnL/risk.
+
+Report eligible decisions, scored/excluded/missing decisions, changed decisions, changes overridden downstream, actual order requests and terminal executions separately. No-change is a valid result; do not increase coefficients after reading results merely to force an effect. A cancel request is not an accepted or completed cancellation.
+
+Pure refactors, performance work and semantic-equivalence repairs follow the root change-scoped validation rule and prove unchanged outputs/state for the stated inputs; they do not require improved PnL or manufactured action differences. Open a frozen experiment contract only when an actual affected consumer depends on it.
+
+## Conditional references
+
+- Input or quality issues: [data workflow](references/data-workflow.md).
+- Actual deployment or same-epoch live reproduction: [live workflow](references/live-workflow.md).
+- Publication only: [publication protocol](references/publication.md).

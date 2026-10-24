@@ -1,0 +1,44 @@
+{
+  "schema": "narrowgate.family_research_questions.v1",
+  "family": "SYS",
+  "updated": "2026-10-17",
+  "scope": "Current applicability questions; accepted current-source economics and engineering evidence are retained separately.",
+  "execution_authorized_by_index": false,
+  "scan_rule": "Follow research/registry.json families[].research_questions and select status=pending_validation. Read current_evidence separately; a pending hypothesis does not invalidate an accepted bounded result.",
+  "current_evidence": [
+    {
+      "source_ref": "research/system_engineering/README.md",
+      "role": "current_scope_and_accepted_evidence",
+      "boundary": "Fixed-input parity, defect-regression, restoration and performance measurements are retained as engineering observations at their original scope. They do not establish strategy profitability. New-source economic comparisons are indexed separately."
+    }
+  ],
+  "questions": [
+    {
+      "id": "SYS-ECONOMIC-TRANSFER",
+      "status": "pending_validation",
+      "question": "Which economic claims survive a change of source, clock or execution semantics?",
+      "question_zh": "数据源、时钟或执行语义改变后，哪些经济主张仍能成立？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/system_engineering/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Time-Unit-Causality-Repair-Research/",
+        "docs/arm_scoring_design_20260706.md",
+        "docs/expanded_research_day_universe_20250801_20260731.md",
+        "docs/experiment_scorecard_v1_20260722.md",
+        "docs/legacy_l2_evidence_revalidation_20260725.md",
+        "docs/legacy_l2_evidence_revalidation_20260725.zh-CN.md",
+        "docs/native_strict_universe_20260724.md",
+        "docs/value_provenance_registry_20260727.md",
+        "research/research_family_foundation_and_blockers_20260729.md",
+        "research/system_engineering/docs/replay_time_unit_causality_repair_20260715.md",
+        "research/system_engineering/docs/time_unit_contract_repair_20260726.md"
+      ],
+      "gaps": [
+        "Parity on one frozen input cannot validate the economics, data realism or live transfer of an old strategy.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Retain defect regressions and fixed-input parity as engineering evidence; economic applicability requires a separately identified matched current-source comparison.",
+      "resolution": null
+    }
+  ]
+}

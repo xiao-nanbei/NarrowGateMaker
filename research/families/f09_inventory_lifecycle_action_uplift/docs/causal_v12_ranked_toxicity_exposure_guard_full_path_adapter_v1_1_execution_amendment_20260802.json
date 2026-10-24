@@ -1,0 +1,211 @@
+{
+  "schema_version": "ranked_toxicity_guard_full_path_execution_amendment.v1.1",
+  "adapter_schema_version": "causal_v12_ranked_toxicity_exposure_guard_full_path_adapter.v1.1",
+  "amendment_id": "causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "execution_adapter_hash_bound_mechanics_not_run",
+  "canonical_spec_identity_sha256": "682a50ab627c619c1c9ef1963f0d445197f0096b4b99bd2eacda88568a834fc1",
+  "scope": "Execution-only amendment for the frozen BUY and SELL ranked-toxicity mechanics identities. It binds complete order-terminal routing, prospective pre-treatment assignment, untreated baseline-shadow denominators, canonical 10-second predictions, cross-UTC threshold continuation, and zero-tolerance journals without changing the action, p90, seed, baseline, scorecard, or economic gate.",
+  "frozen_v1_registrations": {
+    "BUY": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_buy_v1_mechanics_spec_20260802.json",
+      "sha256": "ab56e7cb48d8a1225d29d240f32f141cb188eaf72a28899ede4310676fee1e22",
+      "canonical_spec_identity_sha256": "af39d4038c7e6780187a86eea646447aef7fb545a7b0a6875987bfc78af723b5"
+    },
+    "SELL": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_sell_v1_mechanics_spec_20260802.json",
+      "sha256": "057aec6a146d1481f520c46c1cca09866f966c292c9410d075d388294cd98304",
+      "canonical_spec_identity_sha256": "dbed904475f07b317373e01a46a78c54596512a5d968e2ba2f53b684c58c29d9"
+    }
+  },
+  "unchanged_v1_contract_projection": {
+    "BUY": {
+      "assignment_unit": "one BUY side assignment per prospective campaign lineage",
+      "buy_fill_selection_same_in_both_arms": true,
+      "family_id": "causal_v12_ranked_toxicity_exposure_guard_buy_v1",
+      "history": "strictly_earlier_UTC_days",
+      "prediction_head": "tox_bid_10s",
+      "probabilities": {
+        "baseline_permission": 0.5,
+        "ranked_toxicity_guard": 0.5
+      },
+      "q90_action_enabled": false,
+      "quantile": 0.9,
+      "random_seed": 2026080201,
+      "rank": "side_specific_p90",
+      "reducing_quotes_unchanged": true,
+      "scorecard_profile": {
+        "profile_id": "action_execution_selective_v2",
+        "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+        "schema_version": "narrowgate_score_profile.v1"
+      },
+      "side": "BUY"
+    },
+    "SELL": {
+      "assignment_unit": "one SELL side assignment per prospective campaign lineage",
+      "buy_fill_selection_same_in_both_arms": true,
+      "family_id": "causal_v12_ranked_toxicity_exposure_guard_sell_v1",
+      "history": "strictly_earlier_UTC_days",
+      "prediction_head": "tox_ask_10s",
+      "probabilities": {
+        "baseline_permission": 0.5,
+        "ranked_toxicity_guard": 0.5
+      },
+      "q90_action_enabled": false,
+      "quantile": 0.9,
+      "random_seed": 2026080202,
+      "rank": "side_specific_p90",
+      "reducing_quotes_unchanged": true,
+      "scorecard_profile": {
+        "profile_id": "action_execution_selective_v2",
+        "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+        "schema_version": "narrowgate_score_profile.v1"
+      },
+      "side": "SELL"
+    }
+  },
+  "prospective_assignment_contract": {
+    "identity": "prospective_campaign_side_id",
+    "assignment_trigger": "first untreated baseline-eligible exposure-increasing opportunity",
+    "assignment_precedes_candidate_cancel_suppress_submit_or_fill": true,
+    "zero_submit_and_zero_fill_assignments_retained": true,
+    "multiple_guard_episodes_share_assignment": true,
+    "cross_UTC_assignment_day_remains_first_opportunity_day": true,
+    "candidate_path_campaign_ID_backfill_forbidden": true
+  },
+  "baseline_shadow_contract": {
+    "control_and_candidate_maintain_independent_untreated_shadow": true,
+    "assignment_and_opportunity_denominator_source": "untreated_baseline_shadow",
+    "candidate_permission_changes_only_actual_candidate_path": true,
+    "exact_shadow_snapshot_match_required": true,
+    "treatment_dependent_denominator_forbidden": true
+  },
+  "canonical_prediction_contract": {
+    "cadence_ms": 10000,
+    "one_collapsed_row_per_bucket": true,
+    "duplicate_bucket_forbidden": true,
+    "inconsistent_score_feature_ready_decision_or_model_hash_fails_fast": true,
+    "feature_ready_not_after_decision": true,
+    "frozen_model_hash_required": true,
+    "UTC_threshold_rollover_does_not_reset_assignment_guard_order_or_campaign": true
+  },
+  "lifecycle_branch_contract": {
+    "schema_version": "causal_v12_ranked_toxicity_exposure_guard_full_path_adapter.v1.1",
+    "cancel_reject": {
+      "exchange_phase": "ACTIVE_or_PARTIALLY_FILLED",
+      "fill_risk_set_ends": false,
+      "queue_age_hazard_retained": true
+    },
+    "cancel_pending_partial_fill": {
+      "exchange_phase": "CANCEL_PENDING",
+      "remaining_quantity_updated": true,
+      "fill_risk_set_ends": false
+    },
+    "exchange_terminal": {
+      "reasons": [
+        "cancel_ack",
+        "full_fill",
+        "expired",
+        "rejected",
+        "shutdown"
+      ],
+      "old_queue_age_hazard_cursor_cleared": true,
+      "recovered_while_waiting": "RELEASED",
+      "not_recovered_while_waiting": "SUPPRESSING"
+    },
+    "fill_risk_phases": [
+      "ACTIVE",
+      "CANCEL_PENDING",
+      "PARTIALLY_FILLED"
+    ]
+  },
+  "zero_tolerance_gates": {
+    "assignment_after_treatment": 0,
+    "duplicate_or_inconsistent_prediction_bucket": 0,
+    "post_terminal_hazard_or_cursor_reuse": 0,
+    "reducing_quote_changes": 0,
+    "control_candidate_baseline_shadow_mismatch": 0,
+    "campaign_side_rerandomization": 0
+  },
+  "implementation_identity": {
+    "full_path_adapter": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter.py",
+      "sha256": "5cc1ded739ea6a186026a5759537f8ba306235bb96c008d9b48abc62659ae044"
+    },
+    "execution_amendment_validator": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_adapter_contract.py",
+      "sha256": "36a5ba141a55aed6cd9c2c180a14a0b6a2511f0dff3c19300f40ca90a2ddef49"
+    },
+    "frozen_v1_guard_runtime": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard.py",
+      "sha256": "f7eff8b3d04a825a49531bf0c55e80a5149f375a5050d1eb93e1d9b2c23c1f40"
+    },
+    "shared_order_lifecycle": {
+      "path": "execution/order_lifecycle.py",
+      "sha256": "6c413b31c51c6defee1db2781eb548e71a7fa024349d9e60ef2c4fdab8ae83e9"
+    },
+    "adapter_contract_tests": {
+      "path": "tests/test_causal_v12_ranked_toxicity_exposure_guard_full_path_adapter.py",
+      "sha256": "ee38b0e07ab97c94f5588438e7867592d1796e40eacc33b99d01f79c5650f7ba"
+    },
+    "execution_amendment_tests": {
+      "path": "tests/test_ranked_toxicity_guard_full_path_adapter_contract.py",
+      "sha256": "5243d3b0c1d8307594d30475cd2b39705f57b8394daeb3eb3cdb3c6d0a7e7774"
+    },
+    "frozen_v1_guard_tests": {
+      "path": "tests/test_causal_v12_ranked_toxicity_exposure_guard.py",
+      "sha256": "538dd2e69f42129d327967402c7547760493b3fcc5a27f6a800f14a69db89f36"
+    },
+    "shared_lifecycle_tests": {
+      "path": "tests/test_execution_order_lifecycle.py",
+      "sha256": "8cb37b75dcc4aac39176bedb798e7a20af3e25e2dd5fdf87a264be1ec31f7dd2"
+    }
+  },
+  "documentation_identity": {
+    "execution_amendment_note": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_1_20260802.md",
+      "sha256": "0fb688be6c7a372e30cc4a06a240a2458be30dbfab6611ad89fe9cc368f2f57b"
+    }
+  },
+  "contract_tests": {
+    "passed": true,
+    "command": ".venv/bin/python -m pytest -q tests/test_causal_v12_ranked_toxicity_exposure_guard.py tests/test_causal_v12_ranked_toxicity_exposure_guard_full_path_adapter.py tests/test_execution_order_lifecycle.py tests/test_ranked_toxicity_guard_full_path_adapter_contract.py",
+    "result": "35 passed",
+    "full_repository_suite_passed": true,
+    "full_repository_command": ".venv/bin/python -m pytest -q",
+    "full_repository_result": "1334 passed, 4 skipped, 1 warning in 85.95s",
+    "required_tests": [
+      "test_assignment_precedes_treatment_and_survives_utc_threshold_update",
+      "test_cancel_pending_partial_fill_then_terminal_release_clears_old_risk",
+      "test_cancel_reject_restores_partial_risk_without_terminalizing_guard",
+      "test_all_exchange_terminal_branches_clear_old_order_and_suppress_when_high",
+      "test_duplicate_bucket_and_shadow_mismatch_fail_closed",
+      "test_reducing_quote_and_campaign_rerandomization_are_zero_tolerance",
+      "test_lifecycle_branch_contract_names_all_required_routes",
+      "test_adapter_rejects_frozen_seed_or_propensity_drift",
+      "test_execution_amendment_preserves_v1_and_grants_mechanics_only"
+    ]
+  },
+  "read_boundary": {
+    "next_allowed_stage": "mechanics_only",
+    "mechanics_must_use_this_adapter": true,
+    "mechanics_must_emit_complete_event_journal": true,
+    "mechanics_must_pass_all_original_v1_hard_gates": true,
+    "mechanics_does_not_open_economics_automatically": true,
+    "full_path_mechanics_results_read": false
+  },
+  "economic_outcome_columns_read": [],
+  "permissions": {
+    "adapter_registration": true,
+    "adapter_contract_tests_passed": true,
+    "mechanics_execution_eligible": true,
+    "mechanics_read": false,
+    "development_economic_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_authority": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

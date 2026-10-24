@@ -1,0 +1,8 @@
+{
+  "ssh": {
+    "target": "poolrun-master-admin",
+    "identity_file": "/approved/private/admin-key",
+    "known_hosts_file": "/approved/private/known_hosts"
+  },
+  "request_dir": "/approved/private/control-requests"
+}

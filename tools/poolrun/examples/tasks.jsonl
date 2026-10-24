@@ -1,0 +1,1 @@
+{"id":"demo-001","project":"calc-demo","code_policy":{"release":"r1","missing":"wait"},"parameters":{"steps":100,"seed":17,"delay":0.01},"inputs":[],"side_effects":false,"max_attempts":2,"resources":{"cpus":1,"memory_bytes":268435456,"disk_bytes":10485760},"completion":{"required_outputs":["result.json"]}}

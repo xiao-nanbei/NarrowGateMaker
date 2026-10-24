@@ -1,0 +1,40 @@
+{
+  "schema": "narrowgate.family_research_questions.v1",
+  "family": "F01",
+  "updated": "2026-10-17",
+  "scope": "Current applicability questions; accepted current-source economics and engineering evidence are retained separately.",
+  "execution_authorized_by_index": false,
+  "scan_rule": "Follow research/registry.json families[].research_questions and select status=pending_validation. Read current_evidence separately; a pending hypothesis does not invalidate an accepted bounded result.",
+  "current_evidence": [
+    {
+      "source_ref": "research/families/f01_fixed_parameter_racing/README.md",
+      "role": "current_scope_and_accepted_evidence",
+      "boundary": "Current-source Defense/Urgency completed its original nine-arm calendar: original B0 −1603.031182 USDC versus DEFENSE_ON__URGENCY_OFF −1455.222759 USDC across 407 days of independent accounts. Both lose money; exposure increased and the baseline choice is not profitability. The later mechanism-ablation expansion was owner-stopped with incomplete coverage. Current inventory-soft-control work is separate and is not a completed result."
+    },
+    {
+      "source_ref": "research/recompute_407.json",
+      "role": "accepted_scope_source",
+      "boundary": "Read the original baseline, completed coverage, previous-use and limitations; this source does not resolve unrelated pending questions."
+    }
+  ],
+  "questions": [
+    {
+      "id": "F01-CONTROL-INTERACTIONS",
+      "status": "pending_validation",
+      "question": "Which fixed quote-control interactions remain useful under the current source and baseline?",
+      "question_zh": "固定报价系数与更新门槛的哪些交互在当前数据和基线上仍有价值？",
+      "evidence_status": "historical_report_located_current_applicability_not_established",
+      "source_refs": [
+        "research/families/f01_fixed_parameter_racing/docs/fixed_parameter_strategy_family_closed.md",
+        "research/families/f01_fixed_parameter_racing/README.md",
+        "https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Fixed-Parameter-Racing-Research/"
+      ],
+      "gaps": [
+        "Old pooled winners and old closed-family decisions do not transfer; current Defense/Urgency and directional-threshold comparisons retain their own scope.",
+        "Bind the actual source, model, baseline, action semantics, accounting and previous-use; an old point estimate or closure label is not a current conclusion."
+      ],
+      "next_validation": "Separate target-price coefficients, update thresholds and evaluation timing; compare declared complete matched accounts and total/unit net returns with inventory exposure.",
+      "resolution": null
+    }
+  ]
+}

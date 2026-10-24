@@ -1,0 +1,77 @@
+{
+  "schema_version": "causal_v12_1s_2026_native_overlay_binding_implementation.v1",
+  "identity": "causal_v12_1s_2026_native_40day_model_overlay_binding_v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "implemented_result_blind_future_bundle_unbound",
+  "purpose": "bind_a_future_atomic_causal_v12_1s_13_head_bundle_to_the_existing_2026_native_40_day_feature_prep_without_copying_market_features",
+  "implementation": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_2026_native_overlay_binding.py",
+    "sha256": "58943321812987c16fb5a5c4552ce5b608408467a566b0071fa540f0c12d8782"
+  },
+  "tests": {
+    "path": "tests/test_causal_v12_1s_2026_native_overlay_binding.py",
+    "sha256": "e340bce06eee4a8c7a2d49c232fa82ffe2847c80e1f81bdec5d8134a469583a5",
+    "command": ".venv/bin/python -m pytest -q tests/test_causal_v12_1s_2026_native_overlay_binding.py",
+    "result": "5 passed"
+  },
+  "bound_existing_inputs": {
+    "native_execution_prep": {
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_2026_native_40d_execution_prep_v1/execution-prep-manifest.json",
+      "sha256": "ddbd4bbcb4344483a9e20538fc5291bfffff14877c89624b361289dd810cb1b8",
+      "day_count": 40,
+      "rows_per_day": 86400,
+      "total_rows": 3456000
+    },
+    "prediction_overlay_materializer": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_prediction_overlay.py",
+      "sha256": "e873c9277e91761fad53d5144faaf92a0daea2b8160b7b9712afa0a85d8ad175"
+    },
+    "full_feature_dag": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_full_schema.py",
+      "sha256": "83a706e61e8db0bcb1d0e296a07b648f233a06f1e8739a67830f32420dc21d47"
+    },
+    "feature_schema": {
+      "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py",
+      "sha256": "2279a9f1d8bc8043007842429d9e12112097368f15bdd77fa0c12ff280cc775c"
+    }
+  },
+  "execution_contract": {
+    "candidate_bundle_required": true,
+    "candidate_bundle_missing_behavior": "fail_closed_before_plan_or_overlay_write",
+    "head_count": 13,
+    "cadence_ms": 1000,
+    "feature_count": 173,
+    "feature_order_exact": true,
+    "feature_dag_and_source_clock_exact": true,
+    "training_feature_artifacts_rehashed": true,
+    "native_day_denominator_ordered_and_exact": true,
+    "daily_row_identity_recomputed": true,
+    "overlay_join_identity_must_equal_feature_row_identity": true,
+    "overlay_contains_market_features": false,
+    "daily_atomic_admission": true,
+    "panel_atomic_admission": true,
+    "resume_safe": true,
+    "large_outputs_root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_2026_native_40d_model_overlay_v1"
+  },
+  "native_prep_physical_revalidation": {
+    "performed": true,
+    "day_count": 40,
+    "first_day": "2026-04-17",
+    "last_day": "2026-06-26",
+    "row_identities_unique": 40,
+    "predictions_read": false,
+    "economic_outcomes_read": false
+  },
+  "authority_boundaries": {
+    "prediction_values_materialized_now": false,
+    "labels_read": false,
+    "economic_outcomes_read": false,
+    "markouts_read": false,
+    "campaign_outcomes_read": false,
+    "economic_replay_started": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "next_blocker": "future_trained_bundle_path_not_yet_supplied"
+}
